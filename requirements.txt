@@ -1,0 +1,7 @@
+pymupdf
+python-dotenv
+mysql-connector-python
+sentence-transformers
+numpy
+rank-bm25
+openai
