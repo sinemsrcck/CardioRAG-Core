@@ -18,9 +18,11 @@ import numpy as np
 from src.chunking import chunk_document
 from src.database import (
     CORE_TABLE_COLUMNS,
+    count_professor_rows,
     count_rows,
     get_connection,
     load_chunks_for_rag,
+    professor_row_label,
 )
 from src.embeddings import embed_documents
 from src.ingest import run_ingest
@@ -34,6 +36,7 @@ EXPECTED_DOCUMENTS = 6
 EXPECTED_PAGES = 95
 EXPECTED_CHUNKS = 233
 
+# Hocaya ait satır sayıları (makaleler: yalnızca document_id IS NULL).
 EXPECTED_PROTECTED_ROWS = {
     "makaleler": 5,
     "tani_tedavi": 392,
@@ -52,8 +55,12 @@ RAG_FIELDS = {
 
 
 def table_counts(cursor):
-    tables = list(CORE_TABLE_COLUMNS) + list(EXPECTED_PROTECTED_ROWS)
-    return {table: count_rows(cursor, table) for table in tables}
+    """Yeni tablolar + makaleler toplamı: gerçek satır; hoca tabloları: hocanın satırları."""
+    counts = {table: count_rows(cursor, table) for table in CORE_TABLE_COLUMNS}
+    counts["makaleler (toplam)"] = count_rows(cursor, "makaleler")
+    for table in EXPECTED_PROTECTED_ROWS:
+        counts[table] = count_professor_rows(cursor, table)
+    return counts
 
 
 def fresh_chunks():
@@ -153,7 +160,7 @@ def main():
 
     # 6) Hoca tabloları.
     for table, expected in EXPECTED_PROTECTED_ROWS.items():
-        check(f"{table}: satır", expected, counts_after_2[table])
+        check(f"{professor_row_label(table)}: satır", expected, counts_after_2[table])
 
     cursor.close()
     conn.close()

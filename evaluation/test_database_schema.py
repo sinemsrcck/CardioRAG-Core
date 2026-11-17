@@ -14,14 +14,16 @@ from src.database import (
     COLLATION,
     CORE_TABLE_COLUMNS,
     MAKALELER_NEW_COLUMNS,
-    count_rows,
+    count_professor_rows,
     get_connection,
     get_table_columns,
     init_schema,
+    professor_row_label,
 )
 
 
-# Hoca tablolarının beklenen satır sayıları: değişmemeli.
+# Hocaya ait satır sayıları: değişmemeli. makaleler için yalnızca
+# document_id IS NULL satırlar sayılır (bizim makalelerimiz hariç).
 EXPECTED_PROTECTED_ROWS = {
     "makaleler": 5,
     "tani_tedavi": 392,
@@ -59,7 +61,7 @@ def main():
         cursor = connection.cursor()
 
         # Hoca tablolarının şema kurulumundan ÖNCEKİ satır sayıları.
-        before = {t: count_rows(cursor, t) for t in EXPECTED_PROTECTED_ROWS}
+        before = {t: count_professor_rows(cursor, t) for t in EXPECTED_PROTECTED_ROWS}
 
         # Tekrar çalıştırılabilirlik: iki kez.
         for run in (1, 2):
@@ -96,9 +98,9 @@ def main():
 
         # Hoca tablolarının satır sayıları değişmemiş olmalı.
         for table, expected in EXPECTED_PROTECTED_ROWS.items():
-            after = count_rows(cursor, table)
+            after = count_professor_rows(cursor, table)
             check(
-                f"{table}: satır sayısı",
+                f"{professor_row_label(table)}: satır sayısı",
                 expected,
                 f"{after} (önce {before[table]})",
                 after == expected == before[table],
