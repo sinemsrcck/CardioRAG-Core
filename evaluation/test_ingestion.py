@@ -15,7 +15,7 @@ import sys
 
 import numpy as np
 
-from src.chunking import chunk_document
+from src.chunking import CHUNKING_VERSION, chunk_document
 from src.database import (
     CORE_TABLE_COLUMNS,
     count_professor_rows,
@@ -34,7 +34,14 @@ EMBEDDING_MODEL = "minilm"
 EXPECTED_DIMENSION = 384
 EXPECTED_DOCUMENTS = 6
 EXPECTED_PAGES = 95
-EXPECTED_CHUNKS = 233
+EXPECTED_CHUNKS = 243  # chunking-table-v1 (önceki sürümde 233)
+
+# Güncel sürüm = pdf_belgeleri.processing_version ile eşleşen satırlar.
+# Eski sürümlerin chunk/embedding'leri silinmez; yalnızca kullanılmaz.
+CURRENT_CHUNKS_SQL = (
+    "FROM pdf_chunks AS c JOIN pdf_belgeleri AS b "
+    "ON b.document_id = c.document_id AND b.processing_version = c.processing_version"
+)
 
 # Hocaya ait satır sayıları (makaleler: yalnızca document_id IS NULL).
 EXPECTED_PROTECTED_ROWS = {
@@ -113,6 +120,10 @@ def main():
           by_status.get("tamamlandi", (0, 0))[0])
     check("pdf_belgeleri: islenen = page_count", EXPECTED_DOCUMENTS,
           by_status.get("tamamlandi", (0, 0))[1])
+    cursor.execute("SELECT COUNT(*) FROM pdf_belgeleri WHERE processing_version LIKE %s",
+                   ("%|" + CHUNKING_VERSION,))
+    check(f"pdf_belgeleri sürümü '|{CHUNKING_VERSION}' ile bitiyor", EXPECTED_DOCUMENTS,
+          cursor.fetchone()[0])
 
     # 3) pdf_isleme_durumu: her PDF'in her sayfası.
     documents, chunks = fresh_chunks()
@@ -136,27 +147,35 @@ def main():
     distribution = ", ".join(f"{d}={n}" for d, n in cursor.fetchall())
     check("sayfa durumları (bilgi)", "-", distribution, True)
 
-    # 4) pdf_chunks: sayı ve chunk_id kümesi chunking çıktısıyla aynı.
+    # 4) pdf_chunks (güncel sürüm): sayı ve chunk_id kümesi chunking çıktısıyla aynı.
     fresh_ids = {c["chunk_id"] for c in chunks}
-    cursor.execute("SELECT chunk_id FROM pdf_chunks")
+    cursor.execute("SELECT c.chunk_id " + CURRENT_CHUNKS_SQL)
     stored_ids = {bytes(r[0]).decode() if isinstance(r[0], (bytes, bytearray)) else r[0]
                   for r in cursor.fetchall()}
     check("chunk_document çıktısı", EXPECTED_CHUNKS, len(chunks))
-    check("pdf_chunks: satır", EXPECTED_CHUNKS, counts_after_2["pdf_chunks"])
-    check("pdf_chunks = chunk_document id'leri", "aynı",
+    check("pdf_chunks (güncel sürüm): satır", EXPECTED_CHUNKS, len(stored_ids))
+    check("pdf_chunks (güncel) = chunk_document id'leri", "aynı",
           "aynı" if stored_ids == fresh_ids
           else f"fark {len(stored_ids ^ fresh_ids)}")
+    check("pdf_chunks toplam (eski sürümler dahil, bilgi)", "-",
+          f"{counts_after_2['pdf_chunks']} (eski: {counts_after_2['pdf_chunks'] - len(stored_ids)})",
+          True)
 
-    # 5) chunk_embeddings.
+    # 5) chunk_embeddings (güncel sürüm).
     cursor.execute(
-        "SELECT COUNT(*), MIN(dimension), MAX(dimension) "
-        "FROM chunk_embeddings WHERE embedding_model = %s",
+        "SELECT COUNT(*), MIN(e.dimension), MAX(e.dimension) "
+        + CURRENT_CHUNKS_SQL.replace("FROM pdf_chunks AS c",
+                                     "FROM chunk_embeddings AS e JOIN pdf_chunks AS c "
+                                     "ON c.chunk_id = e.chunk_id")
+        + " WHERE e.embedding_model = %s",
         (EMBEDDING_MODEL,),
     )
     emb_count, min_dim, max_dim = cursor.fetchone()
-    check(f"chunk_embeddings ({EMBEDDING_MODEL})", EXPECTED_CHUNKS, emb_count)
+    check(f"chunk_embeddings ({EMBEDDING_MODEL}, güncel sürüm)", EXPECTED_CHUNKS, emb_count)
     check("embedding dimension", EXPECTED_DIMENSION,
           min_dim if min_dim == max_dim else f"{min_dim}..{max_dim}")
+    check("chunk_embeddings toplam (eski sürümler dahil, bilgi)", "-",
+          counts_after_2["chunk_embeddings"], True)
 
     # 6) Hoca tabloları.
     for table, expected in EXPECTED_PROTECTED_ROWS.items():

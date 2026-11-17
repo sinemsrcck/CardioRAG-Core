@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pymupdf
 
+from src.chunking import versioned_document
 from src.database import get_connection
 from src.pdf_loader import PDF_DIR, calculate_file_hash, load_pdf
 from src.pdf_processing import remove_document_references
@@ -260,7 +261,8 @@ def build_full_text(pdf_path, expected_version, variant):
         with pymupdf.open(pdf_path) as pdf:
             return "".join(page.get_text() for page in pdf)
 
-    cleaned = remove_document_references(load_pdf(pdf_path))
+    # pdf_belgeleri.processing_version chunking sürümünü de içerir; metin aynıdır.
+    cleaned = versioned_document(remove_document_references(load_pdf(pdf_path)))
     if cleaned["processing_version"] != expected_version:
         raise ValueError(
             "Temiz metin sürümü pdf_belgeleri ile uyuşmuyor: "

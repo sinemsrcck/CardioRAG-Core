@@ -18,7 +18,12 @@ import time
 import traceback
 from pathlib import Path
 
-from src.chunking import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, chunk_document
+from src.chunking import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    chunk_document,
+    versioned_document,
+)
 from src.database import (
     get_connection,
     get_existing_embedding_ids,
@@ -39,8 +44,12 @@ def ingest_pdf(conn, pdf_path, embedding_model, chunk_size, chunk_overlap):
 
     # 1) Okuma, temizleme, parçalama (veritabanına dokunmaz).
     raw = load_pdf(pdf_path)
-    cleaned = remove_document_references(raw)
+    # processing_version'a chunking sürümü eklenir; pdf_belgeleri bu sürümü
+    # gösterir ve load_chunks_for_rag yalnızca bu sürümün chunk'larını yükler.
+    cleaned = versioned_document(remove_document_references(raw))
     chunks = chunk_document(cleaned, chunk_size=chunk_size, overlap=chunk_overlap)
+    if any(c["processing_version"] != cleaned["processing_version"] for c in chunks):
+        raise ValueError("Chunk sürümü belge sürümüyle uyuşmuyor.")
 
     # 2) Yalnızca eksik embedding'leri hesapla (transaction dışında).
     chunk_ids = [chunk["chunk_id"] for chunk in chunks]
