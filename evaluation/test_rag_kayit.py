@@ -15,6 +15,7 @@ save_rag_result testi: answer_question sonucu -> rag_sorgulari + rag_sorgu_kayna
 """
 
 import copy
+import json
 import os
 import sys
 
@@ -54,11 +55,12 @@ def counts(cursor):
 def fetch_query(cursor, query_id):
     cursor.execute(
         "SELECT question, answer, llm_model, embedding_model, reranker_model, "
-        "evidence_status, evidence_score, guard_reason, latency_ms "
+        "evidence_status, evidence_score, guard_reason, latency_ms, rerank_method, citation_check "
         "FROM rag_sorgulari WHERE query_id = %s", (query_id,))
     row = cursor.fetchone()
     keys = ("question", "answer", "llm_model", "embedding_model", "reranker_model",
-            "evidence_status", "evidence_score", "guard_reason", "latency_ms")
+            "evidence_status", "evidence_score", "guard_reason", "latency_ms",
+            "rerank_method", "citation_check")
     return dict(zip(keys, row)) if row else None
 
 
@@ -135,6 +137,8 @@ def main():
         check("evidence_score = top_rerank_score", result["top_rerank_score"], q["evidence_score"],
               close(result["top_rerank_score"], q["evidence_score"]))
         check("latency_ms", round(result["response_time_seconds"] * 1000), q["latency_ms"])
+        check("rerank_method", result["rerank_method"], q["rerank_method"])
+        check("citation_check (LLM kapalı)", None, q["citation_check"])
 
         rows = fetch_sources(cur, query_id)
         used = {r["chunk_id"] for r in rows if r["used"]}
@@ -171,9 +175,13 @@ def main():
         dup["debug"]["reranked_hits"] += dup["debug"]["reranked_hits"][:3]
         dup["llm_enabled"] = True
         dup["answer"] = "Örnek yanıt [1]."
+        dup["citation_check"] = rag.validate_citations(dup["answer"], dup["sources"])
         dup_id = save_rag_result(dup, QUESTION, llm_model=LLM_MODEL, connection=conn)
         check("tekrarlanan chunk -> tek satır", len(candidates), len(fetch_sources(cur, dup_id)))
-        check("LLM açık: llm_model parametreden", LLM_MODEL, fetch_query(cur, dup_id)["llm_model"])
+        dq = fetch_query(cur, dup_id)
+        check("LLM açık: llm_model parametreden", LLM_MODEL, dq["llm_model"])
+        stored = json.loads(dq["citation_check"]) if dq["citation_check"] else None
+        check("citation_check JSON = sonuç", dup["citation_check"], stored)
 
         # 5) Yazım ortasında hata -> SAVEPOINT'e dönülmeli (rag_sorgulari satırı da geri alınır)
         before_partial = counts(cur)

@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 -- 5) Makalelerden çıkarılacak klinik bulgular (şimdilik boş).
 -- makale_id için makaleler tablosuna FK tanımlanmadı: hoca tablosuna
 -- kısıt bağlamamak için. Tipi/collation'ı aynıdır (init_schema kontrol eder).
+-- query_id -> rag_sorgulari FK'si, rag_sorgulari bu dosyada daha sonra
+-- oluşturulduğu için src/database.py CORE_CONSTRAINT_MIGRATIONS ile eklenir.
+-- Yazım yalnızca src.database.save_clinical_findings ile (review_status='pending').
 CREATE TABLE IF NOT EXISTS klinik_bulgular (
     id               INT UNSIGNED  NOT NULL AUTO_INCREMENT,
     makale_id        VARCHAR(64)   NULL,
@@ -104,20 +107,33 @@ CREATE TABLE IF NOT EXISTS klinik_bulgular (
     mudahale_turu    VARCHAR(100)  NULL,
     comparator       VARCHAR(255)  NULL,
     doz              VARCHAR(255)  NULL,
-    uygulama_yolu    VARCHAR(100)  NULL,
-    sure             VARCHAR(100)  NULL,
+    uygulama_yolu    VARCHAR(255)  NULL,
+    sure             VARCHAR(255)  NULL,
     sonuc_olcutu_tr  VARCHAR(255)  NULL,
     outcome_type     VARCHAR(100)  NULL,
     etki_turu        VARCHAR(100)  NULL,
-    deger            VARCHAR(100)  NULL,
+    deger            VARCHAR(255)  NULL,
     unit             VARCHAR(50)   NULL,
-    ci95             VARCHAR(100)  NULL,
-    p                VARCHAR(50)   NULL,
+    ci95             VARCHAR(255)  NULL,
+    p                VARCHAR(255)  NULL,
     yon              VARCHAR(50)   NULL,
     kanit_sayfa      INT UNSIGNED  NULL,
     kanit_cumle      TEXT          NULL,
     review_status    ENUM('pending', 'verified') NOT NULL DEFAULT 'pending',
+    -- Sonradan eklenenler (mevcut kurulumlara CORE_COLUMN_MIGRATIONS ile):
+    tani_tr            VARCHAR(255)  NULL,
+    tani_en            VARCHAR(255)  NULL,
+    icd10              VARCHAR(64)   NULL,
+    kanit_turu         ENUM('metin', 'tablo') NULL,
+    kanit_sayfa_bitis  INT UNSIGNED  NULL,
+    birlestirme        ENUM('sayfa', 'ara_blok') NULL,
+    cikarma_yontemi    ENUM('rag', 'referans_taslak', 'manuel') NULL,
+    taslak_notu        TEXT          NULL,
+    query_id           CHAR(36)      NULL,
+    -- Tekrar yazımda çoğaltmayı önler: kanıt + alanların SHA-256'sı.
+    satir_hash         CHAR(64)      NULL,
     PRIMARY KEY (id),
+    UNIQUE KEY uq_klinik_bulgular_satir_hash (satir_hash),
     KEY idx_klinik_bulgular_makale (makale_id),
     CONSTRAINT fk_klinik_bulgular_belge
         FOREIGN KEY (document_id) REFERENCES pdf_belgeleri (document_id)
@@ -141,6 +157,9 @@ CREATE TABLE IF NOT EXISTS rag_sorgulari (
     guard_reason     TEXT          NULL,
     latency_ms       INT UNSIGNED  NOT NULL,
     created_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Sonradan eklenenler (CORE_COLUMN_MIGRATIONS):
+    rerank_method    VARCHAR(32)   NULL,
+    citation_check   JSON          NULL,
     PRIMARY KEY (query_id),
     KEY idx_rag_sorgulari_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
@@ -167,10 +186,13 @@ CREATE TABLE IF NOT EXISTS rag_sorgu_kaynaklari (
 
 -- 8) Halüsinasyon değerlendirmesi. Otomatik değerlendirme hiçbir zaman
 -- 'verified' olamaz (CHECK): insan onaylı sonuçlarla karışmaz.
+-- kayit_turu='klinik_cikarim': klinik bulgu çıkarımında denetimi geçemeyen
+-- satırlar (ham_cikti = LLM'in ham satırı). Bu kayıtlarda soru_tipi boş
+-- olabilir; soru-cevap kayıtlarında zorunludur (CHECK).
 CREATE TABLE IF NOT EXISTS halusinasyon_degerlendirme (
     id                   INT UNSIGNED  NOT NULL AUTO_INCREMENT,
     query_id             CHAR(36)      NOT NULL,
-    soru_tipi            ENUM('cevaplanabilir', 'cevaplanamaz', 'celiskili') NOT NULL,
+    soru_tipi            ENUM('cevaplanabilir', 'cevaplanamaz', 'celiskili') NULL,
     claim_text           TEXT          NULL,
     supporting_chunk_id  VARCHAR(255)  NULL,
     citation_correct     BOOLEAN       NULL,
@@ -185,6 +207,9 @@ CREATE TABLE IF NOT EXISTS halusinasyon_degerlendirme (
     evaluation_version   VARCHAR(100)  NULL,
     aciklama             TEXT          NULL,
     created_at           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Sonradan eklenenler (CORE_COLUMN_MIGRATIONS):
+    kayit_turu           ENUM('soru_cevap', 'klinik_cikarim') NOT NULL DEFAULT 'soru_cevap',
+    ham_cikti            JSON          NULL,
     PRIMARY KEY (id),
     KEY idx_halusinasyon_review (evaluation_method, review_status),
     CONSTRAINT fk_halusinasyon_sorgu
@@ -194,5 +219,7 @@ CREATE TABLE IF NOT EXISTS halusinasyon_degerlendirme (
         FOREIGN KEY (supporting_chunk_id) REFERENCES pdf_chunks (chunk_id)
         ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT chk_halusinasyon_automated_not_verified
-        CHECK (evaluation_method = 'manual' OR review_status = 'pending')
+        CHECK (evaluation_method = 'manual' OR review_status = 'pending'),
+    CONSTRAINT chk_halusinasyon_soru_tipi
+        CHECK (kayit_turu <> 'soru_cevap' OR soru_tipi IS NOT NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

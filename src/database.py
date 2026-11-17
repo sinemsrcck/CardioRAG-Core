@@ -11,6 +11,7 @@ Kullanım:
 """
 
 import hashlib
+import json
 import os
 import re
 import sys
@@ -66,11 +67,14 @@ CORE_TABLE_COLUMNS = {
         "mudahale_turu", "comparator", "doz", "uygulama_yolu", "sure",
         "sonuc_olcutu_tr", "outcome_type", "etki_turu", "deger", "unit",
         "ci95", "p", "yon", "kanit_sayfa", "kanit_cumle", "review_status",
+        "tani_tr", "tani_en", "icd10", "kanit_turu", "kanit_sayfa_bitis",
+        "birlestirme", "cikarma_yontemi", "taslak_notu", "query_id", "satir_hash",
     ),
     "rag_sorgulari": (
         "query_id", "question", "answer", "llm_model", "embedding_model",
         "reranker_model", "evidence_status", "evidence_score",
         "guard_reason", "latency_ms", "created_at",
+        "rerank_method", "citation_check",
     ),
     "rag_sorgu_kaynaklari": (
         "query_id", "chunk_id", "retrieval_score", "rerank_score",
@@ -81,9 +85,12 @@ CORE_TABLE_COLUMNS = {
         "citation_correct", "claim_supported", "hata_turu",
         "uygulanan_onlem", "onceki_sonuc", "sonraki_sonuc", "duzeldi_mi",
         "evaluation_method", "review_status", "evaluation_version",
-        "aciklama", "created_at",
+        "aciklama", "created_at", "kayit_turu", "ham_cikti",
     ),
 }
+
+CORE_VIEWS = ("v_tani_tedavi", "v_sonuclar")
+VIEWS_FILE = PROJECT_ROOT / "sql" / "views_core.sql"
 
 # makaleler tablosuna eklenecek sütunlar: (ad, tanım). Hepsi NULL olabilir,
 # bu yüzden mevcut satırların verisi değişmez.
@@ -99,6 +106,61 @@ MAKALELER_NEW_COLUMNS = (
 CORE_COLUMN_MIGRATIONS = {
     "pdf_belgeleri": (
         ("hata_mesaji", "TEXT NULL AFTER islenen_sayfa_sayisi"),
+    ),
+    "klinik_bulgular": (
+        ("tani_tr", "VARCHAR(255) NULL"),
+        ("tani_en", "VARCHAR(255) NULL"),
+        ("icd10", "VARCHAR(64) NULL"),
+        ("kanit_turu", "ENUM('metin', 'tablo') NULL"),
+        ("kanit_sayfa_bitis", "INT UNSIGNED NULL"),
+        ("birlestirme", "ENUM('sayfa', 'ara_blok') NULL"),
+        ("cikarma_yontemi", "ENUM('rag', 'referans_taslak', 'manuel') NULL"),
+        ("taslak_notu", "TEXT NULL"),
+        ("query_id", "CHAR(36) NULL"),
+        ("satir_hash", "CHAR(64) NULL"),
+    ),
+    "rag_sorgulari": (
+        ("rerank_method", "VARCHAR(32) NULL"),
+        ("citation_check", "JSON NULL"),
+    ),
+    "halusinasyon_degerlendirme": (
+        ("kayit_turu", "ENUM('soru_cevap', 'klinik_cikarim') NOT NULL DEFAULT 'soru_cevap'"),
+        ("ham_cikti", "JSON NULL"),
+    ),
+}
+
+# Ad ile kontrol edilip eksikse eklenen kısıtlar (yalnızca ekleme).
+CORE_CONSTRAINT_MIGRATIONS = {
+    "klinik_bulgular": (
+        ("uq_klinik_bulgular_satir_hash", "ADD UNIQUE KEY uq_klinik_bulgular_satir_hash (satir_hash)"),
+        ("fk_klinik_bulgular_sorgu",
+         "ADD CONSTRAINT fk_klinik_bulgular_sorgu FOREIGN KEY (query_id) "
+         "REFERENCES rag_sorgulari (query_id) ON DELETE RESTRICT ON UPDATE CASCADE"),
+    ),
+    "halusinasyon_degerlendirme": (
+        ("chk_halusinasyon_soru_tipi",
+         "ADD CONSTRAINT chk_halusinasyon_soru_tipi "
+         "CHECK (kayit_turu <> 'soru_cevap' OR soru_tipi IS NOT NULL)"),
+    ),
+}
+
+# VARCHAR genişletmeleri: (sütun, tanım, en az uzunluk). Yalnızca mevcut
+# uzunluk küçükse uygulanır; veri kaybı olmaz.
+CORE_WIDEN_MIGRATIONS = {
+    "klinik_bulgular": (
+        ("uygulama_yolu", "VARCHAR(255) NULL", 255),
+        ("sure", "VARCHAR(255) NULL", 255),
+        ("deger", "VARCHAR(255) NULL", 255),
+        ("ci95", "VARCHAR(255) NULL", 255),
+        ("p", "VARCHAR(255) NULL", 255),
+    ),
+}
+
+# NOT NULL -> NULL genişletmeleri (veri kaybı olmaz; yalnızca kısıt gevşer).
+# Soru-cevap kayıtlarında soru_tipi zorunluluğu chk_halusinasyon_soru_tipi ile korunur.
+CORE_NULLABLE_MIGRATIONS = {
+    "halusinasyon_degerlendirme": (
+        ("soru_tipi", "ENUM('cevaplanabilir', 'cevaplanamaz', 'celiskili') NULL"),
     ),
 }
 
@@ -282,6 +344,65 @@ def _add_missing_columns(cursor, table, columns):
     return added
 
 
+def _constraint_exists(cursor, table, name):
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND CONSTRAINT_NAME = %s
+        """,
+        (table, name),
+    )
+    return cursor.fetchone()[0] > 0
+
+
+def _add_missing_constraints(cursor):
+    """CORE_CONSTRAINT_MIGRATIONS'taki eksik kısıtları ekler."""
+    added = []
+    for table, constraints in CORE_CONSTRAINT_MIGRATIONS.items():
+        for name, clause in constraints:
+            if not _constraint_exists(cursor, table, name):
+                cursor.execute(f"ALTER TABLE `{table}` {clause}")
+                added.append(f"{table}.{name}")
+    return added
+
+
+def _apply_nullable_migrations(cursor):
+    """NOT NULL sütunları NULL'a açar (yalnızca gevşetme; veri değişmez)."""
+    changed = []
+    for table, columns in CORE_NULLABLE_MIGRATIONS.items():
+        for column, definition in columns:
+            cursor.execute(
+                """
+                SELECT IS_NULLABLE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s
+                """,
+                (table, column),
+            )
+            row = cursor.fetchone()
+            if row and _as_text(row[0]) == "NO":
+                cursor.execute(f"ALTER TABLE `{table}` MODIFY COLUMN `{column}` {definition}")
+                changed.append(f"{table}.{column} NULL")
+    for table, columns in CORE_WIDEN_MIGRATIONS.items():
+        lengths = _column_max_lengths(cursor, table)
+        for column, definition, minimum in columns:
+            if column in lengths and lengths[column] is not None and lengths[column] < minimum:
+                cursor.execute(f"ALTER TABLE `{table}` MODIFY COLUMN `{column}` {definition}")
+                changed.append(f"{table}.{column} -> {minimum}")
+    return changed
+
+
+def _column_max_lengths(cursor, table):
+    """Metin sütunlarının azami karakter uzunlukları {sütun: uzunluk}."""
+    cursor.execute(
+        """
+        SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+        """,
+        (table,),
+    )
+    return {_as_text(name): length for name, length in cursor.fetchall()}
+
+
 def _add_makaleler_columns(cursor):
     """makaleler tablosuna eksik sütunları ekler; var olanları atlar."""
     if not table_exists(cursor, "makaleler"):
@@ -337,6 +458,12 @@ def init_schema(connection=None, schema_file=SCHEMA_FILE):
         migrated = []
         for table, columns in CORE_COLUMN_MIGRATIONS.items():
             migrated += _add_missing_columns(cursor, table, columns)
+        migrated += _apply_nullable_migrations(cursor)
+        migrated += _add_missing_constraints(cursor)
+
+        # VIEW'lar sütun geçişlerinden sonra (yeni sütunlara dayanırlar).
+        for statement in _split_sql_statements(Path(VIEWS_FILE).read_text(encoding="utf-8")):
+            cursor.execute(statement)
 
         added = _add_makaleler_columns(cursor)
         warning = _makale_id_type_warning(cursor)
@@ -845,6 +972,9 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
         "evidence_score": _optional_float(result.get("top_rerank_score")),
         "guard_reason": evidence.get("reason"),
         "latency_ms": int(round(float(result.get("response_time_seconds") or 0) * 1000)),
+        "rerank_method": result.get("rerank_method"),
+        "citation_check": (json.dumps(result["citation_check"], ensure_ascii=False)
+                           if result.get("citation_check") is not None else None),
     }
     if not query_row["embedding_model"]:
         # rag_sorgulari.embedding_model NOT NULL
@@ -880,10 +1010,11 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
                 INSERT INTO rag_sorgulari
                     (query_id, question, answer, llm_model, embedding_model,
                      reranker_model, evidence_status, evidence_score,
-                     guard_reason, latency_ms)
+                     guard_reason, latency_ms, rerank_method, citation_check)
                 VALUES (%(query_id)s, %(question)s, %(answer)s, %(llm_model)s,
                         %(embedding_model)s, %(reranker_model)s, %(evidence_status)s,
-                        %(evidence_score)s, %(guard_reason)s, %(latency_ms)s)
+                        %(evidence_score)s, %(guard_reason)s, %(latency_ms)s,
+                        %(rerank_method)s, %(citation_check)s)
                 """,
                 query_row,
             )
@@ -918,6 +1049,206 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
         cursor.close()
         if own_connection:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Klinik bulgu kaydı: doğrulanmış satırlar -> klinik_bulgular,
+# reddedilenler -> halusinasyon_degerlendirme
+# ---------------------------------------------------------------------------
+
+CIKARMA_YONTEMLERI = ("rag", "referans_taslak", "manuel")
+CLINICAL_VALIDATION_VERSION = "clinical_validation-v1"
+
+KLINIK_INSERT_COLUMNS = (
+    "makale_id", "document_id", "chunk_id", "study_name", "hasta_grubu", "hasta_sayisi",
+    "mudahale_tr", "mudahale_en", "mudahale_turu", "comparator", "doz", "uygulama_yolu",
+    "sure", "sonuc_olcutu_tr", "outcome_type", "etki_turu", "deger", "unit", "ci95", "p",
+    "yon", "kanit_sayfa", "kanit_cumle", "review_status", "tani_tr", "tani_en", "icd10",
+    "kanit_turu", "kanit_sayfa_bitis", "birlestirme", "cikarma_yontemi", "taslak_notu",
+    "query_id", "satir_hash",
+)
+# satir_hash'e girmeyenler: kimliği belirlemeyen / ortamdan gelen alanlar.
+_HASH_EXCLUDED = {"chunk_id", "query_id", "satir_hash", "review_status", "makale_id", "taslak_notu"}
+
+
+def _clean(value):
+    """Boş string -> None; diğerleri olduğu gibi."""
+    return None if value is None or (isinstance(value, str) and not value.strip()) else value
+
+
+def _optional_int(value):
+    value = _clean(value)
+    return None if value is None else int(value)
+
+
+def clinical_row_hash(row, cikarma_yontemi):
+    """Kanıt + alanların SHA-256'sı (tekrar yazımda çoğaltmayı önler)."""
+    payload = {
+        column: "" if _clean(row.get(column)) is None else str(row.get(column))
+        for column in KLINIK_INSERT_COLUMNS if column not in _HASH_EXCLUDED
+    }
+    payload["cikarma_yontemi"] = cikarma_yontemi
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _claim_text(row):
+    if _clean(row.get("claim_text")):
+        return row["claim_text"]
+    parts = [row.get(k) for k in ("mudahale_tr", "doz", "hasta_grubu", "sonuc_olcutu_tr", "deger")]
+    return " | ".join(str(p) for p in parts if _clean(p)) or None
+
+
+def _transaction_scope(connection, savepoint):
+    """save_* fonksiyonları için bağlantı/SAVEPOINT yönetimi (bağlam yöneticisi)."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        own = connection is None
+        conn = get_connection() if own else connection
+        if not own and conn.autocommit and not conn.in_transaction:
+            raise ValueError(
+                "Verilen bağlantı autocommit modunda ve açık transaction yok; "
+                "yazım atomik olamaz. autocommit=False kullanın veya start_transaction() çağırın."
+            )
+        cursor = conn.cursor()
+        try:
+            if not own:
+                cursor.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield conn, cursor
+            except Exception:
+                if own:
+                    conn.rollback()
+                else:
+                    cursor.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                raise
+            if own:
+                conn.commit()
+            else:
+                cursor.execute(f"RELEASE SAVEPOINT {savepoint}")
+        finally:
+            cursor.close()
+            if own:
+                conn.close()
+
+    return scope()
+
+
+def save_clinical_findings(rows, cikarma_yontemi, query_id=None, connection=None):
+    """
+    Klinik bulgu satırlarını denetleyip yazar.
+
+    rows: klinik_bulgular sütun adlarıyla sözlükler (en az document_id,
+          kanit_sayfa, kanit_cumle, mudahale_turu). İsteğe bağlı 'claim_text'
+          (LLM'in iddiası) reddedilenlerde kullanılır.
+    cikarma_yontemi: 'rag' | 'referans_taslak' | 'manuel' ('verified' vb. -> hata).
+
+    - Her satır src.clinical_validation.validate_row'dan geçer.
+    - Geçenler klinik_bulgular'a review_status='pending' ile yazılır; aynı
+      satir_hash zaten varsa atlanır (çoğaltma yok). chunk_id verilmemişse
+      kanıtın geçtiği güncel chunk'tan doldurulur.
+    - Geçemeyenler döndürülür; query_id verildiyse ayrıca
+      halusinasyon_degerlendirme'ye yazılır (kayit_turu='klinik_cikarim',
+      evaluation_method='automated', review_status='pending', ham_cikti=satır).
+    - review_status='verified' ile gelen satır kabul edilmez (otomatik satır
+      doğrudan doğrulanmış olamaz); hiçbir şey yazılmadan ValueError.
+    - Bağlantı davranışı save_rag_result ile aynı (verilirse COMMIT yok, SAVEPOINT).
+
+    Döndürür: {"yazilan", "zaten_var", "reddedilen": [{"satir", "hata_turu",
+               "aciklama"}], "halusinasyon_kaydi"}
+    """
+    from src.clinical_validation import find_chunk_id, load_validation_context, validate_row
+
+    if cikarma_yontemi not in CIKARMA_YONTEMLERI:
+        raise ValueError(f"cikarma_yontemi {CIKARMA_YONTEMLERI} içinden olmalı: '{cikarma_yontemi}'")
+    rows = [dict(r) for r in rows]
+    for row in rows:
+        if _clean(row.get("review_status")) not in (None, "pending"):
+            raise ValueError("Satırlar doğrudan 'verified' (ya da pending dışı) yazılamaz.")
+
+    with _transaction_scope(connection, "save_clinical_findings") as (conn, cursor):
+        if query_id is not None:
+            cursor.execute("SELECT COUNT(*) FROM rag_sorgulari WHERE query_id = %s", (query_id,))
+            if cursor.fetchone()[0] == 0:
+                raise ValueError(f"query_id rag_sorgulari'nda yok: {query_id}")
+
+        ctx = load_validation_context(conn)
+        max_lengths = _column_max_lengths(cursor, "klinik_bulgular")
+        accepted, rejected, seen = [], [], set()
+        for row in rows:
+            ok, hata_turu, aciklama = validate_row(row, ctx)
+            if ok:
+                too_long = [c for c in KLINIK_INSERT_COLUMNS
+                            if isinstance(row.get(c), str) and max_lengths.get(c)
+                            and len(row[c]) > max_lengths[c]]
+                if too_long:
+                    ok, hata_turu = False, "deger_kumesi_disi"
+                    aciklama = f"sütun sınırını aşan alan: {too_long}"
+            if not ok:
+                rejected.append({"satir": row, "hata_turu": hata_turu, "aciklama": aciklama})
+                continue
+            record = {column: _clean(row.get(column)) for column in KLINIK_INSERT_COLUMNS}
+            record.update(
+                makale_id=record["makale_id"] or ctx.makale_by_doc.get(row["document_id"]),
+                chunk_id=record["chunk_id"] or find_chunk_id(row, ctx),
+                hasta_sayisi=_optional_int(row.get("hasta_sayisi")),
+                kanit_sayfa=int(row["kanit_sayfa"]),
+                kanit_sayfa_bitis=_optional_int(row.get("kanit_sayfa_bitis")),
+                review_status="pending",
+                cikarma_yontemi=cikarma_yontemi,
+                query_id=query_id,
+                satir_hash=clinical_row_hash(row, cikarma_yontemi),
+            )
+            if record["satir_hash"] not in seen:
+                seen.add(record["satir_hash"])
+                accepted.append(record)
+
+        existing = set()
+        if accepted:
+            hashes = [r["satir_hash"] for r in accepted]
+            placeholders = ", ".join(["%s"] * len(hashes))
+            cursor.execute(f"SELECT satir_hash FROM klinik_bulgular WHERE satir_hash IN ({placeholders})",
+                           hashes)
+            existing = {_as_text(r[0]) for r in cursor.fetchall()}
+        new_rows = [r for r in accepted if r["satir_hash"] not in existing]
+
+        if new_rows:
+            columns = ", ".join(f"`{c}`" for c in KLINIK_INSERT_COLUMNS)
+            values = ", ".join(["%s"] * len(KLINIK_INSERT_COLUMNS))
+            cursor.executemany(
+                f"INSERT INTO klinik_bulgular ({columns}) VALUES ({values})",
+                [tuple(r[c] for c in KLINIK_INSERT_COLUMNS) for r in new_rows],
+            )
+
+        logged = 0
+        if query_id is not None and rejected:
+            cursor.executemany(
+                """
+                INSERT INTO halusinasyon_degerlendirme
+                    (query_id, kayit_turu, soru_tipi, claim_text, supporting_chunk_id,
+                     hata_turu, evaluation_method, review_status, evaluation_version,
+                     aciklama, ham_cikti)
+                VALUES (%s, 'klinik_cikarim', NULL, %s, %s, %s, 'automated', 'pending',
+                        %s, %s, %s)
+                """,
+                [
+                    (query_id, _claim_text(r["satir"]),
+                     r["satir"].get("chunk_id") if r["satir"].get("chunk_id") in ctx.chunk_ids else None,
+                     r["hata_turu"], CLINICAL_VALIDATION_VERSION, r["aciklama"],
+                     json.dumps(r["satir"], ensure_ascii=False, default=str))
+                    for r in rejected
+                ],
+            )
+            logged = len(rejected)
+
+    return {
+        "yazilan": len(new_rows),
+        "zaten_var": len(accepted) - len(new_rows),
+        "reddedilen": rejected,
+        "halusinasyon_kaydi": logged,
+    }
 
 
 def _print_state(state):
