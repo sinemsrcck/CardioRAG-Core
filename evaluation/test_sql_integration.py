@@ -11,6 +11,8 @@ from src import database
 from src.clinical_candidates import collect_candidates
 from src.clinical_extraction import FIELDS
 from src.clinical_validation import ValidationContext
+from src.clinical_review import ClinicalReviewError
+from evaluation.test_clinical_review import bind_fixture, mock_approved_reviews
 from src.sql_integration import (
     _check_source, answer_question_with_sql, extract_and_save_clinical_findings,
     to_clinical_sql_row,
@@ -31,6 +33,8 @@ class SQLIntegrationTests(unittest.TestCase):
                           "document_id": "doc1", "sayfa": 1, "sayfa_bitis": None,
                           "kaynak_turu": "metin", "birlestirme": "", "review_status": "pending",
                           "aday_id": self.candidate["aday_id"]}
+        self.extracted.update(source_candidate=copy.deepcopy(self.candidate),
+                              classification_review=mock_approved_reviews([self.candidate])[self.candidate["aday_id"]])
         self.ctx = ValidationContext(pages={"doc1": {1: self.text}},
                                      makale_by_doc={"doc1": "article1"},
                                      chunks={("doc1", 1): [("new:chunk", self.text)]},
@@ -43,14 +47,15 @@ class SQLIntegrationTests(unittest.TestCase):
         self.enterContext(patch("src.database._column_max_lengths", return_value={}))
         self.enterContext(patch("src.clinical_validation.load_validation_context", return_value=self.ctx))
         self.client = Mock()
+        self.client.api_key = "test-only-key"
+        self.client.with_options.return_value = self.client
         self.client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(
             finish_reason="stop", message=SimpleNamespace(content=json.dumps({"findings": [self.finding]})))])
 
     def run_clinical(self, *, connection=True, reviews=True, query_id=None):
         kwargs = {"client": self.client, "model": "mock-llm", "source_language": "en",
                   "query_id": query_id}
-        if reviews:
-            kwargs["reviewed_fields_by_candidate"] = {self.candidate["aday_id"]: {"mudahale_turu": "tedavi"}}
+        kwargs["reviewed_fields_by_candidate"] = mock_approved_reviews(collect_candidates(self.articles)) if reviews else {}
         if connection:
             kwargs["connection"] = self.conn
         return extract_and_save_clinical_findings(self.articles, **kwargs)
@@ -95,15 +100,69 @@ class SQLIntegrationTests(unittest.TestCase):
         self.cursor.executemany.assert_not_called()
 
     def test_missing_classification_rejected_not_guessed(self):
-        result = self.run_clinical(reviews=False)
-        self.assertEqual(result["sql_result"]["yazilan"], 0)
-        self.assertEqual(result["sql_result"]["reddedilen"][0]["hata_turu"], "deger_kumesi_disi")
+        with self.assertRaises(ClinicalReviewError):
+            self.run_clinical(reviews=False)
+        self.client.chat.completions.create.assert_not_called()
+        self.conn.cursor.assert_not_called()
         self.cursor.executemany.assert_not_called()
 
-    def test_rejection_audit_linked_to_query_is_pending(self):
-        result = self.run_clinical(reviews=False, query_id="query-id")
-        self.assertEqual(result["sql_result"]["halusinasyon_kaydi"], 1)
-        self.assertIn("'automated', 'pending'", self.cursor.executemany.call_args.args[0])
+    def test_api_failure_with_partial_findings_never_enters_sql_scope(self):
+        first_response = self.client.chat.completions.create.return_value
+        self.articles.append(("second.pdf", "article2", "doc2", "=== Sayfa 1 ===\n" + self.text))
+        self.client.chat.completions.create.side_effect = [first_response, RuntimeError("private API data")]
+        result = self.run_clinical()
+        self.assertTrue(result["stopped"])
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(len(result["partial_findings"]), 1)
+        self.assertEqual(result["sql_status"], "not_attempted")
+        self.assertIsNone(result["sql_result"])
+        self.assertEqual(self.client.chat.completions.create.call_count, 2)
+        self.conn.cursor.assert_not_called()
+
+    def test_sql_validation_rejection_prevents_clinical_and_audit_inserts(self):
+        with patch("src.database._column_max_lengths", return_value={"mudahale_en": 1}):
+            result = self.run_clinical(query_id="query-id")
+        self.assertEqual(result["sql_status"], "error")
+        self.assertIsNone(result["sql_result"])
+        self.assertTrue(result["adapter_rejected"])
+        self.cursor.executemany.assert_not_called()
+        self.conn.commit.assert_not_called()
+        self.assertIn("ROLLBACK TO SAVEPOINT clinical_llm_pipeline",
+                      [c.args[0] for c in self.cursor.execute.call_args_list])
+
+    def test_invalid_late_classification_blocks_api_and_sql_for_entire_batch(self):
+        self.articles.append(("second.pdf", "article2", "doc2", "=== Sayfa 1 ===\n" + self.text))
+        candidates = collect_candidates(self.articles)
+        reviews = mock_approved_reviews(candidates)
+        reviews[candidates[1]["aday_id"]]["mudahale_turu"] = "unreviewed"
+        with self.assertRaises(ClinicalReviewError):
+            extract_and_save_clinical_findings(self.articles, client=self.client, model="mock-llm",
+                                               reviewed_fields_by_candidate=reviews, connection=self.conn)
+        self.client.with_options.assert_not_called()
+        self.client.chat.completions.create.assert_not_called()
+        self.conn.cursor.assert_not_called()
+
+    def test_source_failure_in_later_finding_does_not_save_earlier_finding(self):
+        self.articles.append(("second.pdf", "article2", "doc2", "=== Sayfa 1 ===\n" + self.text))
+        # Both LLM responses validate, but the second document is not in the SQL context.
+        result = self.run_clinical()
+        self.assertEqual(result["sql_status"], "error")
+        self.assertIsNone(result["sql_result"])
+        self.cursor.executemany.assert_not_called()
+        self.conn.commit.assert_not_called()
+
+    def test_enum_only_adapter_input_is_not_accepted_as_approval(self):
+        with self.assertRaises(ClinicalReviewError):
+            to_clinical_sql_row(self.extracted, reviewed_fields={"mudahale_turu": "tedavi"})
+
+    def test_partial_extraction_report_is_never_written_even_without_stop_flag(self):
+        partial = {"findings": [self.extracted], "rejected": [{"reason": "mock_failure"}]}
+        with patch("src.sql_integration.extract_clinical_findings", return_value=partial):
+            result = self.run_clinical()
+        self.assertEqual(result["sql_status"], "not_attempted")
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(len(result["partial_findings"]), 1)
+        self.conn.cursor.assert_not_called()
 
     def test_missing_metadata_and_verified_input_rejected(self):
         for update in ({"document_id": None}, {"filename": None}, {"review_status": "verified"},
@@ -116,17 +175,20 @@ class SQLIntegrationTests(unittest.TestCase):
         row = to_clinical_sql_row({**self.extracted, "chunk_id": "unrelated:chunk"})
         with self.assertRaises(ValueError):
             _check_source(row, self.ctx)
-        row = to_clinical_sql_row({**self.extracted, "makale_id": "wrong-article"})
         with self.assertRaises(ValueError):
+            row = to_clinical_sql_row({**self.extracted, "makale_id": "wrong-article"})
             _check_source(row, self.ctx)
 
     def test_mult_page_metadata_preserved_without_inventing_chunk(self):
-        finding = {**self.extracted, "sayfa_bitis": 2, "birlestirme": "sayfa"}
+        candidate = bind_fixture({**self.candidate, "sayfa_bitis": 2, "birlestirme": "sayfa"})
+        finding = {**self.extracted, "aday_id": candidate["aday_id"], "sayfa_bitis": 2, "birlestirme": "sayfa",
+                   "source_candidate": candidate,
+                   "classification_review": mock_approved_reviews([candidate])[candidate["aday_id"]]}
         row = to_clinical_sql_row(finding)
         self.assertEqual(row["kanit_sayfa_bitis"], 2)
         self.assertEqual(row["birlestirme"], "sayfa")
         self.assertIsNone(row["chunk_id"])
-        self.assertIsNone(row["mudahale_turu"])
+        self.assertEqual(row["mudahale_turu"], "tedavi")
         self.assertIsNone(row["tani_en"])
 
     def test_sql_failure_rolls_back_only_scopes_and_preserves_extraction(self):

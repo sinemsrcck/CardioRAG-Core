@@ -9,24 +9,37 @@ from src.clinical_extraction import (
     FIELDS, _metadata, _validate_response, extract_clinical_findings,
     prepare_rag_save_kwargs,
 )
+from src.clinical_review import ClinicalReviewError, CLASSIFICATION_FIELDS, validate_clinical_reviews
 
 
 def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
     """Adapt an extracted candidate to the CURRENT SQL/validation contract.
 
-    No diagnosis/enum/translation is inferred. Human-supplied classifications
-    may specify only the four enum fields; the SQL validator checks their values.
-    Missing intervention type stays null and will be rejected, never guessed.
+    No diagnosis/enum/translation is inferred. Versioned human classification
+    approval is required and checked against the full source candidate. Legacy
+    enum-only reviewed_fields records are rejected, not upgraded to approvals.
     The full untranslated spans are retained in taslak_notu.
     """
     from src.database import KLINIK_INSERT_COLUMNS
 
     if not isinstance(finding, dict) or finding.get("review_status") != "pending":
         raise ValueError("Only pending clinical candidates can be persisted")
+    source_candidate = finding.get("source_candidate")
+    if not isinstance(source_candidate, dict):
+        raise ClinicalReviewError("missing_source_candidate")
+    review = finding.get("classification_review") if reviewed_fields is None else reviewed_fields
+    reviews = validate_clinical_reviews([source_candidate], {source_candidate.get("aday_id"): review})
+    review = reviews[source_candidate["aday_id"]]
+    if finding.get("classification_review") is not None and finding["classification_review"] != review:
+        raise ClinicalReviewError("review_provenance_mismatch")
     metadata = _metadata(finding)
+    source_metadata = _metadata(source_candidate)
+    for field in ("filename", "makale_id", "document_id", "sayfa", "sayfa_bitis", "aday_id", "kaynak_turu", "birlestirme"):
+        if metadata.get(field) != source_metadata.get(field):
+            raise ClinicalReviewError("finding_source_metadata_mismatch")
     payload = {key: finding.get(key) for key in (*FIELDS, "evidence_quote")}
     quote = payload["evidence_quote"]
-    _validate_response({"findings": [payload]}, quote if isinstance(quote, str) else "")
+    _validate_response({"findings": [payload]}, source_candidate["cumle"])
     if source_language not in (None, "en", "tr"):
         raise ValueError("source_language must be en, tr or None")
     if not isinstance(metadata.get("kaynak_turu"), str) or not metadata["kaynak_turu"]:
@@ -35,13 +48,7 @@ def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
         not isinstance(metadata["chunk_id"], str) or not metadata["chunk_id"].strip()
     ):
         raise ValueError("chunk_id must be a nonempty source string or absent")
-    reviewed_fields = {} if reviewed_fields is None else reviewed_fields
-    if not isinstance(reviewed_fields, dict) or set(reviewed_fields) - {
-        "mudahale_turu", "etki_turu", "yon", "outcome_type",
-    }:
-        raise ValueError("Only explicit clinical classifications may be supplied")
-    if any(value is not None and not isinstance(value, str) for value in reviewed_fields.values()):
-        raise ValueError("Clinical classifications must be strings or null")
+    reviewed_fields = {key: review[key] for key in CLASSIFICATION_FIELDS if key in review}
     row = dict.fromkeys(KLINIK_INSERT_COLUMNS)
     row.update(
         makale_id=metadata["makale_id"], document_id=metadata["document_id"],
@@ -65,6 +72,7 @@ def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
         "filename": metadata["filename"], "aday_id": metadata.get("aday_id"),
         "source_language": source_language,
         "extracted_fields": {field: finding[field] for field in FIELDS},
+        "classification_review": review,
         "notice": "Automated candidate; clinical relationships require human review",
     }, ensure_ascii=False)
     return row
@@ -105,16 +113,21 @@ def extract_and_save_clinical_findings(
     No automatic verified labels. Repeated findings use the writer's stable hash.
     """
     from src.clinical_candidates import collect_candidates
-    from src.clinical_validation import load_validation_context
-    from src.database import _transaction_scope, save_clinical_findings
+    from src.clinical_validation import load_validation_context, validate_row
+    from src.database import _transaction_scope, _column_max_lengths, KLINIK_INSERT_COLUMNS, save_clinical_findings
 
-    reviews = {} if reviewed_fields_by_candidate is None else reviewed_fields_by_candidate
-    if not isinstance(reviews, dict):
-        raise ValueError("Classifications must be keyed by source aday_id")
     candidates = collect_candidates(list(articles))
-    extraction = extract_clinical_findings(candidates, client=client, model=model)
+    reviews = validate_clinical_reviews(candidates, reviewed_fields_by_candidate)
+    extraction = extract_clinical_findings(
+        candidates, client=client, model=model, reviewed_fields_by_candidate=reviews,
+    )
     report = {**extraction, "adapter_rejected": [], "sql_result": None,
               "sql_status": "not_attempted", "sql_error": None}
+    if extraction.get("stopped") or extraction.get("rejected"):
+        report.update(stopped=True, findings=[],
+                      partial_findings=extraction.get("partial_findings", extraction["findings"]))
+        report.setdefault("stop_reason", "extraction_rejected")
+        return report
     rows = []
     for finding in extraction["findings"]:
         try:
@@ -124,25 +137,40 @@ def extract_and_save_clinical_findings(
             ))
         except ValueError as exc:
             report["adapter_rejected"].append({"aday_id": finding.get("aday_id"), "reason": str(exc)})
+    if report["adapter_rejected"]:
+        report.update(stopped=True, stop_reason="adapter_validation_error", partial_findings=report["findings"], findings=[])
+        return report
     if not rows:
         return report
     try:
         # Reuse the existing transaction implementation. A distinct outer
         # savepoint includes our context checks and the writer's own savepoint.
-        with _transaction_scope(connection, "clinical_llm_pipeline") as (conn, _):
+        with _transaction_scope(connection, "clinical_llm_pipeline") as (conn, cursor):
             ctx = load_validation_context(conn)
+            max_lengths = _column_max_lengths(cursor, "klinik_bulgular")
             checked = []
             for row in rows:
                 try:
                     _check_source(row, ctx)
+                    ok, error_type, _ = validate_row(row, ctx)
+                    if not ok:
+                        raise ValueError(error_type)
+                    if any(isinstance(row.get(column), str) and max_lengths.get(column)
+                           and len(row[column]) > max_lengths[column] for column in KLINIK_INSERT_COLUMNS):
+                        raise ValueError("clinical_field_too_long")
                     checked.append(row)
                 except ValueError as exc:
                     report["adapter_rejected"].append({"document_id": row["document_id"],
                                                        "chunk_id": row.get("chunk_id"), "reason": str(exc)})
+            if report["adapter_rejected"]:
+                raise ValueError("Source validation failed; no clinical rows may be saved")
             if checked:
                 sql_result = save_clinical_findings(
                     checked, cikarma_yontemi="rag", query_id=query_id, connection=conn,
                 )
+                if sql_result["reddedilen"]:
+                    report["sql_rejected"] = sql_result["reddedilen"]
+                    raise ValueError("Clinical rows rejected; rolling back the entire write scope")
             else:
                 sql_result = {"yazilan": 0, "zaten_var": 0, "reddedilen": [], "halusinasyon_kaydi": 0}
         report["sql_result"] = sql_result

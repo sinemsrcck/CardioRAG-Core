@@ -16,6 +16,8 @@ takıldığı kalıplar.
 """
 
 import csv
+import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -24,6 +26,35 @@ from src.database import get_connection
 
 OUTPUT_FILE = Path("data/review/klinik_aday_cumleler.csv")
 PAGE_MARKER = re.compile(r"^=== Sayfa (\d+) ===$", re.MULTILINE)
+CANDIDATE_ID_VERSION = "clinical-candidate-v1"
+
+
+def candidate_binding(candidate):
+    """Bind exact candidate text to document/page/span, independent of ordering.
+
+    No whitespace normalization: any change to the text supplied to the LLM
+    invalidates an earlier approval. Filename and collection ordinal are excluded.
+    """
+    if not isinstance(candidate, dict):
+        raise ValueError("Invalid candidate")
+    document_id, text = candidate.get("document_id"), candidate.get("cumle")
+    page = candidate.get("sayfa")
+    end = candidate.get("sayfa_bitis")
+    end = page if end in (None, "") else end
+    kind = candidate.get("kaynak_turu", "metin")
+    joined = candidate.get("birlestirme")
+    joined = "" if joined is None else joined
+    if not isinstance(document_id, str) or not document_id.strip() or not isinstance(text, str) or not text.strip():
+        raise ValueError("Missing candidate source")
+    if type(page) is not int or page < 1 or type(end) is not int or end < page:
+        raise ValueError("Invalid candidate page span")
+    if not isinstance(kind, str) or not kind or not isinstance(joined, str):
+        raise ValueError("Invalid candidate source type")
+    source_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    binding = {"document_id": document_id, "sayfa": page, "sayfa_bitis": end,
+               "kaynak_turu": kind, "birlestirme": joined, "source_text_sha256": source_hash}
+    encoded = json.dumps(binding, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**binding, "aday_id": CANDIDATE_ID_VERSION + ":" + hashlib.sha256(encoded).hexdigest()}
 
 # ---------------------------------------------------------------------------
 # Kalıplar
@@ -359,8 +390,7 @@ def collect_candidates(articles):
             patterns = ([f"doz: {d}" for d in doses]
                         + [f"ilaç: {t}" for t in treatments]
                         + [f"tanı: {d}" for d in diagnostics])
-            candidates.append({
-                "aday_id": f"{makale_id}#p{page}#{len(candidates) + 1}",
+            candidate = {
                 "dosya": filename,
                 "makale_id": makale_id,
                 "document_id": document_id,
@@ -372,7 +402,11 @@ def collect_candidates(articles):
                 "eslesen_kaliplar": "; ".join(patterns),
                 "cumle": sentence,
                 "karakter": len(sentence),
-            })
+            }
+            binding = candidate_binding(candidate)
+            candidate.update(aday_id=binding["aday_id"], source_text_sha256=binding["source_text_sha256"],
+                             candidate_id_version=CANDIDATE_ID_VERSION)
+            candidates.append(candidate)
     return candidates
 
 
