@@ -122,6 +122,7 @@ def main(pdf_dir=None):
     documents = load_all_pdfs(pdf_dir) if pdf_dir is not None else load_all_pdfs()
     validate_collection(documents)
     failures = []
+    regenerated_chunks = []
 
     print()
     header = (
@@ -139,7 +140,9 @@ def main(pdf_dir=None):
         cleaned = remove_document_references(document)
         cleaned_text = full_text(cleaned)
         failures.extend(content_failures(document, cleaned))
-        for chunk in chunk_document(cleaned):
+        document_chunks = chunk_document(cleaned)
+        regenerated_chunks.extend(document_chunks)
+        for chunk in document_chunks:
             if f"_v" not in chunk["chunk_id"] or "_t" not in chunk["chunk_id"]:
                 failures.append(f"{name}: unversioned chunk identity")
             if chunk["text_sha256"] != hashlib.sha256(chunk["text"].encode("utf-8")).hexdigest():
@@ -195,6 +198,17 @@ def main(pdf_dir=None):
 
             pages = [p["page_number"] for p in cleaned["pages"]]
             print(f"    -> korunan sayfalar: {pages}")
+
+    # The previous self-hash checks could not detect page-only vs full-document
+    # Markdown differences. Check the actual stored dataset against this run.
+    from evaluation.evaluate_rag import load_questions, validate_evidence_chunks
+    try:
+        audit = validate_evidence_chunks(
+            load_questions(Path(__file__).with_name("test_questions.csv")), regenerated_chunks,
+        )
+        print("Full-document evidence audit:", audit)
+    except ValueError as exc:
+        failures.append(str(exc))
 
     print()
 

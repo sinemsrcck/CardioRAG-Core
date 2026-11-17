@@ -1,6 +1,9 @@
 """Offline evaluation only. No threshold is selected during report collection.
 
-Reviewed chunk labels: direct_support, partial_support, irrelevant, ambiguous.
+Reviewed chunk labels: direct_support, partial_support, topic_only, no_support,
+uncertain (legacy irrelevant/ambiguous labels are also accepted).
+Automated textual verification is excluded until explicit human approval and
+calibration_eligible=True; it is not clinical ground truth.
 Only verified direct_support / irrelevant pairs enter binary score metrics.
 A verified gold_review_status means the question's sufficient support sets have
 been reviewed. Each set is a list of exact chunk identities; alternatives are
@@ -28,12 +31,20 @@ def validate_splits(records):
     Page-level grouping is deliberately conservative. Unassigned rows may be
     collected for review, but cannot enter threshold fitting or held-out metrics.
     """
-    seen = {}
+    parents = {}
+    assignments = []
+    def root(key):
+        parents.setdefault(key, key)
+        if parents[key] != key:
+            parents[key] = root(parents[key])
+        return parents[key]
     for row in records:
         split = row.get("split", "unassigned")
         if split not in {"calibration", "test", "unassigned"}:
             raise ValueError("Invalid split")
-        keys = [("question", str(row.get("id"))), ("text", row.get("question"))]
+        keys = [("question", str(row["id"]))] if row.get("id") is not None else []
+        if row.get("question"):
+            keys.append(("text", row["question"]))
         if row.get("question_group"):
             keys.append(("group", row["question_group"]))
         keys += [("passage_group", group) for group in json_list(row.get("evidence_group_ids_json"))]
@@ -43,29 +54,51 @@ def validate_splits(records):
                     keys.append(("page", str(evidence["document_id"]), str(evidence["page_number"])))
                 if identity(evidence):
                     keys.append(("chunk", *identity(evidence)))
+        if not keys:
+            raise ValueError("Question or evidence group identity required")
+        anchor = keys[0]
         for key in keys:
-            if key[-1] is None or split == "unassigned":
-                continue
-            if key in seen and seen[key] != split:
-                raise ValueError("Calibration/test leakage: " + repr(key))
-            seen[key] = split
+            parents[root(key)] = root(anchor)
+        assignments.append((anchor, split))
+    seen = {}
+    for anchor, split in assignments:
+        if split == "unassigned":
+            continue
+        component = root(anchor)
+        if component in seen and seen[component] != split:
+            raise ValueError("Calibration/test leakage in connected question/evidence group")
+        seen[component] = split
 
 
 def _rows(records, model, split):
+    records = list(records)
     validate_splits(records)
     if model not in {"minilm", "bge-m3"}:
         raise ValueError("Specify minilm or bge-m3 separately")
     if split not in {"calibration", "test"}:
         raise ValueError("Explicit calibration or test split required")
-    return [r for r in records if r.get("reranker_model") == model and r.get("split") == split]
+    rows = [r for r in records if r.get("reranker_model") == model and r.get("split") == split]
+    settings = {tuple(str(r.get(key)) for key in (
+        "embedding_model", "rerank_method", "candidate_k", "top_k",
+        "max_chunks_per_document", "min_relevance_score",
+    )) for r in rows}
+    if len(settings) > 1:
+        raise ValueError("Do not pool different retrieval/evaluation configurations")
+    return rows
 
 
 def _judgments(row):
     judgments = {}
     for item in json_list(row.get("evidence_matches_json")):
         key = identity(item)
-        if key and item.get("review_status") == "verified":
+        # Missing provenance must never turn an automatic/legacy label into gold.
+        approved = (item.get("review_status") == "verified"
+                    and item.get("human_review_status") == "verified"
+                    and item.get("calibration_eligible") is True)
+        if key and approved:
             label = item.get("support_level")
+            label = {"topic_only": "irrelevant", "no_support": "irrelevant",
+                     "uncertain": "ambiguous"}.get(label, label)
             if key in judgments and judgments[key] != label:
                 raise ValueError("Conflicting verified chunk labels")
             judgments[key] = label
@@ -177,10 +210,15 @@ def evaluate_source_metrics(records, reranker_model, split="test", k=5):
                 eligible_precision += 1
         stages[field] = {"hit_at_k": _rate(hits, hit_total),
                          "precision_at_k": _rate(relevant, returned),
-                         "precision_eligible_questions": eligible_precision}
+                         "precision_aggregation": "micro_over_returned_top_k",
+                         "precision_eligible_questions": eligible_precision,
+                         "precision_excluded_questions": len(rows) - eligible_precision,
+                         "hit_excluded_questions": len(rows) - hit_total}
     covered = total = excluded = 0
     for row in rows:
-        if row.get("answerability_review_status") != "verified" or row.get("answerability_label") != "answerable":
+        if (row.get("answerability_review_status") != "verified"
+                or row.get("human_review_status") != "verified"
+                or row.get("answerability_label") != "answerable"):
             excluded += 1
             continue
         labels = _judgments(row)
@@ -192,7 +230,17 @@ def evaluate_source_metrics(records, reranker_model, split="test", k=5):
         keys = {identity(c) for c in json_list(row.get("selected_chunks_json"))}
         gate_open = row.get("status") in {"retrieval_only", "generated"}
         covered += gate_open and any(group.issubset(keys) for group in gold)
+    gate_pairs = []
+    for row in rows:
+        if (row.get("status") != "error"
+                and row.get("answerability_review_status") == "verified"
+                and row.get("human_review_status") == "verified"
+                and row.get("answerability_label") in {"answerable", "unanswerable"}):
+            gate_pairs.append((row["answerability_label"] == "answerable",
+                               float(row.get("status") in {"retrieval_only", "generated"})))
     return {"reranker_model": reranker_model, "split": split, "k": k,
+            "question_gate": {"unit": "verified_question", **_confusion(gate_pairs, 0.5)},
+            "question_gate_excluded": len(rows) - len(gate_pairs),
             "stages": stages, "answerable_coverage": _rate(covered, total),
             "coverage_excluded_questions": excluded,
             "error_count": sum(r.get("status") == "error" for r in rows)}
@@ -200,6 +248,7 @@ def evaluate_source_metrics(records, reranker_model, split="test", k=5):
 
 def _support_sets(row, labels):
     if (row.get("answerability_review_status") != "verified"
+            or row.get("human_review_status") != "verified"
             or row.get("answerability_label") != "answerable"
             or row.get("gold_review_status") != "verified"):
         return None

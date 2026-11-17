@@ -182,6 +182,381 @@ class ProductionGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "retrieval_only")
 
 
+class EvaluationInfrastructureTests(unittest.TestCase):
+    """Synthetic fixtures only: no PDFs, models, exports or API calls."""
+    def setUp(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        self.enterContext(redirect_stdout(StringIO()))
+
+    def fixture(self, question_id="a", model="minilm", split="test"):
+        import json
+        chunk = {"document_id": "doc-" + question_id, "page_number": 1,
+                 "chunk_id": "chunk-" + question_id, "rerank_score": 2.0}
+        return {
+            "id": question_id, "question": "Question " + question_id,
+            "question_group": question_id, "split": split, "reranker_model": model,
+            "answerability_label": "answerable", "answerability_review_status": "verified",
+            "gold_review_status": "verified", "status": "retrieval_only",
+            "human_review_status": "verified",
+            "evidence_matches_json": json.dumps([
+                {**chunk, "review_status": "verified", "support_level": "direct_support",
+                 "review_origin": "human_review", "human_review_status": "verified",
+                 "calibration_eligible": True}]),
+            "sufficient_support_sets_json": json.dumps([[chunk]]),
+            "retrieved_candidates_json": json.dumps([chunk]),
+            "reranked_candidates_json": json.dumps([chunk]),
+            "selected_chunks_json": json.dumps([chunk]),
+        }
+
+    def test_csv_preserves_original_questions_and_pending_candidates(self):
+        from evaluation.evaluate_rag import load_questions
+        from pathlib import Path
+        rows = load_questions(Path(__file__).with_name("test_questions.csv"))
+        self.assertEqual([str(i) for i in range(1, 11)], [r["id"] for r in rows[:10]])
+        self.assertEqual([str(i) for i in range(1, 14)], [r["id"] for r in rows])
+        for row in rows:
+            self.assertEqual(row["answerability_label"], "pending_review")
+            self.assertIn(row["split"], {"calibration", "test", "unassigned"})
+            self.assertEqual(row["human_review_status"], "pending_review")
+            self.assertEqual(row["gold_review_status"], "pending_review")
+        import json
+        hints = [h for r in rows for h in json.loads(r["candidate_evidence_json"])]
+        self.assertEqual(len(hints), 17)
+        self.assertTrue(all(h["chunk_id"] is None and h["review_status"] == "pending_review" for h in hints))
+
+    def test_pending_pairs_do_not_enter_threshold_metrics(self):
+        from evaluation.evidence_threshold import evaluate_threshold, select_threshold
+        row = self.fixture(split="calibration")
+        row["evidence_matches_json"] = "[]"
+        row["expected_behavior"] = "answer"
+        metric = evaluate_threshold([row], 1.0, "minilm", split="calibration")
+        self.assertIsNone(metric["false_reject_rate"]["value"])
+        self.assertIsNone(select_threshold([row], "minilm")["threshold"])
+
+    def test_threshold_evaluation_counts_both_error_types(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        pos = self.fixture("p")
+        neg = self.fixture("n")
+        matches = json.loads(neg["evidence_matches_json"])
+        matches[0]["support_level"] = "irrelevant"
+        neg["evidence_matches_json"] = json.dumps(matches)
+        candidates = json.loads(pos["reranked_candidates_json"])
+        candidates[0]["rerank_score"] = -2.0
+        pos["reranked_candidates_json"] = json.dumps(candidates)
+        metric = evaluate_threshold([pos, neg], 1.0, "minilm")
+        self.assertEqual((metric["fp"], metric["fn"]), (1, 1))
+        self.assertEqual(metric["false_accept_rate"]["value"], 1.0)
+        self.assertEqual(metric["false_reject_rate"]["value"], 1.0)
+
+    def test_partial_and_ambiguous_pairs_excluded(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        for label in ("partial_support", "ambiguous"):
+            row = self.fixture()
+            matches = json.loads(row["evidence_matches_json"])
+            matches[0]["support_level"] = label
+            row["evidence_matches_json"] = json.dumps(matches)
+            metric = evaluate_threshold([row], 1.0, "minilm")
+            self.assertEqual(metric["excluded_pairs"], 1)
+            self.assertIsNone(metric["false_accept_rate"]["value"])
+
+    def test_models_are_not_pooled(self):
+        from evaluation.evidence_threshold import evaluate_threshold
+        rows = [self.fixture(), self.fixture(model="bge-m3")]
+        for model in ("minilm", "bge-m3"):
+            self.assertEqual(evaluate_threshold(rows, 1.0, model)["tp"], 1)
+        with self.assertRaises(ValueError):
+            evaluate_threshold(rows, 1.0, "all")
+
+    def test_selection_never_fits_test_labels(self):
+        from evaluation.evidence_threshold import select_threshold
+        result = select_threshold([self.fixture()], "minilm")
+        self.assertIsNone(result["threshold"])
+
+    def test_same_group_across_splits_rejected(self):
+        from evaluation.evidence_threshold import validate_splits
+        a, b = self.fixture("a", split="calibration"), self.fixture("b")
+        b["question_group"] = a["question_group"]
+        with self.assertRaises(ValueError):
+            validate_splits([a, b])
+
+    def test_same_page_across_splits_rejected(self):
+        import json
+        from evaluation.evidence_threshold import validate_splits
+        a, b = self.fixture("a", split="calibration"), self.fixture("b")
+        hint = json.dumps([{"document_id": "shared", "page_number": 2}])
+        a["candidate_evidence_json"] = b["candidate_evidence_json"] = hint
+        with self.assertRaises(ValueError):
+            validate_splits([a, b])
+
+    def test_unassigned_bridge_cannot_hide_leakage(self):
+        from evaluation.evidence_threshold import validate_splits
+        a, bridge, b = self.fixture("a", split="calibration"), self.fixture("bridge", split="unassigned"), self.fixture("b")
+        a["evidence_group_ids_json"] = '["x"]'
+        bridge["evidence_group_ids_json"] = '["x", "y"]'
+        b["evidence_group_ids_json"] = '["y"]'
+        with self.assertRaises(ValueError):
+            validate_splits([a, bridge, b])
+
+    def test_source_metrics_with_verified_support(self):
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        metric = evaluate_source_metrics([self.fixture()], "minilm", k=1)
+        self.assertEqual(metric["stages"]["reranked_candidates_json"]["hit_at_k"]["value"], 1.0)
+        self.assertEqual(metric["stages"]["selected_chunks_json"]["precision_at_k"]["value"], 1.0)
+        self.assertEqual(metric["answerable_coverage"]["value"], 1.0)
+
+    def test_hit_does_not_imply_complete_coverage(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        other = {"document_id": "other", "page_number": 2, "chunk_id": "other"}
+        matches = json.loads(row["evidence_matches_json"])
+        matches.append({**other, "review_status": "verified", "support_level": "direct_support",
+                        "human_review_status": "verified", "calibration_eligible": True})
+        row["evidence_matches_json"] = json.dumps(matches)
+        row["sufficient_support_sets_json"] = json.dumps([[matches[0], other]])
+        metric = evaluate_source_metrics([row], "minilm", k=1)
+        self.assertEqual(metric["stages"]["selected_chunks_json"]["hit_at_k"]["value"], 1.0)
+        self.assertEqual(metric["answerable_coverage"]["value"], 0.0)
+
+    def test_unreviewed_precision_is_not_zero(self):
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        row["gold_review_status"] = "pending_review"
+        row["evidence_matches_json"] = "[]"
+        result = evaluate_source_metrics([row], "minilm")
+        self.assertIsNone(result["stages"]["reranked_candidates_json"]["precision_at_k"]["value"])
+        self.assertIsNone(result["answerable_coverage"]["value"])
+
+    def test_empty_retrieval_is_a_miss_for_verified_gold(self):
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        row["retrieved_candidates_json"] = "[]"
+        result = evaluate_source_metrics([row], "minilm")
+        self.assertEqual(result["stages"]["retrieved_candidates_json"]["hit_at_k"]["value"], 0.0)
+
+    def test_verified_page_without_chunk_is_rejected(self):
+        from evaluation.evaluate_rag import validate_annotations
+        row = self.fixture()
+        row["evidence_matches_json"] = '[{"document_id":"d","page_number":1,"review_status":"verified","support_level":"direct_support"}]'
+        with self.assertRaises(ValueError):
+            validate_annotations([row])
+
+    def test_collection_separates_candidates_from_context_without_export(self):
+        import json
+        from evaluation.evaluate_rag import evaluate_questions
+        sources = [{"number": 1, **{k: TEST_CHUNKS[0][k] for k in ("chunk_id", "document_id", "filename", "page_number")}}]
+        result = {"sources": sources, "answer": None, "status": "retrieval_only",
+                  "response_time_seconds": 0.01, "selected_count": 1, "citation_check": None,
+                  "evidence_check": {"sufficient": True}, "top_rerank_score": 2.0,
+                  "debug": {"retrieved_hits": fake_hybrid_search("", TEST_CHUNKS),
+                            "reranked_hits": fake_rerank("", TEST_CHUNKS)}}
+        row = {"id": "1", "question": "Question", "split": "unassigned"}
+        with (
+            patch("evaluation.evaluate_rag.answer_question", return_value=result) as run,
+            patch("pathlib.Path.mkdir", side_effect=AssertionError("No files")),
+            patch("evaluation.evidence_threshold.select_threshold", side_effect=AssertionError("No fitting")),
+        ):
+            records = evaluate_questions([row], TEST_CHUNKS)
+        run.assert_called_once()
+        self.assertFalse(run.call_args.kwargs["use_llm"])
+        self.assertNotIn("min_relevance_score", run.call_args.kwargs)
+        candidates = json.loads(records[0]["reranked_candidates_json"])
+        self.assertEqual([c["selected_for_context"] for c in candidates], [True, False])
+        self.assertEqual(candidates[0]["text"], TEST_CHUNKS[0]["text"])
+        self.assertEqual(len(json.loads(records[0]["selected_chunks_json"])), 1)
+
+    def test_different_settings_cannot_be_pooled(self):
+        from evaluation.evidence_threshold import evaluate_threshold
+        a, b = self.fixture("a"), self.fixture("b")
+        a["candidate_k"], b["candidate_k"] = 20, 40
+        with self.assertRaises(ValueError):
+            evaluate_threshold([a, b], 1.0, "minilm")
+
+    def test_identity_requires_document_page_and_chunk(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        row = self.fixture()
+        pool = json.loads(row["reranked_candidates_json"])
+        pool[0]["page_number"] = 99
+        row["reranked_candidates_json"] = json.dumps(pool)
+        result = evaluate_threshold([row], 1.0, "minilm")
+        self.assertEqual(result["tp"], 0)
+        self.assertEqual(result["excluded_pairs"], 1)
+
+    def test_reviewed_question_gate_reports_false_accept(self):
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        row["answerability_label"] = "unanswerable"
+        result = evaluate_source_metrics([row], "minilm")
+        self.assertEqual(result["question_gate"]["false_accept_rate"]["value"], 1.0)
+        self.assertIsNone(result["question_gate"]["false_reject_rate"]["value"])
+
+    def test_automated_verified_matches_are_not_ground_truth(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        row = self.fixture()
+        matches = json.loads(row["evidence_matches_json"])
+        matches[0].update(review_origin="automated_text_review",
+                          human_review_status="pending_review", calibration_eligible=False)
+        row["evidence_matches_json"] = json.dumps(matches)
+        result = evaluate_threshold([row], 1.0, "minilm")
+        self.assertIsNone(result["false_reject_rate"]["value"])
+        self.assertEqual(result["excluded_pairs"], 1)
+        matches[0]["human_review_status"] = "verified"
+        row["evidence_matches_json"] = json.dumps(matches)
+        self.assertEqual(evaluate_threshold([row], 1.0, "minilm")["tp"], 0)
+        matches[0]["calibration_eligible"] = True
+        row["evidence_matches_json"] = json.dumps(matches)
+        self.assertEqual(evaluate_threshold([row], 1.0, "minilm")["tp"], 1)
+
+    def test_stored_excerpts_are_exact_and_exclusions_are_not_support(self):
+        import json
+        from pathlib import Path
+        from evaluation.evaluate_rag import load_questions
+        rows = load_questions(Path(__file__).with_name("test_questions.csv"))
+        matches = [m for r in rows for m in json.loads(r["evidence_matches_json"])]
+        self.assertEqual(len(matches), 46)
+        self.assertEqual(sum(m["review_status"] == "verified" for m in matches), 31)
+        import hashlib
+        refresh = [entry for row in rows for entry in json.loads(row["evidence_refresh_json"])]
+        self.assertEqual(len(refresh), 28)
+        self.assertTrue(all(entry["status"] == "re_matched_current_text" for entry in refresh))
+        historical_ids = {entry["previous_chunk_id"] for entry in refresh}
+        self.assertFalse(historical_ids.intersection(m["chunk_id"] for m in matches))
+        for m in matches:
+            self.assertRegex(m["chunk_id"], r"_v[0-9a-f]{16}_p\d+_c\d+_t[0-9a-f]{64}$")
+            self.assertEqual(hashlib.sha256(m["chunk_text"].encode("utf-8")).hexdigest(),
+                             m["chunk_text_sha256"])
+            self.assertEqual(m["review_origin"], "automated_text_review")
+            self.assertEqual(m["human_review_status"], "pending_review")
+            self.assertFalse(m["calibration_eligible"])
+            if m["review_status"] == "verified":
+                self.assertIn(m["support_level"], {"direct_support", "partial_support"})
+                self.assertTrue(m["supporting_text"])
+                self.assertIn(m["supporting_text"], m["chunk_text"])
+                self.assertIn(m["text_quality"], {"readable_prose", "structured_table"})
+            if m["text_quality"].endswith("excluded"):
+                self.assertEqual(m["supporting_text"], "")
+                self.assertEqual(m["review_status"], "pending_review")
+        findings = [finding for row in rows for finding in json.loads(row["clinical_findings_json"])]
+        self.assertEqual(len(findings), 3)
+        current = {m["chunk_id"]: m for m in matches}
+        for finding in findings:
+            self.assertEqual(finding["human_review_status"], "pending_review")
+            self.assertEqual(finding["database_write_status"], "not_written")
+            self.assertTrue(finding["patient_group"])
+            self.assertTrue(finding["clinical_outcome"])
+            self.assertEqual(len(finding["sources"]), len(finding["supporting_text"]))
+            for source, excerpt in zip(finding["sources"], finding["supporting_text"]):
+                match = current[source["chunk_id"]]
+                self.assertEqual(source["page_number"], match["page_number"])
+                self.assertIn(excerpt, match["chunk_text"])
+
+    def test_new_negative_vocabulary_requires_human_review(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        for label in ("topic_only", "no_support"):
+            row = self.fixture()
+            matches = json.loads(row["evidence_matches_json"])
+            matches[0]["support_level"] = label
+            row["evidence_matches_json"] = json.dumps(matches)
+            result = evaluate_threshold([row], 1.0, "minilm")
+            self.assertEqual(result["fp"], 1)
+
+    def test_collection_errors_are_reported(self):
+        from evaluation.evaluate_rag import evaluate_questions
+        with patch("evaluation.evaluate_rag.answer_question", side_effect=RuntimeError("fixture failure")):
+            records = evaluate_questions([{"id": "1", "question": "Q", "split": "unassigned"}], [])
+        self.assertEqual(records[0]["status"], "error")
+        self.assertIn("fixture failure", records[0]["error"])
+
+    def test_verified_label_without_explicit_human_approval_is_excluded(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        row = self.fixture()
+        matches = json.loads(row["evidence_matches_json"])
+        for key in ("review_origin", "human_review_status", "calibration_eligible"):
+            matches[0].pop(key, None)
+        row["evidence_matches_json"] = json.dumps(matches)
+        result = evaluate_threshold([row], 1.0, "minilm")
+        self.assertEqual(result["tp"], 0)
+        self.assertEqual(result["excluded_pairs"], 1)
+        self.assertIsNone(result["false_reject_rate"]["value"])
+
+    def test_unapproved_question_cannot_enter_question_metrics(self):
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        row["human_review_status"] = "pending_review"
+        result = evaluate_source_metrics([row], "minilm")
+        self.assertIsNone(result["question_gate"]["false_reject_rate"]["value"])
+        self.assertIsNone(result["answerable_coverage"]["value"])
+
+    def test_both_splits_have_candidate_classes_without_promoting_gold(self):
+        import json
+        from pathlib import Path
+        from evaluation.evaluate_rag import load_questions
+        from evaluation.evidence_threshold import _judgments
+        rows = load_questions(Path(__file__).with_name("test_questions.csv"))
+        for split in ("calibration", "test"):
+            pool = [r for r in rows if r["split"] == split]
+            labels = {r["automated_answerability_label"] for r in pool}
+            self.assertTrue({"answerable", "unanswerable_candidate"}.issubset(labels))
+        for row in rows:
+            self.assertEqual(_judgments(row), {})
+            self.assertEqual(set(json.loads(row["reranker_models_json"])), {"minilm", "bge-m3"})
+        related = [r for r in rows if r["question_group"] == "carotid_cohort"]
+        self.assertEqual(len(related), 3)
+        self.assertEqual({r["split"] for r in related if r["split"] != "unassigned"}, {"calibration"})
+        dose = next(r for r in rows if r["id"] == "10")
+        self.assertEqual(dose["split"], "unassigned")
+        self.assertIn("apiksaban", dose["question"])
+        self.assertTrue(json.loads(dose["annotation_history_json"]))
+
+    def evidence_fixture(self):
+        import json
+        from src.chunking import chunk_document
+        chunk = chunk_document({
+            "document_id": "fixture-doc", "filename": "fixture.pdf", "processing_version": "fixture-v2",
+            "pages": [{"page_number": 1, "text": TEST_CHUNKS[0]["text"]}],
+        })[0]
+        match = {**chunk, "chunk_text": chunk["text"], "chunk_text_sha256": chunk["text_sha256"],
+                 "supporting_text": "Atrial fibrillation"}
+        return chunk, match, {"evidence_matches_json": json.dumps([match])}
+
+    def test_full_document_validation_rejects_self_consistent_stale_id(self):
+        import json
+        from evaluation.evaluate_rag import validate_evidence_chunks
+        chunk, match, row = self.evidence_fixture()
+        self.assertEqual(validate_evidence_chunks([row], [chunk])["primary_matches"], 1)
+        match["chunk_id"] = "previous-extraction-id"
+        row["evidence_matches_json"] = json.dumps([match])
+        with self.assertRaises(ValueError):
+            validate_evidence_chunks([row], [chunk])
+
+    def test_full_document_validation_checks_source_coordinates_and_hash(self):
+        import json
+        from evaluation.evaluate_rag import validate_evidence_chunks
+        chunk, match, row = self.evidence_fixture()
+        for field, invalid in (("filename", "wrong.pdf"), ("document_id", "wrong-document"),
+                               ("page_number", 2), ("chunk_index", 1),
+                               ("chunk_text_sha256", "wrong-hash"), ("chunk_text", "different text")):
+            row["evidence_matches_json"] = json.dumps([{**match, field: invalid}])
+            with self.assertRaises(ValueError, msg=field):
+                validate_evidence_chunks([row], [chunk])
+
+    def test_full_document_validation_checks_negative_context_quotes(self):
+        import json
+        from evaluation.evaluate_rag import validate_evidence_chunks
+        chunk, match, row = self.evidence_fixture()
+        match["context_evidence"] = [{**match, "supporting_text": "invented long-term outcome"}]
+        row["evidence_matches_json"] = json.dumps([match])
+        with self.assertRaises(ValueError):
+            validate_evidence_chunks([row], [chunk])
+
+
 if __name__ == "__main__":
     main()
     unittest.main()
