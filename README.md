@@ -23,7 +23,8 @@ Kullanılan 6 PDF (`data/pdfs/`; dosya adı öneki kaynağı gösterir):
 
 ```
 PDF (data/pdfs/)
- → metin çıkarma (pymupdf4llm, sayfa sayfa markdown)          src/pdf_loader.py
+ → metin çıkarma (pymupdf4llm, sayfa sayfa markdown;
+          yan yatırılmış tablo sayfaları düzeltilerek okunur)  src/pdf_loader.py
  → temizleme (kaynakça çıkarılır, sonraki tablolar korunur)    src/pdf_processing.py
  → chunk (sayfa bazında, 1500 karakter, 250 örtüşme;
           markdown tabloları ortasından kesilmez)              src/chunking.py
@@ -45,7 +46,7 @@ PDF (data/pdfs/)
 
 **Tablolar ve chunk'lama:** Tablosuz sayfalar 1500 karakterlik örtüşmeli pencerelerle bölünür. Markdown tablosu olan sayfalarda metin aynı yöntemle, her tablo ise ayrı bölünür: sığan tablo, varsa üstündeki "Table N" başlık satırıyla birlikte tek chunk olur; sığmayan tablo yalnızca satır aralarından bölünür ve her devam parçasının başına `<başlık> (devam)` (başlık yoksa `(tablo devamı)`), tablonun başlık satırı ve `|---|` ayraç satırı tekrar eklenir. Tek başına sığmayan bir satır hücre sınırından bölünür.
 
-**Sürümler:** `pdf_belgeleri.processing_version` metin çıkarma, kaynakça temizleme ve chunk'lama sürümlerini birlikte içerir (ör. `…|references-v2|chunking-table-v1`). Chunk'lama değişince `python -m src.ingest` yeni sürümü yazar; eski sürümün chunk ve embedding'leri **silinmez**, yalnızca kullanılmaz: `load_chunks_for_rag` ve `validate_row` yalnızca `pdf_belgeleri`'deki güncel sürümün chunk'larını okur.
+**Sürümler:** `pdf_belgeleri.processing_version` metin çıkarma, kaynakça temizleme ve chunk'lama sürümlerini birlikte içerir (ör. `markdown-rotated-v3|…|references-v2|chunking-table-v1`). Metin çıkarma veya chunk'lama değişince `python -m src.ingest` yeni sürümü yazar; eski sürümün chunk ve embedding'leri **silinmez**, yalnızca kullanılmaz: `load_chunks_for_rag` ve `validate_row` yalnızca `pdf_belgeleri`'deki güncel sürümün chunk'larını okur.
 
 **Klinik bulgular (ilaç / doz / hasta grubu / tanı yöntemi):**
 
@@ -108,11 +109,13 @@ pip install -r requirements.txt
 python -m src.database --init
 python -m src.ingest
 python -m src.article_metadata --write --tam-metin temiz
+python -m src.load_translations
 ```
 
 - `src.database --init`: yeni tabloları, eksik sütunları, kısıtları ve VIEW'ları oluşturur; tekrar çalıştırılabilir, hiçbir şey silmez. `--check` (varsayılan) yalnızca durumu raporlar.
 - `src.ingest`: 6 PDF'i okur, temizler, parçalar, embedding üretir ve yazar (varsayılan model `minilm`; `--model bge-m3` seçeneği var). Tekrar çalıştırmak güvenlidir; var olan chunk ve embedding'ler yeniden yazılmaz.
 - `src.article_metadata --write --tam-metin temiz`: 6 makaleyi `makaleler` tablosuna yeni satır olarak ekler (başlık, dergi, yıl, DOI, abstract, temizlenmiş tam metin). Önce `--dry-run` ile yazmadan görülebilir.
+- `src.load_translations`: Türkçe özeti olmayan 4 makalenin LLM çevirilerini `data/clinical/abstract_translations.json`'dan `makaleler.ozet_tr`'ye yükler. Çeviride `abstract_en`'de olmayan bir sayı varsa o kayıt yazılmaz; PDF'ten gelen orijinal Türkçe özetin üzerine asla yazılmaz. Önce `--dry-run` ile görülebilir; tekrar çalıştırmak bir şey değiştirmez. Bu adım `article_metadata`'dan sonra çalıştırılır; `article_metadata`'yı daha sonra yeniden çalıştırmak çevirileri silmez.
 
 ## Tablolar
 
@@ -127,7 +130,15 @@ python -m src.article_metadata --write --tam-metin temiz
 | `icd10_who` | ICD-10 kod sözlüğü (İngilizce ve Türkçe adlar). |
 | `tkd_kurallari` | Türk Kardiyoloji Derneği terim kuralları. |
 
-`makaleler`'e yalnızca 3 boş sütun eklendi: `document_id`, `doi`, `abstract_en`. Bizim 6 makalemiz bu tabloda `document_id` **dolu** satırlardır; hocanın satırlarında `document_id` NULL'dur.
+`makaleler`'e yalnızca 5 boş sütun eklendi: `document_id`, `doi`, `abstract_en`, `ozet_tr_kaynak`, `ozet_tr_model`. Bizim 6 makalemiz bu tabloda `document_id` **dolu** satırlardır; hocanın satırlarında `document_id` NULL'dur ve yeni sütunlar boştur.
+
+`ozet_tr_kaynak`, `ozet_tr`'nin nereden geldiğini gösterir:
+
+| Değer | Anlamı | `ozet_tr_model` | Satırlar |
+|---|---|---|---|
+| `orijinal` | PDF'te yazarların kendi Türkçe özeti | NULL | 2 TK makalesi (`src.article_metadata`) |
+| `llm_ceviri` | `abstract_en`'in LLM çevirisi; sayılar kontrol edildi, insan onaylı değil | çeviriyi yapan model (`gpt-6-luna`) | AF, OHCA, troponin, KAH (`src.load_translations`) |
+| NULL | Türkçe özet yok | NULL | hocanın satırları |
 
 ### Bizim tablolarımız (`sql/schema_core.sql`)
 
@@ -190,7 +201,7 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 
 | Dosya | Görev |
 |---|---|
-| `pdf_loader.py` | PDF'i pymupdf4llm ile sayfa sayfa markdown'a çevirir; döndürülmüş tablo başlıklarını ve dipnotlarını kurtarır. |
+| `pdf_loader.py` | PDF'i pymupdf4llm ile sayfa sayfa markdown'a çevirir; yan yatırılmış tablo sayfalarını (metnin ≥%80'i aynı yönde döndürülmüş) bellek içinde düzelterek okur; döndürülmüş tablo başlıklarını ve dipnotlarını kurtarır. |
 | `pdf_processing.py` | Kaynakçayı bulur ve çıkarır; kaynakçadan sonra gelen tablo/şekil içeriğini korur. |
 | `chunking.py` | Sayfaları örtüşmeli chunk'lara böler; markdown tablolarını ortasından kesmez, devam parçalarına başlık satırını tekrar ekler; sürüm ve metin hash'i içeren `chunk_id` üretir (`CHUNKING_VERSION`). |
 | `embeddings.py` | Sentence-transformers ile normalize embedding üretir (`minilm`, `bge-m3`). |
@@ -203,6 +214,7 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 | `rag.py` | `answer_question`: retrieval, rerank, evidence guard, bağlam, LLM yanıtı ve citation kontrolü. |
 | `citation_validator.py` | Yanıttaki `[n]` atıflarını doğrular; isteğe bağlı LLM ile iddia–kanıt uyumu (`verify_claim`). |
 | `article_metadata.py` | 6 makalenin künye bilgilerini PDF'ten çıkarıp `makaleler`'e ekler (`--dry-run` / `--write`). |
+| `load_translations.py` | Hazır LLM özet çevirilerini (JSON) denetleyip `makaleler.ozet_tr`'ye yazar (`--dry-run`); LLM çağırmaz. Sayı ve doğrulama yardımcıları `abstract_translation.py`'den gelir. |
 | `clinical_candidates.py` | Tam metinden doz, ilaç/müdahale ve tanı yöntemi içeren aday cümleleri listeler (`data/review/` altına CSV). |
 | `clinical_validation.py` | `validate_row`: klinik bulgu satırlarının kaynağa karşı denetimi. |
 | `clinical_draft.py` | `data/clinical/referans_taslak.json`'ı denetleyip yalnızca CSV üretir; veritabanına yazmaz. |
@@ -217,7 +229,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 |---|---|
 | `test_database_schema` | `init_schema`'yı iki kez çalıştırır; tabloları, sütunları, VIEW'ları ve hoca tablolarının satır sayılarını kontrol eder. |
 | `test_ingestion` | `src.ingest`'i iki kez çalıştırır (satır sayısı artmamalı); chunk, embedding ve `load_chunks_for_rag` çıktısını doğrular. Birkaç dakika sürer. |
-| `test_makaleler` | Hocanın 5 satırının değişmediğini (hash), bizim 6 satırı ve ikinci yazımda çoğalma olmadığını kontrol eder. Not: bizim 6 satırı aynı değerlerle yeniden yazar. |
+| `test_makaleler` | Hocanın 5 satırının değişmediğini (hash), bizim 6 satırı, `ozet_tr_kaynak` dağılımını (`orijinal` yalnızca TK, 4 `llm_ceviri` + model), ikinci yazımda çoğalma olmadığını ve çevirilerin silinmediğini kontrol eder. Not: bizim 6 satırı aynı değerlerle yeniden yazar. |
 | `test_rag_kayit` | `save_rag_result`'ı gerçek `answer_question` (`use_llm=False`) çıktısıyla dener; reranker yer tutucuyla değiştirilir, model indirmez. Bütün yazımlar geri alınır. |
 | `test_klinik_bulgular` | Referans taslağı `save_clinical_findings` ile yazar, bozuk satırların reddini, VIEW sayılarını ve hoca tablolarını kontrol eder. Bütün yazımlar geri alınır. |
 
@@ -225,7 +237,8 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 
 | Test | Ne yapar |
 |---|---|
-| `test_chunking` | Tablo farkındalıklı chunk'lama: tablosuz metin eskisiyle aynı, tablolar ortasından kesilmiyor, devam parçalarında başlık satırı var, 1500 sınırı aşılmıyor; 6 PDF'te 243 chunk (PDF'ler gerekir). |
+| `test_chunking` | Tablo farkındalıklı chunk'lama: tablosuz metin eskisiyle aynı, tablolar ortasından kesilmiyor, devam parçalarında başlık satırı var, 1500 sınırı aşılmıyor; 6 PDF'te 242 chunk (PDF'ler gerekir). |
+| `test_rotated_pages` | Yan yatırılmış tablo sayfaları: yalnızca AF s.24, 25, 27, 28 ve OHCA s.4 düzeltiliyor, diğer sayfalar birebir aynı; tablolar doğru yönde, kaybolan başlık/dipnotlar geri geliyor, yinelenen metin yok (PDF'ler gerekir). |
 | `test_pipeline` | `answer_question` ve evidence guard için mock'lu birim testler (model veya LLM gerekmez). |
 | `test_pdf_processing` | 6 PDF'in yüklenmesi, kaynakça temizliği ve chunk'ları; ayrıca `test_questions.csv`'deki kanıt eşleştirmelerini yeniden üretilen chunk'larla doğrular (PDF'ler gerekir; `--pdf-dir` ile farklı klasör verilebilir). Chunk'lama sürümü değiştikten sonra eşleştirmeler yenilenene kadar "Stale or unknown chunk id" ile başarısız olur (aşağıya bakın). |
 | `test_reference_cleaning` | Kaynakça temizliğinin PDF bazında raporu (PDF'ler gerekir). |
@@ -238,7 +251,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 
 ## Chunk sürümü değiştikten sonra
 
-Chunk'lama değiştiğinde (şu an `chunking-table-v1`) bütün `chunk_id`'ler değişir, çünkü kimlik sürüm anahtarını içerir. `evaluation/test_questions.csv`'deki kanıt eşleştirmeleri eski kimliklere işaret ettiği için yenilenmelidir. Değişiklik main'e geldikten sonra:
+Metin çıkarma veya chunk'lama sürümü değiştiğinde (şu an `markdown-rotated-v3` + `chunking-table-v1`) bütün `chunk_id`'ler değişir, çünkü kimlik sürüm anahtarını içerir. Rapor her zaman en eski atıftan doğrudan `pdf_belgeleri`'deki **en güncel** sürüme eşler; aradaki sürümlerin veritabanında bulunup bulunmaması sonucu değiştirmez. `evaluation/test_questions.csv`'deki kanıt eşleştirmeleri eski kimliklere işaret ettiği için yenilenmelidir. Değişiklik main'e geldikten sonra:
 
 ```powershell
 git pull
@@ -258,9 +271,10 @@ python -m evaluation.chunk_remap_report
 
 - **Evidence guard şu an yalnızca uzunluk filtresi uyguluyor.** `answer_question` `min_relevance_score=None` ve kelime örtüşmesi kapalı çalışır; 80 karakterden kısa chunk'lar elenir, alakasız ama uzun chunk'lar elenmez. Skor eşiği henüz kalibre edilmedi.
 - **`validate_row` sayıları kontrol ediyor, kelimeleri değil.** Kanıt cümlesinin sayfada birebir geçtiğini ve alanlardaki her sayının kanıtta bulunduğunu doğrular; ama ilaç adı, hasta grubu veya yön gibi alanların cümleyle anlamca uyumunu kontrol etmez. Bu, insan kontrolüyle (`review_status = 'verified'`) yapılır.
-- **AF makalesindeki döndürülmüş tablolar devrik çıkıyor.** Tablo 2 ve 3 sayfaya yan yatırılmış; metin çıkarımında satır ve sütunlar yer değiştiriyor ve Tablo 2'nin üst başlığı ile bazı dipnotları metne geçmiyor. Tablonun "başlık satırı" aslında bir veri satırı olduğundan, chunk'lamada tekrar edilen başlık bu tablolarda anlamı tam düzeltmez.
+- **Yan yatırılmış tablolarda küçük biçim kusurları kalıyor.** Sayfaya yan çizilmiş tablolar (AF s.24, 25, 27, 28; OHCA s.4) artık bellek içinde düzeltilerek doğru yönde okunuyor; başlık ve dipnotlar metne geçiyor. Kalanlar: birden fazla sütuna yayılan üst başlıklar hücrelere bölünmüş çıkıyor (ör. AF Tablo 2: "Associated b \| enefits of adhe \| ring to recommen \| dations"); bazı hücrelerin devamı yan hücreye kayabiliyor (AF s.24); dipnot harfleri `<sup>` olarak ayrı yazılıyor; OHCA Tablo 1'de ilk başlık satırı bir grup başlığı olduğundan devam chunk'larında yalnızca o tekrar ediliyor (asıl sütun adları ilk gövde satırında).
 - **Metin cümleleri chunk sınırına denk gelebilir.** Tablolar artık ortasından kesilmiyor, ama düz metin hâlâ 1500 karakterlik pencerelerle bölünüyor; bir kanıt cümlesi iki chunk'ın sınırına denk gelirse tek bir chunk'ta tam geçmez (bu durumda `chunk_id` boş kalır).
 - **Eski sürüm chunk'ları veritabanında birikir.** Chunk'lama sürümü değişince eski chunk ve embedding'ler silinmez (geçmiş sorgular `rag_sorgu_kaynaklari` üzerinden onlara bağlı olabilir); kullanılmazlar ama yer kaplarlar.
+- **4 Türkçe özet LLM çevirisi (gpt-6-luna), sayılar kontrol edildi ama insan onaylı değil.** AF, OHCA, troponin ve KAH makalelerinin `ozet_tr`'si (`ozet_tr_kaynak = 'llm_ceviri'`) `abstract_en`'in makine çevirisidir. Yüklemeden önce çevirideki her sayının İngilizce özette geçtiği ve sayı/işaret adetlerinin aynı olduğu kontrol edildi; anlam, terim ve klinik doğruluk insan tarafından kontrol edilmedi.
 - **`data/clinical/referans_taslak.json` doğrulanmamıştır.** Aday cümlelerden hazırlanmış bir karşılaştırma referansıdır (`meta.durum = "dogrulanmamis_referans"`); insan kontrolünden geçmemiştir ve `klinik_bulgular`'a doğrudan girmez.
 
 ## Güvenlik

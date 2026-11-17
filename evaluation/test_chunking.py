@@ -12,7 +12,7 @@ Kontroller:
   "<başlık> (devam)" + başlık satırı + ayraç ile başlar; hiçbir chunk sınırı aşmaz.
 - Tek başına sığmayan satır hücre sınırından bölünür, içerik kaybolmaz.
 - versioned_document idempotent; chunk'lar CHUNKING_VERSION taşır.
-- 6 gerçek PDF: chunk sayısı, sınır, boş sayfa yok, tablo satırları bütün,
+- 6 gerçek PDF: chunk sayısı (242), sınır, boş sayfa yok, tablo satırları bütün,
   tablosuz sayfalar eski algoritmayla birebir aynı.
 """
 
@@ -36,7 +36,7 @@ from src.pdf_loader import PDF_DIR, load_pdf
 from src.pdf_processing import remove_document_references
 
 
-EXPECTED_REAL_CHUNKS = 243
+EXPECTED_REAL_CHUNKS = 242  # markdown-rotated-v3 + chunking-table-v1 (önce 243)
 SIZE = DEFAULT_CHUNK_SIZE
 
 

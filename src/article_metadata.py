@@ -11,6 +11,9 @@ Kurallar:
   ve raporda "bulunamadı" olarak gösterilir. Değer uydurulmaz.
 - Özetler kısaltılmaz/yeniden yazılmaz; yalnızca satır sonu tireleri ve
   boşluklar düzeltilir (birleştirilen kelimeler raporda listelenir).
+- ozet_tr yalnızca PDF'te Türkçe özet varsa (TK) yazılır (ozet_tr_kaynak='orijinal').
+  Diğer makalelerde ozet_tr/ozet_tr_kaynak/ozet_tr_model'e dokunulmaz; LLM
+  çevirileri src.load_translations ile yüklenir ve --write ile silinmez.
 - Hocanın satırlarına (document_id IS NULL) hiçbir UPDATE/DELETE yapılmaz:
   her UPDATE "document_id = %s AND document_id IS NOT NULL" koşuluyla
   çalışır, ON DUPLICATE KEY UPDATE kullanılmaz ve transaction sonunda hocanın
@@ -48,8 +51,20 @@ INTERPRETIVE_COLUMNS = (
 # Bu modülün yazdığı sütunlar (makale_id yalnızca INSERT'te yazılır).
 MANAGED_COLUMNS = (
     "document_id", "kaynak", "baslik", "dergi", "yil", "doi", "baglanti",
-    "abstract_en", "ozet_tr", "pdf_sayfa", "tam_metin",
+    "abstract_en", "ozet_tr", "ozet_tr_kaynak", "ozet_tr_model", "pdf_sayfa", "tam_metin",
 )
+
+# Türkçe özet sütunları. PDF'te Türkçe özet yoksa (ozet_tr None) bu üç sütuna
+# hiç dokunulmaz: src.load_translations'ın yazdığı LLM çevirileri --write ile
+# silinmez. PDF'te varsa ozet_tr_kaynak='orijinal', ozet_tr_model=NULL yazılır.
+OZET_TR_COLUMNS = ("ozet_tr", "ozet_tr_kaynak", "ozet_tr_model")
+
+
+def columns_to_write(record):
+    """Bu kayıt için yazılacak MANAGED_COLUMNS alt kümesi."""
+    if record["ozet_tr"] is None:
+        return tuple(c for c in MANAGED_COLUMNS if c not in OZET_TR_COLUMNS)
+    return MANAGED_COLUMNS
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\"<>,;]+")
 SECTION_LABEL = re.compile(r"^(?:[A-Z][A-Za-z ]{2,40}:|[A-Z][A-Z ]{3,40}—)")
@@ -329,6 +344,8 @@ def build_record(document_id, filename, page_count, processing_version, tam_meti
         "baglanti": f"https://doi.org/{doi}" if doi else None,
         "abstract_en": abstract_en,
         "ozet_tr": ozet_tr,
+        "ozet_tr_kaynak": "orijinal" if ozet_tr is not None else None,
+        "ozet_tr_model": None,
         "pdf_sayfa": page_count,
         "tam_metin": build_full_text(pdf_path, processing_version, tam_metin_variant),
         **{column: None for column in INTERPRETIVE_COLUMNS},
@@ -344,6 +361,10 @@ def build_record(document_id, filename, page_count, processing_version, tam_meti
         "baglanti": "https://doi.org/<doi>" if doi else "bulunamadı (DOI yok)",
         "abstract_en": abstract_note,
         "ozet_tr": ozet_note,
+        "ozet_tr_kaynak": ("PDF'teki Türkçe özet" if ozet_tr is not None
+                           else "yazılmaz (mevcut değer/çeviri korunur)"),
+        "ozet_tr_model": ("NULL (orijinal özet)" if ozet_tr is not None
+                          else "yazılmaz (mevcut değer/çeviri korunur)"),
         "pdf_sayfa": "pdf_belgeleri.page_count",
         "tam_metin": f"varyant: {tam_metin_variant}",
         **{column: "şimdilik NULL (yorum gerektirir)" for column in INTERPRETIVE_COLUMNS},
@@ -411,16 +432,17 @@ def write_records(conn, built):
             if len(existing) > 1:
                 raise ValueError(f"Aynı document_id ile birden fazla satır: {record['document_id']}")
 
+            write_columns = columns_to_write(record)
             if existing:
-                assignments = ", ".join(f"`{c}` = %s" for c in MANAGED_COLUMNS)
+                assignments = ", ".join(f"`{c}` = %s" for c in write_columns)
                 cursor.execute(
                     f"UPDATE makaleler SET {assignments} "
                     "WHERE document_id = %s AND document_id IS NOT NULL",
-                    [record[c] for c in MANAGED_COLUMNS] + [record["document_id"]],
+                    [record[c] for c in write_columns] + [record["document_id"]],
                 )
                 updated += 1
             else:
-                columns = ("makale_id",) + MANAGED_COLUMNS
+                columns = ("makale_id",) + write_columns
                 cursor.execute(
                     f"INSERT INTO makaleler ({', '.join(f'`{c}`' for c in columns)}) "
                     f"VALUES ({', '.join(['%s'] * len(columns))})",
