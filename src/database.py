@@ -14,6 +14,7 @@ import hashlib
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 
 import mysql.connector
@@ -739,6 +740,184 @@ def load_chunks_for_rag(embedding_model="minilm", processing_version=None,
         raise ValueError(f"'{embedding_model}' için farklı boyutlar: {dimensions}")
 
     return chunks
+
+
+# ---------------------------------------------------------------------------
+# RAG sorgu kaydı: answer_question sonucu -> rag_sorgulari + rag_sorgu_kaynaklari
+# ---------------------------------------------------------------------------
+
+def _optional_float(value):
+    """numpy/float/None -> float veya None (DOUBLE sütunlar için)."""
+    return None if value is None else float(value)
+
+
+def _rag_source_rows(result):
+    """
+    debug'daki aday chunk'lardan rag_sorgu_kaynaklari satırları üretir.
+
+    - retrieval_score: debug.retrieved_hits[*].rrf_score
+    - rerank_score   : debug.reranked_hits[*].rerank_score
+    - source_rank    : yeniden sıralama sonrası sıra (1'den başlar); reranker'dan
+                       geçmemiş aday varsa retrieval sırası ile onların arkasına eklenir.
+    - used_in_context: chunk, sources (LLM bağlamına giren kaynaklar) içindeyse 1.
+    Aynı chunk birden fazla gelirse tek satır (ilk görülen sıra korunur).
+    """
+    debug = result.get("debug") or {}
+    retrieved = debug.get("retrieved_hits") or []
+    reranked = debug.get("reranked_hits") or []
+    sources = result.get("sources") or []
+
+    retrieval_scores, rerank_scores, order = {}, {}, []
+
+    for hit in reranked:
+        chunk_id = hit["chunk_id"]
+        rerank_scores.setdefault(chunk_id, hit.get("rerank_score"))
+        if chunk_id not in order:
+            order.append(chunk_id)
+    for hit in retrieved:
+        chunk_id = hit["chunk_id"]
+        retrieval_scores.setdefault(chunk_id, hit.get("rrf_score"))
+        if chunk_id not in order:
+            order.append(chunk_id)
+
+    # Bağlama giren ama debug'da görünmeyen kaynak (beklenmez) yine kaydedilir.
+    for source in sources:
+        chunk_id = source["chunk_id"]
+        retrieval_scores.setdefault(chunk_id, source.get("rrf_score"))
+        rerank_scores.setdefault(chunk_id, source.get("rerank_score"))
+        if chunk_id not in order:
+            order.append(chunk_id)
+
+    used = {source["chunk_id"] for source in sources}
+    return [
+        {
+            "chunk_id": chunk_id,
+            "retrieval_score": _optional_float(retrieval_scores.get(chunk_id)),
+            "rerank_score": _optional_float(rerank_scores.get(chunk_id)),
+            "source_rank": rank,
+            "used_in_context": chunk_id in used,
+        }
+        for rank, chunk_id in enumerate(order, start=1)
+    ]
+
+
+def save_rag_result(result, question, llm_model=None, embedding_model=None,
+                    reranker_model=None, connection=None):
+    """
+    src.rag.answer_question sonucunu rag_sorgulari ve rag_sorgu_kaynaklari
+    tablolarına kaydeder; yeni query_id'yi (UUID4) döndürür.
+
+    Kullanım (Sinem için):
+
+        from src.database import load_chunks_for_rag, save_rag_result
+        from src.rag import answer_question, DEFAULT_LLM
+
+        chunks = load_chunks_for_rag("minilm")
+        result = answer_question(question, chunks, embedding_model="minilm")
+        query_id = save_rag_result(result, question, llm_model=DEFAULT_LLM)
+
+    Kurallar:
+    - Bütün aday chunk'lar pdf_chunks'ta olmalı; biri bile yoksa hiçbir şey
+      yazılmadan ValueError.
+    - Tek transaction. connection verilmezse kendi bağlantısını açar ve
+      commit eder. connection verilirse COMMIT ETMEZ (çağıran yönetir); yazımı
+      bir SAVEPOINT içinde yapar, hata olursa yalnızca kendi yazdıklarını
+      geri alıp hatayı yükseltir. Bu durumda bağlantı autocommit kapalı
+      olmalı ya da açık bir transaction içinde olmalıdır.
+    - Model adları önce sonuçtan, yoksa parametrelerden alınır; ikisi de
+      yoksa NULL. answer_question sonucu LLM model adını içermez, bu yüzden
+      llm_model parametreyle verilmelidir. LLM kapalıysa (llm_enabled=False)
+      llm_model NULL yazılır.
+    """
+    if not question or not str(question).strip():
+        raise ValueError("Soru boş olamaz.")
+
+    evidence = result.get("evidence_check") or {}
+    llm_enabled = result.get("llm_enabled", True)
+    query_row = {
+        "query_id": str(uuid.uuid4()),
+        "question": question,
+        "answer": result.get("answer"),
+        "llm_model": (result.get("llm_model") or llm_model) if llm_enabled else None,
+        "embedding_model": result.get("embedding_model") or embedding_model,
+        "reranker_model": result.get("reranker_model") or reranker_model,
+        "evidence_status": "sufficient" if evidence.get("sufficient") else "insufficient",
+        "evidence_score": _optional_float(result.get("top_rerank_score")),
+        "guard_reason": evidence.get("reason"),
+        "latency_ms": int(round(float(result.get("response_time_seconds") or 0) * 1000)),
+    }
+    if not query_row["embedding_model"]:
+        # rag_sorgulari.embedding_model NOT NULL
+        raise ValueError("embedding_model sonuçta yok ve parametre olarak verilmedi.")
+
+    source_rows = _rag_source_rows(result)
+
+    own_connection = connection is None
+    conn = get_connection() if own_connection else connection
+    if not own_connection and conn.autocommit and not conn.in_transaction:
+        raise ValueError(
+            "Verilen bağlantı autocommit modunda ve açık transaction yok; "
+            "yazım atomik olamaz. autocommit=False kullanın veya start_transaction() çağırın."
+        )
+
+    cursor = conn.cursor()
+    try:
+        # FK ön kontrolü: hiçbir şey yazmadan önce.
+        chunk_ids = [row["chunk_id"] for row in source_rows]
+        found = _existing_ids(conn, "pdf_chunks", chunk_ids)
+        missing = [c for c in chunk_ids if c not in found]
+        if missing:
+            raise ValueError(
+                f"{len(missing)} chunk_id pdf_chunks'ta yok; hiçbir şey yazılmadı: "
+                f"{missing[:3]}"
+            )
+
+        if not own_connection:
+            cursor.execute("SAVEPOINT save_rag_result")
+        try:
+            cursor.execute(
+                """
+                INSERT INTO rag_sorgulari
+                    (query_id, question, answer, llm_model, embedding_model,
+                     reranker_model, evidence_status, evidence_score,
+                     guard_reason, latency_ms)
+                VALUES (%(query_id)s, %(question)s, %(answer)s, %(llm_model)s,
+                        %(embedding_model)s, %(reranker_model)s, %(evidence_status)s,
+                        %(evidence_score)s, %(guard_reason)s, %(latency_ms)s)
+                """,
+                query_row,
+            )
+            if source_rows:
+                cursor.executemany(
+                    """
+                    INSERT INTO rag_sorgu_kaynaklari
+                        (query_id, chunk_id, retrieval_score, rerank_score,
+                         source_rank, used_in_context)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (query_row["query_id"], r["chunk_id"], r["retrieval_score"],
+                         r["rerank_score"], r["source_rank"], r["used_in_context"])
+                        for r in source_rows
+                    ],
+                )
+        except Exception:
+            if own_connection:
+                conn.rollback()
+            else:
+                cursor.execute("ROLLBACK TO SAVEPOINT save_rag_result")
+            raise
+
+        if own_connection:
+            conn.commit()
+        else:
+            cursor.execute("RELEASE SAVEPOINT save_rag_result")
+        return query_row["query_id"]
+
+    finally:
+        cursor.close()
+        if own_connection:
+            conn.close()
 
 
 def _print_state(state):
