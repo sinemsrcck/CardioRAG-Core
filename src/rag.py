@@ -196,19 +196,41 @@ def answer_question(
     evidence_check = check_evidence(
         ranked,
         min_score=min_relevance_score,
+        question=question,
+        enforce_keyword_overlap=False,
     )
     
     selected = select_diverse_sources(
-        evidence_check.get("chunks", []),
+        evidence_check.get("chunks", []) if evidence_check["sufficient"] else [],
         top_k=top_k,
         max_chunks_per_document=max_chunks_per_document,
     )
 
     context, sources = build_context(selected)
 
-    if not sources:
+    if evidence_check["sufficient"]:
+        # Yalnızca bağlam bütçesine sığan, gerçekten gönderilecek parçalar.
+        source_ids = {source["chunk_id"] for source in sources}
+        context_chunks = [
+            chunk for chunk in selected if chunk.get("chunk_id") in source_ids
+        ]
+        evidence_check = check_evidence(
+            context_chunks,
+            min_score=min_relevance_score,
+            question=question,
+            enforce_keyword_overlap=False,
+        )
+        if not sources or not context.strip():
+            evidence_check = {
+                "sufficient": False,
+                "reason": "no_usable_context",
+                "chunks": [],
+            }
+
+    if not evidence_check["sufficient"]:
+        context, sources = "", []
         status = "insufficient_evidence"
-        answer = "Bu soruyu yanıtlamak için kaynak bulunamadı."
+        answer = "Bu soruyu yanıtlamak için yeterli kullanılabilir kanıt bulunamadı."
 
     elif not use_llm:
         status = "retrieval_only"
