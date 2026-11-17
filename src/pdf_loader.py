@@ -8,7 +8,22 @@ import pymupdf4llm
 
 
 PDF_DIR = Path("data/pdfs")
-PDF_PROCESSING_VERSION = "markdown-footnotes-v2"
+# v3: yan yatırılmış (döndürülmüş) tablo sayfaları bellek içinde düzeltilerek okunur.
+PDF_PROCESSING_VERSION = "markdown-rotated-v3"
+
+# Bir sayfanın metninin (karakter bazında) en az bu kadarı aynı yönde döndürülmüşse
+# sayfa yan yatırılmış sayılır ve düzeltilerek okunur. Kenar bantları ("Author
+# Manuscript") ve tek tük döndürülmüş dipnotlar bu eşiğin çok altında kalır.
+ROTATED_PAGE_THRESHOLD = 0.8
+# Satır yönü (dx, dy) -> metni yataya çeviren döndürme açısı (show_pdf_page).
+DEROTATION_ANGLE = {(0, -1): -90, (0, 1): 90}
+# Düzeltilmiş sayfada tek başına duran tablo/şekil etiketi: "**Table 2.**", "# **Table 1.**"
+CAPTION_LABEL_LINE = re.compile(r"^[#\s]*[*_]*(?:table|figure|box)\s*[\dIVX]+[.:]?[*_\s]*$",
+                                re.IGNORECASE)
+# Başlığın tek hücreli tablo satırı olarak çıktığı durum: "|**Table 1 Characteristics ...**|"
+CAPTION_CELL_ROW = re.compile(r"^\|\s*([*_]*(?:table|figure|box)\s*[\dIVX]+\b[^|]*)\|\s*$",
+                              re.IGNORECASE)
+SINGLE_SEPARATOR_ROW = re.compile(r"^\|\s*:?-{3,}:?\s*\|\s*$")
 
 # "Table 1", "Figure 2", "Box 3" gibi başlık etiketleri.
 CAPTION_PATTERN = re.compile(
@@ -99,8 +114,78 @@ def recover_rotated_captions(page, page_text):
 
 def _text_key(text):
     """Compare source text with Markdown without rewriting the recovered words."""
-    text = re.sub(r"<[^>]*>", "", text)
+    # Yalnızca gerçek etiketler (<br>, <sup>, </sup> ...) silinir; "P < .001 ... >15 s"
+    # gibi karşılaştırma işaretleri arasındaki metin silinmez.
+    text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
     return re.sub(r"[\W_]+", "", text).casefold()
+
+
+def rotated_page_direction(page, threshold=ROTATED_PAGE_THRESHOLD):
+    """
+    Sayfa yan yatırılmış mı? Metnin (karakter bazında) en az `threshold` kadarı
+    aynı döndürülmüş yönde ise o yönü (dx, dy), değilse None döndürür.
+    page.rotation'a değil, satırların yazım yönüne bakar: bu PDF'lerde sayfa
+    döndürülmemiş, tablo sayfaya yan çizilmiştir.
+    """
+    chars = {}
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            text = "".join(span["text"] for span in line["spans"]).strip()
+            if text:
+                direction = tuple(round(value) for value in line["dir"])
+                chars[direction] = chars.get(direction, 0) + len(text)
+    total = sum(chars.values())
+    rotated = {d: n for d, n in chars.items() if d in DEROTATION_ANGLE}
+    if not total or not rotated:
+        return None
+    direction = max(rotated, key=rotated.get)
+    return direction if rotated[direction] / total >= threshold else None
+
+
+def _derotated_markdown(pdf, page_index, direction):
+    """
+    Yan yatırılmış sayfayı bellek içinde yataya çevirip pymupdf4llm ile okur.
+    Kaynak PDF değişmez; geçici tek sayfalık belge kullanılır.
+    """
+    page = pdf[page_index]
+    with pymupdf.open() as temp:
+        upright = temp.new_page(width=page.rect.height, height=page.rect.width)
+        upright.show_pdf_page(upright.rect, pdf, page_index, rotate=DEROTATION_ANGLE[direction])
+        chunks = pymupdf4llm.to_markdown(temp, page_chunks=True, use_ocr=False,
+                                         header=False, footer=False)
+    return chunks[0]["text"].strip() if chunks else ""
+
+
+def _join_caption_labels(text):
+    """
+    Düzeltilmiş sayfalarda tablo başlığını tek satıra getirir, böylece başlık
+    tablonun hemen önünde durur (chunk'lama onu tabloyla birlikte taşır):
+    - Tek başına duran "Table N." satırı hemen altındaki başlık satırıyla
+      birleştirilir ("**Table 2.**" + "Benefits of ..." -> "**Table 2.** Benefits of ...").
+    - Tek hücreli tablo satırı olarak çıkmış başlık ("|**Table 1 ...**|" + "|---|")
+      düz satıra çevrilir. Kelimeler değişmez.
+    """
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        cell = CAPTION_CELL_ROW.match(line.strip())
+        if cell and i + 1 < len(lines) and SINGLE_SEPARATOR_ROW.match(lines[i + 1].strip()):
+            out.extend([cell.group(1).strip(), ""])
+            i += 2
+            continue
+        nxt = i + 1
+        while nxt < len(lines) and not lines[nxt].strip():
+            nxt += 1
+        if (CAPTION_LABEL_LINE.match(line) and nxt < len(lines)
+                and not lines[nxt].lstrip().startswith("|")
+                and not CAPTION_LABEL_LINE.match(lines[nxt])):
+            out.append(f"{line.rstrip()} {lines[nxt].strip()}")
+            i = nxt + 1
+            continue
+        out.append(line)
+        i += 1
+    return "\n".join(out)
 
 
 def recover_rotated_footnotes(page, page_text):
@@ -166,9 +251,15 @@ def load_pdf(pdf_path):
             actual_page = chunk.get("metadata", {}).get("page", page_index + 1)
             if actual_page != page_index + 1:
                 raise ValueError("Markdown page order does not match physical PDF pages.")
+            page_text = chunk["text"].strip()
+            # Yan yatırılmış tablo sayfaları düzeltilerek okunur (aksi halde tablo
+            # devrik çıkar, başlık ve dipnotların bir kısmı kaybolur).
+            direction = rotated_page_direction(pdf[page_index])
+            if direction is not None:
+                page_text = _join_caption_labels(_derotated_markdown(pdf, page_index, direction))
             text = recover_rotated_captions(
                 pdf[page_index],
-                chunk["text"].strip(),
+                page_text,
             )
 
             text, recovered = recover_rotated_footnotes(pdf[page_index], text)

@@ -23,7 +23,8 @@ Kullanılan 6 PDF (`data/pdfs/`; dosya adı öneki kaynağı gösterir):
 
 ```
 PDF (data/pdfs/)
- → metin çıkarma (pymupdf4llm, sayfa sayfa markdown)          src/pdf_loader.py
+ → metin çıkarma (pymupdf4llm, sayfa sayfa markdown;
+          yan yatırılmış tablo sayfaları düzeltilerek okunur)  src/pdf_loader.py
  → temizleme (kaynakça çıkarılır, sonraki tablolar korunur)    src/pdf_processing.py
  → chunk (sayfa bazında, 1500 karakter, 250 örtüşme;
           markdown tabloları ortasından kesilmez)              src/chunking.py
@@ -45,7 +46,7 @@ PDF (data/pdfs/)
 
 **Tablolar ve chunk'lama:** Tablosuz sayfalar 1500 karakterlik örtüşmeli pencerelerle bölünür. Markdown tablosu olan sayfalarda metin aynı yöntemle, her tablo ise ayrı bölünür: sığan tablo, varsa üstündeki "Table N" başlık satırıyla birlikte tek chunk olur; sığmayan tablo yalnızca satır aralarından bölünür ve her devam parçasının başına `<başlık> (devam)` (başlık yoksa `(tablo devamı)`), tablonun başlık satırı ve `|---|` ayraç satırı tekrar eklenir. Tek başına sığmayan bir satır hücre sınırından bölünür.
 
-**Sürümler:** `pdf_belgeleri.processing_version` metin çıkarma, kaynakça temizleme ve chunk'lama sürümlerini birlikte içerir (ör. `…|references-v2|chunking-table-v1`). Chunk'lama değişince `python -m src.ingest` yeni sürümü yazar; eski sürümün chunk ve embedding'leri **silinmez**, yalnızca kullanılmaz: `load_chunks_for_rag` ve `validate_row` yalnızca `pdf_belgeleri`'deki güncel sürümün chunk'larını okur.
+**Sürümler:** `pdf_belgeleri.processing_version` metin çıkarma, kaynakça temizleme ve chunk'lama sürümlerini birlikte içerir (ör. `markdown-rotated-v3|…|references-v2|chunking-table-v1`). Metin çıkarma veya chunk'lama değişince `python -m src.ingest` yeni sürümü yazar; eski sürümün chunk ve embedding'leri **silinmez**, yalnızca kullanılmaz: `load_chunks_for_rag` ve `validate_row` yalnızca `pdf_belgeleri`'deki güncel sürümün chunk'larını okur.
 
 **Klinik bulgular (ilaç / doz / hasta grubu / tanı yöntemi):**
 
@@ -190,7 +191,7 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 
 | Dosya | Görev |
 |---|---|
-| `pdf_loader.py` | PDF'i pymupdf4llm ile sayfa sayfa markdown'a çevirir; döndürülmüş tablo başlıklarını ve dipnotlarını kurtarır. |
+| `pdf_loader.py` | PDF'i pymupdf4llm ile sayfa sayfa markdown'a çevirir; yan yatırılmış tablo sayfalarını (metnin ≥%80'i aynı yönde döndürülmüş) bellek içinde düzelterek okur; döndürülmüş tablo başlıklarını ve dipnotlarını kurtarır. |
 | `pdf_processing.py` | Kaynakçayı bulur ve çıkarır; kaynakçadan sonra gelen tablo/şekil içeriğini korur. |
 | `chunking.py` | Sayfaları örtüşmeli chunk'lara böler; markdown tablolarını ortasından kesmez, devam parçalarına başlık satırını tekrar ekler; sürüm ve metin hash'i içeren `chunk_id` üretir (`CHUNKING_VERSION`). |
 | `embeddings.py` | Sentence-transformers ile normalize embedding üretir (`minilm`, `bge-m3`). |
@@ -225,7 +226,8 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 
 | Test | Ne yapar |
 |---|---|
-| `test_chunking` | Tablo farkındalıklı chunk'lama: tablosuz metin eskisiyle aynı, tablolar ortasından kesilmiyor, devam parçalarında başlık satırı var, 1500 sınırı aşılmıyor; 6 PDF'te 243 chunk (PDF'ler gerekir). |
+| `test_chunking` | Tablo farkındalıklı chunk'lama: tablosuz metin eskisiyle aynı, tablolar ortasından kesilmiyor, devam parçalarında başlık satırı var, 1500 sınırı aşılmıyor; 6 PDF'te 242 chunk (PDF'ler gerekir). |
+| `test_rotated_pages` | Yan yatırılmış tablo sayfaları: yalnızca AF s.24, 25, 27, 28 ve OHCA s.4 düzeltiliyor, diğer sayfalar birebir aynı; tablolar doğru yönde, kaybolan başlık/dipnotlar geri geliyor, yinelenen metin yok (PDF'ler gerekir). |
 | `test_pipeline` | `answer_question` ve evidence guard için mock'lu birim testler (model veya LLM gerekmez). |
 | `test_pdf_processing` | 6 PDF'in yüklenmesi, kaynakça temizliği ve chunk'ları; ayrıca `test_questions.csv`'deki kanıt eşleştirmelerini yeniden üretilen chunk'larla doğrular (PDF'ler gerekir; `--pdf-dir` ile farklı klasör verilebilir). Chunk'lama sürümü değiştikten sonra eşleştirmeler yenilenene kadar "Stale or unknown chunk id" ile başarısız olur (aşağıya bakın). |
 | `test_reference_cleaning` | Kaynakça temizliğinin PDF bazında raporu (PDF'ler gerekir). |
@@ -238,7 +240,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 
 ## Chunk sürümü değiştikten sonra
 
-Chunk'lama değiştiğinde (şu an `chunking-table-v1`) bütün `chunk_id`'ler değişir, çünkü kimlik sürüm anahtarını içerir. `evaluation/test_questions.csv`'deki kanıt eşleştirmeleri eski kimliklere işaret ettiği için yenilenmelidir. Değişiklik main'e geldikten sonra:
+Metin çıkarma veya chunk'lama sürümü değiştiğinde (şu an `markdown-rotated-v3` + `chunking-table-v1`) bütün `chunk_id`'ler değişir, çünkü kimlik sürüm anahtarını içerir. Rapor her zaman en eski atıftan doğrudan `pdf_belgeleri`'deki **en güncel** sürüme eşler; aradaki sürümlerin veritabanında bulunup bulunmaması sonucu değiştirmez. `evaluation/test_questions.csv`'deki kanıt eşleştirmeleri eski kimliklere işaret ettiği için yenilenmelidir. Değişiklik main'e geldikten sonra:
 
 ```powershell
 git pull
@@ -258,7 +260,7 @@ python -m evaluation.chunk_remap_report
 
 - **Evidence guard şu an yalnızca uzunluk filtresi uyguluyor.** `answer_question` `min_relevance_score=None` ve kelime örtüşmesi kapalı çalışır; 80 karakterden kısa chunk'lar elenir, alakasız ama uzun chunk'lar elenmez. Skor eşiği henüz kalibre edilmedi.
 - **`validate_row` sayıları kontrol ediyor, kelimeleri değil.** Kanıt cümlesinin sayfada birebir geçtiğini ve alanlardaki her sayının kanıtta bulunduğunu doğrular; ama ilaç adı, hasta grubu veya yön gibi alanların cümleyle anlamca uyumunu kontrol etmez. Bu, insan kontrolüyle (`review_status = 'verified'`) yapılır.
-- **AF makalesindeki döndürülmüş tablolar devrik çıkıyor.** Tablo 2 ve 3 sayfaya yan yatırılmış; metin çıkarımında satır ve sütunlar yer değiştiriyor ve Tablo 2'nin üst başlığı ile bazı dipnotları metne geçmiyor. Tablonun "başlık satırı" aslında bir veri satırı olduğundan, chunk'lamada tekrar edilen başlık bu tablolarda anlamı tam düzeltmez.
+- **Yan yatırılmış tablolarda küçük biçim kusurları kalıyor.** Sayfaya yan çizilmiş tablolar (AF s.24, 25, 27, 28; OHCA s.4) artık bellek içinde düzeltilerek doğru yönde okunuyor; başlık ve dipnotlar metne geçiyor. Kalanlar: birden fazla sütuna yayılan üst başlıklar hücrelere bölünmüş çıkıyor (ör. AF Tablo 2: "Associated b \| enefits of adhe \| ring to recommen \| dations"); bazı hücrelerin devamı yan hücreye kayabiliyor (AF s.24); dipnot harfleri `<sup>` olarak ayrı yazılıyor; OHCA Tablo 1'de ilk başlık satırı bir grup başlığı olduğundan devam chunk'larında yalnızca o tekrar ediliyor (asıl sütun adları ilk gövde satırında).
 - **Metin cümleleri chunk sınırına denk gelebilir.** Tablolar artık ortasından kesilmiyor, ama düz metin hâlâ 1500 karakterlik pencerelerle bölünüyor; bir kanıt cümlesi iki chunk'ın sınırına denk gelirse tek bir chunk'ta tam geçmez (bu durumda `chunk_id` boş kalır).
 - **Eski sürüm chunk'ları veritabanında birikir.** Chunk'lama sürümü değişince eski chunk ve embedding'ler silinmez (geçmiş sorgular `rag_sorgu_kaynaklari` üzerinden onlara bağlı olabilir); kullanılmazlar ama yer kaplarlar.
 - **`data/clinical/referans_taslak.json` doğrulanmamıştır.** Aday cümlelerden hazırlanmış bir karşılaştırma referansıdır (`meta.durum = "dogrulanmamis_referans"`); insan kontrolünden geçmemiştir ve `klinik_bulgular`'a doğrudan girmez.

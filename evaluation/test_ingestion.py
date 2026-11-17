@@ -34,7 +34,7 @@ EMBEDDING_MODEL = "minilm"
 EXPECTED_DIMENSION = 384
 EXPECTED_DOCUMENTS = 6
 EXPECTED_PAGES = 95
-EXPECTED_CHUNKS = 243  # chunking-table-v1 (önceki sürümde 233)
+EXPECTED_CHUNKS = 242  # markdown-rotated-v3 + chunking-table-v1 (önceki sürümlerde 233, 243)
 
 # Güncel sürüm = pdf_belgeleri.processing_version ile eşleşen satırlar.
 # Eski sürümlerin chunk/embedding'leri silinmez; yalnızca kullanılmaz.
