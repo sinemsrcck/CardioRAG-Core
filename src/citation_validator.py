@@ -1,22 +1,17 @@
 
 import re
 
-from src.rag import get_llm_client, DEFAULT_LLM
 
-
-CITATION_PATTERN = re.compile(
-    r"\[([\d,\s]+)\]"
-)
+CITATION_PATTERN = re.compile(r"\[([\d,\s]+)\]")
 
 
 def extract_citations(answer):
     """[1], [1,2], [1, 2, 3] biçimlerini ayrıştırır."""
     numbers = []
 
-    for match in CITATION_PATTERN.finditer(answer):
+    for match in CITATION_PATTERN.finditer(answer or ""):
         for part in match.group(1).split(","):
             part = part.strip()
-
             if part.isdigit():
                 numbers.append(int(part))
 
@@ -24,17 +19,16 @@ def extract_citations(answer):
 
 
 def validate_citations(answer, sources):
-    """Yanıttaki atıfların kaynaklarla eşleşmesini kontrol eder."""
+    """Atıf numaralarını ve atıfsız paragrafları kontrol eder."""
     valid_numbers = {
-        source["number"]
-        for source in sources
+        source["number"] for source in sources
     }
 
     cited_numbers = set(extract_citations(answer))
 
     paragraphs = [
         paragraph.strip()
-        for paragraph in answer.split("\n\n")
+        for paragraph in (answer or "").split("\n\n")
         if paragraph.strip()
     ]
 
@@ -49,26 +43,30 @@ def validate_citations(answer, sources):
         for source in sources
     }
 
+    invalid = sorted(cited_numbers - valid_numbers)
+
     return {
-        "valid": len(cited_numbers - valid_numbers) == 0,
-        "used_citations": sorted(cited_numbers),
-        "invalid_citations": sorted(
-            cited_numbers - valid_numbers
+        "valid": (
+            bool(cited_numbers)
+            and not invalid
+            and not paragraphs_without_citations
         ),
+        "used_citations": sorted(cited_numbers),
+        "invalid_citations": invalid,
         "uncited_sources": sorted(
             valid_numbers - cited_numbers
         ),
-        "paragraphs_without_citations": (
-            paragraphs_without_citations
-        ),
+        "paragraphs_without_citations": paragraphs_without_citations,
         "unique_document_count": len(unique_documents),
     }
 
 
-def verify_claim(claim, evidence):
+def verify_claim(claim, evidence, client, model):
     """
-    Bir iddianın verilen kanıtla desteklenip
-    desteklenmediğini LLM yardımıyla değerlendirir.
+    LLM ile iddia-kaynak uyumunu değerlendirir.
+
+    client ve model dışarıdan alınır;
+    böylece rag.py ile döngüsel import oluşmaz.
     """
     if not claim.strip() or not evidence.strip():
         return {
@@ -76,10 +74,8 @@ def verify_claim(claim, evidence):
             "explanation": "İddia veya kanıt metni boş.",
         }
 
-    client = get_llm_client()
-
     response = client.chat.completions.create(
-        model=DEFAULT_LLM,
+        model=model,
         temperature=0,
         max_tokens=250,
         messages=[
@@ -88,8 +84,9 @@ def verify_claim(claim, evidence):
                 "content": (
                     "You are a biomedical evidence verifier. "
                     "Use only the supplied evidence. "
-                    "Return SUPPORTED, PARTIALLY_SUPPORTED, "
-                    "or NOT_SUPPORTED on the first line. "
+                    "Return exactly one label on the first line: "
+                    "SUPPORTED, PARTIALLY_SUPPORTED, "
+                    "or NOT_SUPPORTED. "
                     "Explain briefly in Turkish on the second line. "
                     "If evidence is insufficient, return "
                     "NOT_SUPPORTED."
@@ -112,13 +109,13 @@ def verify_claim(claim, evidence):
     lines = result.splitlines()
     label = lines[0].strip() if lines else ""
 
-    allowed_labels = {
+    allowed = {
         "SUPPORTED",
         "PARTIALLY_SUPPORTED",
         "NOT_SUPPORTED",
     }
 
-    if label not in allowed_labels:
+    if label not in allowed:
         return {
             "label": "UNKNOWN",
             "explanation": result,

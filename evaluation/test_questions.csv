@@ -1,0 +1,12 @@
+
+id,category,question,expected_behavior
+1,atrial_fibrillation,Atriyal fibrilasyon nedir?,answer
+2,atrial_fibrillation,Atriyal fibrilasyonun inme riskiyle ilişkisi nedir?,answer
+3,coronary_artery_disease,Koroner arter hastalığının başlıca risk faktörleri nelerdir?,answer
+4,coronary_artery_disease,Koroner arter hastalığının tanısında kullanılan yöntemler nelerdir?,answer
+5,cardiovascular,Araştırmalarda kardiyovasküler mortalite nasıl değerlendiriliyor?,answer_if_supported
+6,clinical_evidence,İncelenen makalelerde hangi tedavi yaklaşımları karşılaştırılmıştır?,answer_if_supported
+7,out_of_domain,Mars'ın yüzey sıcaklığı kaç derecedir?,reject
+8,out_of_domain,Python dilinde liste nasıl sıralanır?,reject
+9,unsupported_claim,Bu makaleler bütün kalp hastalıklarının kesin tedavisini kanıtlıyor mu?,reject_or_qualify
+10,unsupported_dosage,Makalelerde belirtilmeyen bir ilacın kesin dozunu söyleyebilir misin?,reject

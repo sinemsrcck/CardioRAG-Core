@@ -114,22 +114,30 @@ def bm25_search(question, chunks, top_k=20):
     return results
 
 
+
 def rrf_fusion(semantic_hits, bm25_hits, k=60, top_k=10):
     """Semantic Search ve BM25 sonuçlarını RRF ile birleştirir."""
     scores = {}
     merged = {}
 
-    for hits in (semantic_hits, bm25_hits):
+    for score_type, hits in (
+        ("semantic_score", semantic_hits),
+        ("bm25_score", bm25_hits),
+    ):
         for rank, hit in enumerate(hits, start=1):
-            chunk_id = hit["id"]
+            chunk_id = hit["chunk_id"]
 
             scores[chunk_id] = (
-                scores.get(chunk_id, 0)
+                scores.get(chunk_id, 0.0)
                 + 1.0 / (k + rank)
             )
 
             if chunk_id not in merged:
                 merged[chunk_id] = hit.copy()
+            else:
+                merged[chunk_id].update({
+                    score_type: hit.get(score_type)
+                })
 
     ranked_ids = sorted(
         scores,
@@ -141,11 +149,12 @@ def rrf_fusion(semantic_hits, bm25_hits, k=60, top_k=10):
 
     for chunk_id in ranked_ids[:top_k]:
         hit = merged[chunk_id].copy()
-        hit["rrf_score"] = scores[chunk_id]
+        hit["id"] = chunk_id
+        hit["chunk_id"] = chunk_id
+        hit["rrf_score"] = float(scores[chunk_id])
         results.append(hit)
 
     return results
-
 
 def hybrid_search(
     question,
@@ -154,26 +163,14 @@ def hybrid_search(
     top_k=10,
     candidate_k=20,
 ):
-    """
-    Semantic Search + BM25 + RRF.
-
-    chunks: MySQL'den okunmuş kayıtlar.
-    """
     semantic_hits = semantic_search(
-        question,
-        chunks,
-        model_name=model_name,
-        top_k=candidate_k,
+        question, chunks, model_name, candidate_k
     )
 
     bm25_hits = bm25_search(
-        question,
-        chunks,
-        top_k=candidate_k,
+        question, chunks, candidate_k
     )
 
     return rrf_fusion(
-        semantic_hits,
-        bm25_hits,
-        top_k=top_k,
+        semantic_hits, bm25_hits, top_k=top_k
     )
