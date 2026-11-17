@@ -13,10 +13,13 @@ from src.evidence_guard import check_evidence
 load_dotenv()
 
 DEFAULT_LLM = os.getenv("LLM_MODEL", "Qwen/Qwen3-8B")
+# Completion budget includes any reasoning tokens as well as visible output.
+# This is an initial RAG budget, not a guarantee against response truncation.
+MAX_COMPLETION_TOKENS = 4096
 
 
 def get_llm_client():
-    """OpenAI uyumlu Qwen API sunucusuna bağlanır."""
+    """Yapılandırılan OpenAI uyumlu API istemcisini oluşturur."""
     api_key = os.getenv("LLM_API_KEY")
     base_url = os.getenv("LLM_BASE_URL")
 
@@ -117,7 +120,7 @@ GÜVENLİK:
 
 
 def generate_answer(question, context, sources):
-    """Qwen3-8B ile kaynaklı yanıt oluşturur."""
+    """Yapılandırılan LLM ile kaynaklı yanıt oluşturur."""
     if not sources or not context.strip():
         return (
             "Bu soruyu yanıtlamak için yeterli kaynak "
@@ -139,8 +142,7 @@ def generate_answer(question, context, sources):
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.1,
-        max_tokens=1200,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
     )
 
     answer = response.choices[0].message.content or ""

@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from evaluation.evidence_threshold import (
-    evaluate_source_metrics, identity, json_list, validate_splits,
+    audit_review_status, evaluate_source_metrics, identity, json_list, validate_splits,
 )
 
 OUTPUT_DIR = Path("evaluation/results")
@@ -161,7 +161,7 @@ def _review_hits(hits, chunks_by_id, matches, selected_ids, stage):
 
 def evaluate_questions(
     questions, chunks, use_llm=False, embedding_model="minilm",
-    reranker_model="bge-m3", write_report=False,
+    reranker_model="bge-m3", write_report=False, run_question=None,
 ):
     """Collect one model's baseline candidates and actual context separately.
 
@@ -190,7 +190,7 @@ def evaluate_questions(
                       max_chunks_per_document=2, min_relevance_score=None,
                       llm_enabled=use_llm)
         try:
-            result = answer_question(
+            result = (run_question or answer_question)(
                 question=item["question"], chunks=chunks,
                 embedding_model=embedding_model, reranker_model=reranker_model,
                 use_llm=use_llm,
@@ -228,6 +228,7 @@ def evaluate_questions(
                  "unassigned_count": sum(r["split"] == "unassigned" for r in results),
                  "pending_answerability_count": sum(r["answerability_review_status"] != "verified" for r in results),
                  "error_count": sum(r["status"] == "error" for r in results)}))
+    print(_dump({"annotation_audit": audit_review_status(questions)}))
     # Collection reports fixed observed pools only. Pending labels yield null metrics.
     for split in ("calibration", "test"):
         print(_dump(evaluate_source_metrics(results, reranker_model, split=split)))
@@ -241,6 +242,28 @@ def evaluate_questions(
             writer.writerows(results)
         print(f"Results: {output_path}")
     return results
+
+
+def collect_reranker_scores(questions, chunks, *, run_question, embedding_model="minilm"):
+    """Collect separate baseline pools using an explicitly injected runner.
+
+    No default runner, LLM generation, report-file write, threshold fitting or
+    threshold application. Offline callers pass a mock runner. Model execution
+    would require the caller to explicitly supply a real runner in a later run.
+    Identical embedding/retrieval settings are kept across both rerankers.
+    """
+    if not callable(run_question):
+        raise ValueError("An explicit score collection runner is required")
+    questions, chunks = list(questions), list(chunks)
+    validate_annotations(questions)
+    return {
+        model: evaluate_questions(
+            [q for q in questions if not json_list(q.get("reranker_models_json"))
+             or model in json_list(q.get("reranker_models_json"))],
+            chunks, use_llm=False, embedding_model=embedding_model,
+            reranker_model=model, write_report=False, run_question=run_question,
+        ) for model in ("minilm", "bge-m3")
+    }
 
 
 def load_questions(csv_path):

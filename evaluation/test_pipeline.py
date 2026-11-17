@@ -1,6 +1,6 @@
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.evidence_guard import check_evidence
 from src.rag import answer_question, build_context
@@ -75,6 +75,36 @@ def main():
     print("Durum:", result["status"])
     print("Bulunan kaynak:", result["selected_count"])
     print("En yüksek reranker skoru:", result["top_rerank_score"])
+
+
+class LLMRequestCompatibilityTests(unittest.TestCase):
+    def test_generation_uses_completion_budget_and_configured_model(self):
+        from types import SimpleNamespace
+        from src.rag import generate_answer
+
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="  Supported answer [1].  "))])
+        with patch("src.rag.get_llm_client", return_value=client), \
+             patch("src.rag.DEFAULT_LLM", "gpt-6-luna"):
+            answer = generate_answer("Study result?", "Source evidence", [{"number": 1}])
+        self.assertEqual(answer, "Supported answer [1].")
+        client.chat.completions.create.assert_called_once()
+        request = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(request["model"], "gpt-6-luna")
+        self.assertEqual(request["max_completion_tokens"], 4096)
+        self.assertNotIn("max_tokens", request)
+        self.assertNotIn("temperature", request)
+        self.assertIn("Source evidence", request["messages"][1]["content"])
+
+    def test_generation_without_context_or_sources_never_creates_client(self):
+        from src.rag import generate_answer
+
+        with patch("src.rag.get_llm_client", side_effect=AssertionError("No API")) as client:
+            for context, sources in (("Source evidence", []), ("   ", [{"number": 1}])):
+                with self.subTest(context=context, sources=sources):
+                    self.assertTrue(generate_answer("Question?", context, sources))
+            client.assert_not_called()
 
 
 class ProductionGateTests(unittest.TestCase):
@@ -555,6 +585,128 @@ class EvaluationInfrastructureTests(unittest.TestCase):
         row["evidence_matches_json"] = json.dumps([match])
         with self.assertRaises(ValueError):
             validate_evidence_chunks([row], [chunk])
+
+    def test_review_audit_current_csv_never_promotes_automated_labels(self):
+        from pathlib import Path
+        from evaluation.evaluate_rag import load_questions
+        from evaluation.evidence_threshold import audit_review_status, calibration_readiness
+        questions = load_questions(Path(__file__).with_name("test_questions.csv"))
+        audit = audit_review_status(questions)
+        for split, count, pairs in (("calibration", 3, 3), ("test", 9, 43), ("unassigned", 1, 0)):
+            self.assertEqual(audit[split]["pending_questions"], count)
+            self.assertEqual(audit[split]["pending_or_ineligible_pairs"], pairs)
+            self.assertEqual(audit[split]["human_answerable"], 0)
+            self.assertEqual(audit[split]["human_unanswerable"], 0)
+        self.assertEqual(audit["test"]["automated_verified_pairs"], 31)
+        report = calibration_readiness(questions)
+        self.assertFalse(report["production_threshold_applied"])
+        for model in ("minilm", "bge-m3"):
+            for split in ("calibration", "test"):
+                data = report["models"][model]["splits"][split]
+                self.assertFalse(data["both_scored_classes_present"])
+                self.assertIsNone(data["threshold_evaluation"]["threshold"])
+                self.assertIsNone(data["source_metrics"]["answerable_coverage"]["value"])
+
+    def test_audit_separates_human_labels_and_other_groups(self):
+        import json
+        from evaluation.evidence_threshold import audit_review_status
+        positive = self.fixture("pos", split="calibration")
+        negative = self.fixture("neg", split="calibration")
+        negative["answerability_label"] = "unanswerable"
+        match = json.loads(negative["evidence_matches_json"])[0]
+        match["support_level"] = "no_support"
+        negative["evidence_matches_json"] = json.dumps([match])
+        other = self.fixture("other", split="unassigned")
+        other["answerability_label"] = "ambiguous"
+        result = audit_review_status([positive, negative, other])
+        self.assertEqual(result["calibration"]["human_answerable"], 1)
+        self.assertEqual(result["calibration"]["human_unanswerable"], 1)
+        self.assertEqual(result["calibration"]["approved_positive_pairs"], 1)
+        self.assertEqual(result["calibration"]["approved_negative_pairs"], 1)
+        self.assertEqual(result["unassigned"]["human_other"], 1)
+
+    def test_dual_collection_uses_mock_runner_and_keeps_scores_separate(self):
+        from evaluation.evaluate_rag import collect_reranker_scores
+        from evaluation.evidence_threshold import calibration_readiness
+        import json
+        row = self.fixture("q")
+        row["evidence_matches_json"] = "[]"
+        row["gold_review_status"] = "pending_review"
+        hit = {**TEST_CHUNKS[0], "chunk_id": "chunk-q", "document_id": "doc-q"}
+        def runner(**kwargs):
+            score = -3.0 if kwargs["reranker_model"] == "minilm" else 8.0
+            return {"sources": [hit], "answer": None, "status": "retrieval_only",
+                    "response_time_seconds": 0.01, "selected_count": 1,
+                    "debug": {"retrieved_hits": [dict(hit, rrf_score=0.02)],
+                              "reranked_hits": [dict(hit, rerank_score=score)]}}
+        with patch("evaluation.evaluate_rag.answer_question", side_effect=AssertionError("No real models")), \
+             patch("evaluation.evidence_threshold.select_threshold", side_effect=AssertionError("No fitting")), \
+             patch("pathlib.Path.mkdir", side_effect=AssertionError("No output files")):
+            mock = Mock(side_effect=runner)
+            collected = collect_reranker_scores([row], [hit], run_question=mock)
+            report = calibration_readiness([row], collected["minilm"] + collected["bge-m3"])
+        self.assertEqual(mock.call_count, 2)
+        for call in mock.call_args_list:
+            self.assertFalse(call.kwargs["use_llm"])
+            self.assertNotIn("min_relevance_score", call.kwargs)
+        for model, score in (("minilm", -3.0), ("bge-m3", 8.0)):
+            self.assertEqual(json.loads(collected[model][0]["reranked_candidates_json"])[0]["rerank_score"], score)
+            self.assertEqual(report["models"][model]["splits"]["test"]["scored_questions"], 1)
+
+    def test_readiness_evaluates_only_explicit_model_thresholds(self):
+        import json
+        from evaluation.evidence_threshold import calibration_readiness
+        rows = []
+        for model, positive_score, negative_score in (("minilm", -2.0, 2.0), ("bge-m3", 8.0, 2.0)):
+            for qid, label, score in (("pos", "direct_support", positive_score), ("neg", "no_support", negative_score)):
+                row = self.fixture(qid, model=model)
+                matches = json.loads(row["evidence_matches_json"])
+                matches[0]["support_level"] = label
+                row["evidence_matches_json"] = json.dumps(matches)
+                hits = json.loads(row["reranked_candidates_json"])
+                hits[0]["rerank_score"] = score
+                row["reranked_candidates_json"] = json.dumps(hits)
+                if label == "no_support":
+                    row.update(answerability_label="unanswerable", sufficient_support_sets_json="[]")
+                rows.append(row)
+        report = calibration_readiness([], rows, thresholds={"minilm": 1.0, "bge-m3": 5.0})
+        mini = report["models"]["minilm"]["splits"]["test"]["threshold_evaluation"]
+        bge = report["models"]["bge-m3"]["splits"]["test"]["threshold_evaluation"]
+        self.assertEqual((mini["fp"], mini["fn"]), (1, 1))
+        self.assertEqual((bge["fp"], bge["fn"]), (0, 0))
+        self.assertFalse(report["production_threshold_applied"])
+        with self.assertRaises(ValueError):
+            calibration_readiness([], rows, thresholds={"shared": 1.0})
+
+    def test_repeated_candidates_do_not_inflate_precision_or_consume_k(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        relevant = json.loads(row["reranked_candidates_json"])[0]
+        irrelevant = {"document_id": "other", "page_number": 2, "chunk_id": "other"}
+        matches = json.loads(row["evidence_matches_json"])
+        matches.append({**irrelevant, "support_level": "no_support", "review_status": "verified",
+                        "human_review_status": "verified", "calibration_eligible": True})
+        row["evidence_matches_json"] = json.dumps(matches)
+        row["reranked_candidates_json"] = json.dumps([relevant, relevant, irrelevant])
+        result = evaluate_source_metrics([row], "minilm", k=2)
+        self.assertEqual(result["stages"]["reranked_candidates_json"]["precision_at_k"]["value"], 0.5)
+
+    def test_unknown_run_status_is_not_a_false_reject(self):
+        from evaluation.evidence_threshold import evaluate_source_metrics
+        row = self.fixture()
+        row["status"] = "not_run"
+        result = evaluate_source_metrics([row], "minilm")
+        self.assertIsNone(result["question_gate"]["false_reject_rate"]["value"])
+
+    def test_bool_scores_cannot_enter_threshold_metrics(self):
+        import json
+        from evaluation.evidence_threshold import evaluate_threshold
+        row = self.fixture()
+        hits = json.loads(row["reranked_candidates_json"])
+        hits[0]["rerank_score"] = True
+        row["reranked_candidates_json"] = json.dumps(hits)
+        self.assertEqual(evaluate_threshold([row], 1.0, "minilm")["excluded_pairs"], 1)
 
 
 if __name__ == "__main__":
