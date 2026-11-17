@@ -10,6 +10,13 @@ import math
 from copy import deepcopy
 from numbers import Real
 
+from src.clinical_candidates import CANDIDATE_ID_VERSION, candidate_binding
+from src.clinical_review import validate_clinical_reviews
+
+DEFAULT_API_TIMEOUT = 60.0
+DEFAULT_MAX_LLM_CALLS = 10
+DEFAULT_MAX_COMPLETION_TOKENS = 2400
+
 
 FIELDS = (
     "diagnosis", "drug", "dose", "dose_unit", "treatment_duration",
@@ -89,60 +96,150 @@ def _metadata(candidate):
     return metadata
 
 
-def extract_clinical_findings(candidates, *, client=None, model=None):
-    """Return {findings: [...], rejected: [...]} with pending review only.
+def _require_api_key(client):
+    """Reject missing credentials, including the shared factory's anonymous fallback."""
+    key = getattr(client, "api_key", None)
+    if not isinstance(key, str) or not key.strip() or key.strip().lower() in {"not-required", "none", "null"}:
+        raise ValueError("missing_api_key")
+    if any(character.isspace() for character in key):
+        raise ValueError("invalid_api_key")
 
-    Invalid candidates/responses are isolated and reported by input index. No
-    retry, SQL write or file write occurs. Empty input never initializes a client.
-    Pass a mock client for offline tests. Without one, reuse rag's configured
-    OpenAI-compatible client and DEFAULT_LLM, lazily and without changing RAG.
+
+def extract_clinical_findings(
+    candidates, *, client=None, model=None, timeout=DEFAULT_API_TIMEOUT,
+    max_calls=DEFAULT_MAX_LLM_CALLS,
+    max_completion_tokens=DEFAULT_MAX_COMPLETION_TOKENS, stop_on_error=True,
+    reviewed_fields_by_candidate=None,
+):
+    """Return pending findings/rejections; no SQL, file writes or raw error logs.
+
+    Existing client/model arguments and successful return shape are preserved.
+    Human classification preflight is mandatory for the entire input batch.
+    Missing/legacy/stale approvals raise ClinicalReviewError before any client or
+    request. Pass the versioned review map, or explicitly set CLINICAL_REVIEW_MAP
+    to its JSON representation. Findings carry the original candidate and review
+    provenance; classification approval never makes clinical findings verified.
+    Inputs rejected before a request do not consume the per-invocation call limit.
+    Every request attempt consumes one call, including failed requests. SDK
+    retries are ALWAYS disabled; timeout and completion budget are explicit.
+
+    By default the first request/response error stops the run. Configuration
+    errors and the call limit always stop it. A stopped result has findings=[],
+    stopped=True, stop_reason, api_calls and partial_findings (review only), so
+    the existing SQL wrapper cannot persist incomplete batch results. Explicit
+    stop_on_error=False opts into continuing past request/response errors, still
+    bounded by max_calls. Invalid source/review metadata aborts batch preflight.
+
+    Mock clients must expose a nonempty test api_key and with_options(). Empty
+    input and max_calls=0 never initialize a client. Otherwise lazily reuse the
+    project's client/model configuration. Caller-owned clients are not closed.
     """
+    if isinstance(timeout, bool) or not isinstance(timeout, Real) or not math.isfinite(float(timeout)) or timeout <= 0:
+        raise ValueError("timeout must be a positive finite number")
+    if type(max_calls) is not int or max_calls < 0:
+        raise ValueError("max_calls must be a nonnegative integer")
+    if type(max_completion_tokens) is not int or max_completion_tokens <= 0:
+        raise ValueError("max_completion_tokens must be a positive integer")
+    if type(stop_on_error) is not bool:
+        raise ValueError("stop_on_error must be a boolean")
+    candidates = deepcopy(list(candidates))
+    reviews = validate_clinical_reviews(candidates, reviewed_fields_by_candidate)
     findings, rejected, seen = [], [], set()
-    for index, candidate in enumerate(candidates):
-        try:
-            if not isinstance(candidate, dict):
-                raise ValueError("Candidate must be an object")
-            text = candidate.get("cumle")
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError("Empty candidate text")
-            metadata = _metadata(candidate)
-        except ValueError as exc:
-            rejected.append({"candidate_index": index, "stage": "input", "reason": str(exc)})
-            continue
-        try:
-            if client is None or model is None:
-                from src.rag import DEFAULT_LLM, get_llm_client
+    calls = 0
+    own_client = client is None
+    request_client = None
 
-                model = model or DEFAULT_LLM
-                if client is None:
-                    client = get_llm_client()
-            response = client.chat.completions.create(
-                model=model,
-                temperature=0,
-                max_tokens=2400,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT + "\nSchema: " + json.dumps(RESPONSE_SCHEMA)},
-                    {"role": "user", "content": json.dumps({"candidate_text": text}, ensure_ascii=False)},
-                ],
+    def stopped(reason):
+        return {"findings": [], "rejected": rejected, "stopped": True,
+                "stop_reason": reason, "api_calls": calls,
+                "partial_findings": findings}
+
+    try:
+        for index, candidate in enumerate(candidates):
+            try:
+                if not isinstance(candidate, dict):
+                    raise ValueError("Candidate must be an object")
+                text = candidate.get("cumle")
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("Empty candidate text")
+                metadata = _metadata(candidate)
+            except ValueError as exc:
+                rejected.append({"candidate_index": index, "stage": "input", "reason": str(exc)})
+                continue
+            binding = candidate_binding(candidate)
+            metadata.update(
+                source_text_sha256=binding["source_text_sha256"], candidate_id_version=CANDIDATE_ID_VERSION,
+                classification_review=deepcopy(reviews[binding["aday_id"]]),
+                source_candidate={key: deepcopy(candidate[key]) for key in (
+                    "aday_id", "filename", "dosya", "makale_id", "document_id", "sayfa", "sayfa_bitis",
+                    "kaynak_turu", "birlestirme", "cumle", "source_text_sha256", "candidate_id_version",
+                ) if key in candidate},
             )
-            if not response.choices or response.choices[0].finish_reason != "stop":
-                raise ValueError("Incomplete LLM response")
-            parsed = json.loads(response.choices[0].message.content)
-            validated = _validate_response(parsed, text)
-        except Exception as exc:
-            # Fail closed; never retain partially validated candidate output.
-            rejected.append({"candidate_index": index, "stage": "extraction", "reason": type(exc).__name__})
-            continue
-        for finding in validated:
-            record = {**finding, **metadata, "review_status": "pending"}
-            # Same evidence in different source locations remains distinct.
-            identity = {k: v for k, v in record.items() if k != "aday_id"}
-            key = json.dumps(identity, sort_keys=True, ensure_ascii=False)
-            if key not in seen:
-                seen.add(key)
-                findings.append(record)
-    return {"findings": findings, "rejected": rejected}
+            if calls >= max_calls:
+                rejected.append({"candidate_index": index, "stage": "limit", "reason": "max_calls_reached"})
+                return stopped("call_limit")
+            try:
+                if request_client is None:
+                    if client is None or model is None:
+                        from src.rag import DEFAULT_LLM, get_llm_client
+
+                        model = model or DEFAULT_LLM
+                        if client is None:
+                            client = get_llm_client()
+                    _require_api_key(client)
+                    request_client = client.with_options(max_retries=0, timeout=float(timeout))
+            except Exception as exc:
+                rejection = {"candidate_index": index, "stage": "extraction", "reason": type(exc).__name__}
+                if isinstance(exc, ValueError) and str(exc) in {"missing_api_key", "invalid_api_key"}:
+                    rejection["error_code"] = str(exc)
+                rejected.append(rejection)
+                return stopped("client_configuration_error")
+            calls += 1
+            try:
+                response = request_client.chat.completions.create(
+                    model=model,
+                    max_completion_tokens=max_completion_tokens,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT + "\nSchema: " + json.dumps(RESPONSE_SCHEMA)},
+                        {"role": "user", "content": json.dumps({"candidate_text": text}, ensure_ascii=False)},
+                    ],
+                )
+            except Exception as exc:
+                # Only safe metadata, never exception text, headers or patient data.
+                rejection = {"candidate_index": index, "stage": "extraction", "reason": type(exc).__name__}
+                status = getattr(exc, "status_code", None)
+                if type(status) is int:
+                    rejection["http_status"] = status
+                rejected.append(rejection)
+                if stop_on_error:
+                    return stopped("api_error")
+                continue
+            try:
+                if not response.choices or response.choices[0].finish_reason != "stop":
+                    raise ValueError("Incomplete LLM response")
+                parsed = json.loads(response.choices[0].message.content)
+                validated = _validate_response(parsed, text)
+            except Exception as exc:
+                rejected.append({"candidate_index": index, "stage": "extraction", "reason": type(exc).__name__})
+                if stop_on_error:
+                    return stopped("invalid_response")
+                continue
+            for finding in validated:
+                record = {**finding, **metadata, "review_status": "pending"}
+                # Same evidence in different source locations remains distinct.
+                identity = {k: v for k, v in record.items() if k != "aday_id"}
+                key = json.dumps(identity, sort_keys=True, ensure_ascii=False)
+                if key not in seen:
+                    seen.add(key)
+                    findings.append(record)
+        return {"findings": findings, "rejected": rejected}
+    finally:
+        if own_client and client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                rejected.append({"stage": "client_cleanup", "reason": type(exc).__name__})
 
 
 DRAFT_COLUMNS = (
