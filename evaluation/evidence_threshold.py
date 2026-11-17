@@ -107,7 +107,7 @@ def _judgments(row):
 
 def _finite(value):
     try:
-        return value is not None and math.isfinite(float(value))
+        return value is not None and not isinstance(value, bool) and math.isfinite(float(value))
     except (ValueError, TypeError):
         return False
 
@@ -197,7 +197,17 @@ def evaluate_source_metrics(records, reranker_model, split="test", k=5):
             if row.get("status") == "error":
                 continue
             labels = _judgments(row)
-            candidates = json_list(row.get(field))[:k]
+            # Duplicate hits must not inflate Precision@k or consume gold ranks.
+            candidates, seen = [], set()
+            for candidate in json_list(row.get(field)):
+                key = identity(candidate)
+                if key is not None and key in seen:
+                    continue
+                if key is not None:
+                    seen.add(key)
+                candidates.append(candidate)
+                if len(candidates) == k:
+                    break
             keys = [identity(c) for c in candidates]
             gold = _support_sets(row, labels)
             if gold is not None:
@@ -232,7 +242,7 @@ def evaluate_source_metrics(records, reranker_model, split="test", k=5):
         covered += gate_open and any(group.issubset(keys) for group in gold)
     gate_pairs = []
     for row in rows:
-        if (row.get("status") != "error"
+        if (row.get("status") in {"retrieval_only", "generated", "insufficient_evidence"}
                 and row.get("answerability_review_status") == "verified"
                 and row.get("human_review_status") == "verified"
                 and row.get("answerability_label") in {"answerable", "unanswerable"}):
@@ -269,3 +279,97 @@ def analyze_thresholds(results, reranker_model=None):
     if reranker_model is None:
         return {"threshold": None, "reason": "explicit_model_and_verified_pairs_required"}
     return select_threshold(results, reranker_model)
+
+
+def audit_review_status(questions):
+    """Partition existing annotations without modifying labels or choosing splits.
+
+    Question approval and exact chunk approval are independent. A verified text
+    excerpt is not human gold unless explicit human approval AND pair eligibility
+    are present. Partial/uncertain pairs remain outside binary score calibration.
+    """
+    questions = list(questions)
+    validate_splits(questions)
+    report = {}
+    for split in ("calibration", "test", "unassigned"):
+        rows = [r for r in questions if r.get("split", "unassigned") == split]
+        counts = {"questions": len(rows), "human_answerable": 0, "human_unanswerable": 0,
+                  "human_other": 0, "pending_questions": 0, "pairs": 0,
+                  "approved_positive_pairs": 0, "approved_negative_pairs": 0,
+                  "approved_other_pairs": 0, "pending_or_ineligible_pairs": 0,
+                  "automated_verified_pairs": 0, "question_ids": [],
+                  "pending_question_ids": [], "pending_pair_references": []}
+        for row in rows:
+            counts["question_ids"].append(row["id"])
+            approved = (row.get("answerability_review_status") == "verified"
+                        and row.get("human_review_status") == "verified")
+            label = row.get("answerability_label")
+            if approved and label in {"answerable", "unanswerable"}:
+                counts["human_" + label] += 1
+            elif approved and label in {"partially_answerable", "ambiguous"}:
+                counts["human_other"] += 1
+            else:
+                counts["pending_questions"] += 1
+                counts["pending_question_ids"].append(row["id"])
+            judgments = _judgments(row)
+            for item in json_list(row.get("evidence_matches_json")):
+                counts["pairs"] += 1
+                approved_pair = (identity(item) is not None
+                                 and item.get("review_status") == "verified"
+                                 and item.get("human_review_status") == "verified"
+                                 and item.get("calibration_eligible") is True)
+                if approved_pair:
+                    label = judgments[identity(item)]
+                    key = ("approved_positive_pairs" if label == "direct_support" else
+                           "approved_negative_pairs" if label == "irrelevant" else "approved_other_pairs")
+                    counts[key] += 1
+                else:
+                    counts["pending_or_ineligible_pairs"] += 1
+                    counts["pending_pair_references"].append({"question_id": row["id"],
+                                                             "identity": identity(item)})
+                if item.get("review_status") == "verified" and item.get("human_review_status") != "verified":
+                    counts["automated_verified_pairs"] += 1
+        report[split] = counts
+    return report
+
+
+def calibration_readiness(questions, records=(), *, k=5, thresholds=None):
+    """Offline per-model audit and observed metrics; never fit/apply a threshold.
+
+    `records` are already collected model runs. Optional thresholds are externally
+    supplied model-specific values for evaluation only. Two scored classes are
+    necessary, not sufficient proof of sample size or production readiness.
+    """
+    questions, records = list(questions), list(records)
+    validate_splits(questions + records)
+    thresholds = {} if thresholds is None else thresholds
+    if not isinstance(thresholds, dict) or set(thresholds) - {"minilm", "bge-m3"}:
+        raise ValueError("Supply thresholds separately by supported reranker model")
+    report = {"production_threshold_applied": False, "models": {}}
+    for model in ("minilm", "bge-m3"):
+        applicable = [q for q in questions if not json_list(q.get("reranker_models_json"))
+                      or model in json_list(q.get("reranker_models_json"))]
+        model_report = {"annotation_audit": audit_review_status(applicable), "splits": {}}
+        for split in ("calibration", "test"):
+            rows = _rows(records, model, split)
+            pairs, excluded = _pairs(rows)
+            positives = sum(label for label, _ in pairs)
+            negatives = len(pairs) - positives
+            if model in thresholds:
+                threshold_metrics = evaluate_threshold(records, thresholds[model], model, split)
+            else:
+                reason = "insufficient_verified_scored_labels" if not positives or not negatives else "model_threshold_not_supplied"
+                threshold_metrics = {"threshold": None, "reason": reason,
+                                     "false_accept_rate": {"value": None, "numerator": None,
+                                                           "denominator": negatives, "reason": reason},
+                                     "false_reject_rate": {"value": None, "numerator": None,
+                                                           "denominator": positives, "reason": reason}}
+            model_report["splits"][split] = {
+                "scored_questions": len(rows), "positive_scored_pairs": positives,
+                "negative_scored_pairs": negatives, "excluded_scored_pairs": excluded,
+                "both_scored_classes_present": bool(positives and negatives),
+                "threshold_evaluation": threshold_metrics,
+                "source_metrics": evaluate_source_metrics(records, model, split, k=k),
+            }
+        report["models"][model] = model_report
+    return report
