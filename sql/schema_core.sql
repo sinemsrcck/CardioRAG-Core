@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS pdf_belgeleri (
     processing_version    VARCHAR(255)  NOT NULL,
     durum                 ENUM('tamamlandi', 'hatali') NOT NULL,
     islenen_sayfa_sayisi  INT UNSIGNED  NOT NULL DEFAULT 0,
+    -- Son işlemenin hata mesajı (durum = 'hatali' ise). Mevcut kurulumlara
+    -- src/database.py CORE_COLUMN_MIGRATIONS ile eklenir.
+    hata_mesaji           TEXT          NULL,
     olusturulma_zamani    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     guncellenme_zamani    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                         ON UPDATE CURRENT_TIMESTAMP,
