@@ -1,5 +1,6 @@
 
 import re
+import hashlib
 
 
 DEFAULT_CHUNK_SIZE = 1500
@@ -61,6 +62,10 @@ def chunk_document(document, chunk_size=1500, overlap=250):
     """
     document_id = document["document_id"]
     filename = document["filename"]
+    # Legacy embeddings and evidence mappings must be regenerated, never relabeled.
+    processing_version = document.get("processing_version", "legacy-unversioned")
+    configuration = f"{processing_version}|chunk_size={chunk_size}|overlap={overlap}"
+    processing_key = hashlib.sha256(configuration.encode("utf-8")).hexdigest()[:16]
 
     all_chunks = []
 
@@ -74,14 +79,19 @@ def chunk_document(document, chunk_size=1500, overlap=250):
         )
 
         for chunk_index, text in enumerate(page_chunks):
+            text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             chunk_id = (
-                f"{document_id}_p{page_number}_c{chunk_index}"
+                f"{document_id}_v{processing_key}_p{page_number}_c{chunk_index}_t{text_hash}"
             )
 
             all_chunks.append({
                 "chunk_id": chunk_id,
                 "document_id": document_id,
                 "filename": filename,
+                "processing_version": processing_version,
+                "chunk_size": chunk_size,
+                "chunk_overlap": overlap,
+                "text_sha256": text_hash,
                 "page_number": page_number,
                 "chunk_index": chunk_index,
                 "text": text,

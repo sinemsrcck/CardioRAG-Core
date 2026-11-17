@@ -1,218 +1,126 @@
-
+"""Reference boundaries with explicit section structure, not keyword matches."""
 import re
 
-
+REFERENCE_PROCESSING_VERSION = "references-v2"
 REFERENCE_HEADINGS = {
-    "references",
-    "reference",
-    "bibliography",
-    "works cited",
-    "literature cited",
-    "kaynakça",
-    "kaynaklar",
-    "referanslar",
+    "references", "reference", "bibliography", "works cited", "literature cited",
+    "kaynak\u00e7a", "kaynaklar", "referanslar",
 }
-
 POST_REFERENCE_HEADINGS = {
-    "figures",
-    "figure legends",
-    "tables",
-    "supplementary material",
-    "supplementary information",
-    "supplemental material",
-    "appendix",
-    "appendices",
-    "acknowledgments",
-    "acknowledgements",
+    "tables", "figures", "figure legends", "table legends", "appendix", "appendices",
+    "supplementary", "supplementary material", "supplementary information",
+    "supplemental material", "acknowledgments", "acknowledgements",
     "author contributions",
-    "frequently asked questions about atrial fibrillation (af)",
 }
+CAPTION = re.compile(
+    r"^(?:table|figure|fig\.|box)\s*(?:\d+[A-Za-z]?|[A-Z])(?:[.:]\s*|\s+|$)",
+    re.IGNORECASE,
+)
+# Vancouver/MDPI reference entries, including a wrapped reference following a title.
+NUMBERED_ENTRY = re.compile(r"^\s*(?:\[\d+\]|\d+[.)])\s+\S")
+
+
+def strip_markdown(line):
+    return re.sub(r"[#*_>]", "", line).strip()
 
 
 def normalize_heading(line):
-    heading = re.sub(r"\s+", " ", line).strip().lower()
-
-    heading = re.sub(
-        r"^\d+(?:\.\d+)*[.)]?\s+",
-        "",
-        heading,
-    )
-
-    heading = re.sub(
-        r"^[\s:.\-–—]+|[\s:.\-–—]+$",
-        "",
-        heading,
-    )
-
-    return heading
+    heading = re.sub(r"\s+", " ", strip_markdown(line)).casefold()
+    heading = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", heading)
+    return heading.strip(" :.\u2013\u2014-")
 
 
-def is_reference_heading(line):
-    return normalize_heading(line) in REFERENCE_HEADINGS
+def _marked_heading(line):
+    line = line.strip()
+    return bool(re.match(r"^#{1,6}\s+", line) or re.fullmatch(r"\*\*[^*]+\*\*", line))
 
 
-def is_post_reference_heading(line):
+def is_reference_end(line):
+    """A possible section caption; callers must also check surrounding structure."""
+    plain = strip_markdown(line)
+    if NUMBERED_ENTRY.match(plain) or plain.startswith("|"):
+        return False
     heading = normalize_heading(line)
-
-    if heading in POST_REFERENCE_HEADINGS:
-        return True
-
-    if re.match(
-        r"^(figure|fig|table)\s*\.?\s*\d+\b",
-        heading,
-    ):
-        return True
-
-    if re.match(r"^box\s*[.:]", heading):
-        return True
-
-    return False
+    return (heading in POST_REFERENCE_HEADINGS or bool(CAPTION.match(plain))
+            or (_marked_heading(line) and bool(re.match(
+                r"^(?:appendix|supplementary|supplemental)\b", plain, re.I)))
+            or bool(re.match(r"^(?:box|appendix|supplementary|supplemental)\s*[.:]\s*\S", plain, re.I)))
 
 
-def find_reference_range(lines, min_position_ratio=0.35):
-    """
-    Kaynakça başlangıcını ve varsa bitişini bulur.
-
-    Karakter oranı yerine satır konumu kullanılır.
-    Böylece büyük tabloların metin uzunluğu
-    tespiti daha az etkiler.
-    """
-    if not lines:
-        return None
-
-    candidates = []
-
-    for index, line in enumerate(lines):
-        if is_reference_heading(line):
-            candidates.append(index)
-
-    if not candidates:
-        return None
-
-    minimum_index = int(len(lines) * min_position_ratio)
-
-    candidates = [
-        index
-        for index in candidates
-        if index >= minimum_index
-    ]
-
-    if not candidates:
-        return None
-
-    reference_start = candidates[0]
-    reference_end = len(lines)
-
-    for index in range(reference_start + 1, len(lines)):
-        if is_post_reference_heading(lines[index]):
-            reference_end = index
+def _section_start(lines, index):
+    line = lines[index]
+    if not is_reference_end(line):
+        return False
+    # A title embedded in a reference is not a section, even after a line wrap.
+    # A pipe row can itself belong to a reference; it is not a boundary.
+    # Stop only at the next structurally marked section.
+    for following in lines[index + 1:]:
+        if not following.strip():
+            continue
+        if NUMBERED_ENTRY.match(strip_markdown(following)):
+            return False
+        if _marked_heading(following) and is_reference_end(following):
             break
+    if _marked_heading(line):
+        return True
+    # Unmarked captions must be visually separated, not citation continuations.
+    before_blank = index == 0 or not lines[index - 1].strip()
+    after_blank = index + 1 == len(lines) or not lines[index + 1].strip()
+    next_is_table = index + 1 < len(lines) and lines[index + 1].lstrip().startswith("|")
+    return before_blank and (after_blank or next_is_table)
 
-    if reference_end <= reference_start:
+
+def find_reference_span(text, min_position_ratio=0.3):
+    """Return the exact removable character span, leaving following content intact."""
+    if not text:
         return None
+    lines = text.splitlines(keepends=True)
+    position = 0
+    start = None
+    for index, line in enumerate(lines):
+        if start is None:
+            if (normalize_heading(line) in REFERENCE_HEADINGS
+                    and position / max(len(text), 1) >= min_position_ratio):
+                start = position
+        elif _section_start(lines, index):
+            return start, position
+        position += len(line)
+    return None if start is None else (start, len(text))
 
-    return reference_start, reference_end
 
-
-def remove_references(text, min_position_ratio=0.35):
+def remove_references(text, min_position_ratio=0.3):
     if not text or not text.strip():
         return ""
-
-    lines = text.splitlines()
-
-    reference_range = find_reference_range(
-        lines,
-        min_position_ratio=min_position_ratio,
-    )
-
-    if reference_range is None:
+    span = find_reference_span(text, min_position_ratio)
+    if span is None:
         return text.strip()
-
-    start, end = reference_range
-
-    retained_lines = lines[:start] + lines[end:]
-
-    return "\n".join(retained_lines).strip()
+    start, end = span
+    return (text[:start] + text[end:]).strip()
 
 
-def remove_document_references(document):
-    """
-    Kaynakça satırlarını çıkarır.
-    Orijinal PDF sayfa numaralarını korur.
-    Kaynakça sonrasındaki bölümleri saklar.
-    """
+def remove_document_references(document, min_position_ratio=0.3):
+    # Version the cleaner independently; do not silently reuse legacy artifacts.
+    version = document.get("processing_version", "legacy-extraction")
+    if not version.endswith("|" + REFERENCE_PROCESSING_VERSION):
+        version += "|" + REFERENCE_PROCESSING_VERSION
+    document = {**document, "processing_version": version}
     pages = document.get("pages", [])
-
-    if not pages:
+    full_text = "\n".join(page["text"] for page in pages)
+    span = find_reference_span(full_text, min_position_ratio)
+    if span is None:
         return document
-
-    indexed_lines = []
-
-    for page in pages:
-        for line in page["text"].splitlines():
-            indexed_lines.append({
-                "page_number": page["page_number"],
-                "line": line,
-            })
-
-    lines = [item["line"] for item in indexed_lines]
-
-    reference_range = find_reference_range(
-        lines,
-        min_position_ratio=0.35,
-    )
-
-    filename = document.get("filename", "PDF")
-
-    if reference_range is None:
-        print(
-            f"[REFERENCE CLEANER] {filename} | "
-            "Kaynakça başlığı tespit edilemedi; "
-            "metin değiştirilmedi."
-        )
-        return document
-
-    start, end = reference_range
-
-    retained_lines = indexed_lines[:start] + indexed_lines[end:]
-
-    lines_by_page = {
-        page["page_number"]: []
-        for page in pages
-    }
-
-    for item in retained_lines:
-        lines_by_page[item["page_number"]].append(
-            item["line"]
-        )
-
+    ref_start, ref_end = span
     new_pages = []
-
+    position = 0
     for page in pages:
-        page_number = page["page_number"]
-
-        cleaned_text = "\n".join(
-            lines_by_page[page_number]
-        ).strip()
-
-        if cleaned_text:
-            new_pages.append({
-                **page,
-                "text": cleaned_text,
-            })
-
-    removed_pages = sorted(
-        set(page["page_number"] for page in pages)
-        - set(page["page_number"] for page in new_pages)
-    )
-
-    print(
-        f"[REFERENCE CLEANER] {filename} | "
-        f"Çıkarılan satır: {end - start} | "
-        f"Çıkarılan sayfalar: {removed_pages}"
-    )
-
-    return {
-        **document,
-        "pages": new_pages,
-    }
+        page_text = page["text"]
+        page_start, page_end = position, position + len(page_text)
+        if ref_start >= page_end or ref_end <= page_start:
+            retained = page_text
+        else:
+            retained = (page_text[:max(0, ref_start - page_start)]
+                        + page_text[max(0, ref_end - page_start):])
+        if retained.strip():
+            new_pages.append({**page, "text": retained.strip()})
+        position = page_end + 1
+    return {**document, "pages": new_pages}
