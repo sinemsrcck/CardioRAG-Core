@@ -164,6 +164,24 @@ def count_rows(cursor, table):
     return cursor.fetchone()[0]
 
 
+# Hoca tablolarında "hocanın satırı" tanımı. makaleler'e bizim eklediğimiz
+# satırların document_id'si doludur; hocanınkiler NULL.
+PROFESSOR_ROW_FILTERS = {"makaleler": "document_id IS NULL"}
+
+
+def count_professor_rows(cursor, table):
+    """Hoca tablosundaki yalnızca hocaya ait satırların sayısı."""
+    where = PROFESSOR_ROW_FILTERS.get(table)
+    sql = f"SELECT COUNT(*) FROM `{table}`" + (f" WHERE {where}" if where else "")
+    cursor.execute(sql)
+    return cursor.fetchone()[0]
+
+
+def professor_row_label(table):
+    where = PROFESSOR_ROW_FILTERS.get(table)
+    return f"{table} ({where})" if where else table
+
+
 def inspect_schema_state(connection):
     """
     Salt okunur durum raporu: yeni tablolar var mı, satır sayıları,
