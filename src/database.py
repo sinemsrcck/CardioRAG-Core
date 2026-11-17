@@ -98,6 +98,12 @@ MAKALELER_NEW_COLUMNS = (
     ("document_id", f"CHAR(64) CHARACTER SET {CHARSET} COLLATE {COLLATION} NULL"),
     ("doi", f"VARCHAR(255) CHARACTER SET {CHARSET} COLLATE {COLLATION} NULL"),
     ("abstract_en", f"LONGTEXT CHARACTER SET {CHARSET} COLLATE {COLLATION} NULL"),
+    # ozet_tr'nin kaynağı: 'orijinal' = PDF'teki Türkçe özet (TK makaleleri),
+    # 'llm_ceviri' = abstract_en'in LLM çevirisi (src/load_translations.py).
+    # Hocanın satırlarında NULL kalır.
+    ("ozet_tr_kaynak",
+     f"ENUM('orijinal', 'llm_ceviri') CHARACTER SET {CHARSET} COLLATE {COLLATION} NULL"),
+    ("ozet_tr_model", f"VARCHAR(100) CHARACTER SET {CHARSET} COLLATE {COLLATION} NULL"),
 )
 
 # Yeni tablolara sonradan eklenen sütunlar (ilk kurulumdan sonra gelenler).
