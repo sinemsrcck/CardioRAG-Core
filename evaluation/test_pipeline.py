@@ -77,6 +77,36 @@ def main():
     print("En yüksek reranker skoru:", result["top_rerank_score"])
 
 
+class LLMRequestCompatibilityTests(unittest.TestCase):
+    def test_generation_uses_completion_budget_and_configured_model(self):
+        from types import SimpleNamespace
+        from src.rag import generate_answer
+
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="  Supported answer [1].  "))])
+        with patch("src.rag.get_llm_client", return_value=client), \
+             patch("src.rag.DEFAULT_LLM", "gpt-6-luna"):
+            answer = generate_answer("Study result?", "Source evidence", [{"number": 1}])
+        self.assertEqual(answer, "Supported answer [1].")
+        client.chat.completions.create.assert_called_once()
+        request = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(request["model"], "gpt-6-luna")
+        self.assertEqual(request["max_completion_tokens"], 4096)
+        self.assertNotIn("max_tokens", request)
+        self.assertNotIn("temperature", request)
+        self.assertIn("Source evidence", request["messages"][1]["content"])
+
+    def test_generation_without_context_or_sources_never_creates_client(self):
+        from src.rag import generate_answer
+
+        with patch("src.rag.get_llm_client", side_effect=AssertionError("No API")) as client:
+            for context, sources in (("Source evidence", []), ("   ", [{"number": 1}])):
+                with self.subTest(context=context, sources=sources):
+                    self.assertTrue(generate_answer("Question?", context, sources))
+            client.assert_not_called()
+
+
 class ProductionGateTests(unittest.TestCase):
     def setUp(self):
         self.search = patch("src.rag.hybrid_search", side_effect=fake_hybrid_search).start()
