@@ -8,6 +8,7 @@ import pymupdf4llm
 
 
 PDF_DIR = Path("data/pdfs")
+PDF_PROCESSING_VERSION = "markdown-footnotes-v2"
 
 # "Table 1", "Figure 2", "Box 3" gibi başlık etiketleri.
 CAPTION_PATTERN = re.compile(
@@ -96,6 +97,45 @@ def recover_rotated_captions(page, page_text):
     return "\n\n".join(captions + [page_text]).strip()
 
 
+def _text_key(text):
+    """Compare source text with Markdown without rewriting the recovered words."""
+    text = re.sub(r"<[^>]*>", "", text)
+    return re.sub(r"[\W_]+", "", text).casefold()
+
+
+def recover_rotated_footnotes(page, page_text):
+    """Recover omitted note blocks in PDF reading order, with coordinates.
+
+    Only complete rotated prose blocks with a letter note marker are accepted.
+    Table cells, watermarks and arbitrary missing words are not reconstructed.
+    The source wording (including qualifiers) is kept, not clinically corrected.
+    """
+    recovered = []
+    present = _text_key(page_text)
+    for block in page.get_text("dict")["blocks"]:
+        lines = block.get("lines", [])
+        if not lines:
+            continue
+        if any(abs(line["dir"][0] - 1) < 1e-3 and abs(line["dir"][1]) < 1e-3
+               for line in lines):
+            continue
+        text = " ".join(
+            "".join(span["text"] for span in line["spans"]).strip()
+            for line in lines
+        ).strip()
+        if (not re.match(r"^[a-z](?=[A-Z])", text)
+                or len(text.split()) < 6 or not text.endswith((".", ";", "!", "?"))):
+            continue
+        # Markdown may separate a superscript marker from the same note body.
+        if _text_key(text[1:]) in present:
+            continue
+        recovered.append({"kind": "rotated_footnote", "text": text,
+                          "bbox": list(block["bbox"]), "direction": list(lines[0]["dir"])})
+        page_text = "\n\n".join(part for part in (page_text, text) if part)
+        present = _text_key(page_text)
+    return page_text, recovered
+
+
 def load_pdf(pdf_path):
     """PDF'yi sayfa bazında markdown olarak okuyup yapılandırılmış veri döndürür."""
     pdf_path = Path(pdf_path)
@@ -103,6 +143,8 @@ def load_pdf(pdf_path):
     document = {
         "document_id": calculate_file_hash(pdf_path),
         "filename": pdf_path.name,
+        "processing_version": (f"{PDF_PROCESSING_VERSION}|pymupdf={pymupdf.__version__}"
+                               f"|pymupdf4llm={pymupdf4llm.__version__}"),
         "page_count": 0,
         "pages": [],
     }
@@ -118,15 +160,22 @@ def load_pdf(pdf_path):
     with pymupdf.open(pdf_path) as pdf:
         document["page_count"] = len(pdf)
 
+        if len(page_chunks) != len(pdf):
+            raise ValueError("Markdown extraction returned an incomplete page collection.")
         for page_index, chunk in enumerate(page_chunks):
+            actual_page = chunk.get("metadata", {}).get("page", page_index + 1)
+            if actual_page != page_index + 1:
+                raise ValueError("Markdown page order does not match physical PDF pages.")
             text = recover_rotated_captions(
                 pdf[page_index],
                 chunk["text"].strip(),
             )
 
+            text, recovered = recover_rotated_footnotes(pdf[page_index], text)
             document["pages"].append({
                 "page_number": page_index + 1,
                 "text": text,
+                "recovered_pdf_spans": recovered,
             })
 
     return document
