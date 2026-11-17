@@ -13,6 +13,7 @@ import sys
 from src.database import (
     COLLATION,
     CORE_TABLE_COLUMNS,
+    CORE_VIEWS,
     MAKALELER_NEW_COLUMNS,
     count_professor_rows,
     get_connection,
@@ -86,6 +87,13 @@ def main():
                 bool(actual_columns) and not missing,
             )
             check(f"{table}: collation", COLLATION, table_collation(cursor, table))
+
+        # Hoca formatındaki VIEW'lar.
+        for view in CORE_VIEWS:
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.VIEWS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s", (view,))
+            check(f"VIEW {view}", "var", "var" if cursor.fetchone()[0] else "yok")
 
         # makaleler'e eklenen 3 sütun.
         makaleler_columns = get_table_columns(cursor, "makaleler")
