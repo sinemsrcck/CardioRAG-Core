@@ -241,7 +241,11 @@ class PDFRegressionTests(unittest.TestCase):
             validate_collection(docs)
 
     def test_main_rejects_empty_loader(self):
-        with patch("evaluation.test_pdf_processing.load_all_pdfs", return_value=[]):
+        with patch.object(
+            sys.modules[main.__module__],
+            "load_all_pdfs",
+            return_value=[]
+        ):
             with self.assertRaises(ValueError):
                 main()
 
