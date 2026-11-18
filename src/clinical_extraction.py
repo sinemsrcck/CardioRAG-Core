@@ -48,6 +48,9 @@ for absent information. Do not translate, calculate, expand abbreviations, or
 combine separate observations. evidence_quote must be an exact contiguous quote
 from the candidate and include enough context to support all its fields.
 Return no metadata, commentary, Markdown, approval status or extra properties.
+table_context is contextual source data, not a synthetic quotation. Copy
+evidence_quote only from candidate_text (the literal target data row). Never
+concatenate captions or headers into a quote, or infer absent cell values.
 """
 
 
@@ -172,7 +175,7 @@ def extract_clinical_findings(
                 classification_review=deepcopy(reviews[binding["aday_id"]]),
                 source_candidate={key: deepcopy(candidate[key]) for key in (
                     "aday_id", "filename", "dosya", "makale_id", "document_id", "sayfa", "sayfa_bitis",
-                    "kaynak_turu", "birlestirme", "cumle", "source_text_sha256", "candidate_id_version",
+                    "kaynak_turu", "birlestirme", "cumle", "source_text_sha256", "candidate_id_version", "table_context",
                 ) if key in candidate},
             )
             if calls >= max_calls:
@@ -202,7 +205,8 @@ def extract_clinical_findings(
                     response_format={"type": "json_object"},
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT + "\nSchema: " + json.dumps(RESPONSE_SCHEMA)},
-                        {"role": "user", "content": json.dumps({"candidate_text": text}, ensure_ascii=False)},
+                        {"role": "user", "content": json.dumps({"candidate_text": text,
+                         **({"table_context": candidate["table_context"]} if "table_context" in candidate else {})}, ensure_ascii=False)},
                     ],
                 )
             except Exception as exc:
@@ -260,6 +264,15 @@ REVIEW_ENUMS = {
 }
 
 
+def clinical_result_payload(original_text, source_language):
+    """Versioned original-language result; no inferred translation or approval."""
+    return {"schema_version": "clinical-result-v1", "original_text": original_text,
+            "source_language": source_language,
+            "translation_status": ("not_applicable" if not original_text else
+                                   "not_required" if source_language == "tr" else "missing"),
+            "translation_text": None, "translation_model": None}
+
+
 def to_clinical_draft_row(finding, *, source_language=None):
     """Map to Zehra's draft columns; requires her controller/human review next.
 
@@ -308,6 +321,9 @@ def to_clinical_draft_row(finding, *, source_language=None):
         "dose_unit": finding.get("dose_unit"), "sayfa_bitis": finding.get("sayfa_bitis"),
         "birlestirme": finding.get("birlestirme"),
         "source_language": source_language,
+        "clinical_result": clinical_result_payload(finding["clinical_outcome"], source_language),
+        **({"table_context": finding["source_candidate"]["table_context"]}
+           if isinstance(finding.get("source_candidate"), dict) and "table_context" in finding["source_candidate"] else {}),
         "untranslated_fields": {k: finding[k] for k in ("diagnosis", "drug", "clinical_outcome")},
         "notice": "LLM candidate; full-page/chunk and clinical review required; no approval",
     }, ensure_ascii=False)

@@ -30,6 +30,23 @@ class ClinicalReviewError(ValueError):
 
 
 def _source_binding(candidate, index):
+    if not isinstance(candidate, dict):
+        raise ClinicalReviewError("invalid_candidate_source", index)
+    if candidate.get("kaynak_turu") == "tablo":
+        context = candidate.get("table_context")
+        if (not isinstance(context, dict) or context.get("status") != "simple"
+                or context.get("schema_version") != "table-context-v1"
+                or context.get("data_row") != candidate.get("cumle")):
+            raise ClinicalReviewError("table_context_requires_review", index)
+        from src.clinical_candidates import table_contexts
+        try:
+            source = "\n".join([context.get("caption") or "", *context.get("header_lines", []),
+                                context.get("separator") or "", context["data_row"]])
+            valid = table_contexts(source).get(context["data_row"]) == context
+        except (TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise ClinicalReviewError("invalid_table_context", index)
     try:
         binding = candidate_binding(candidate)
     except (ValueError, TypeError):

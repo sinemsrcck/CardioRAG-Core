@@ -8,6 +8,7 @@ import json
 from src.clinical_extraction import (
     FIELDS, _metadata, _validate_response, extract_clinical_findings,
     prepare_rag_save_kwargs,
+    clinical_result_payload,
 )
 from src.clinical_review import ClinicalReviewError, CLASSIFICATION_FIELDS, validate_clinical_reviews
 
@@ -71,6 +72,8 @@ def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
     row["taslak_notu"] = json.dumps({
         "filename": metadata["filename"], "aday_id": metadata.get("aday_id"),
         "source_language": source_language,
+        "clinical_result": clinical_result_payload(finding["clinical_outcome"], source_language),
+        **({"table_context": source_candidate["table_context"]} if "table_context" in source_candidate else {}),
         "extracted_fields": {field: finding[field] for field in FIELDS},
         "classification_review": review,
         "notice": "Automated candidate; clinical relationships require human review",
@@ -78,26 +81,47 @@ def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
     return row
 
 
-def _check_source(row, ctx):
-    """Reject a valid-looking ID that belongs to another document/page/evidence."""
-    from src.clinical_validation import evidence_in_text, find_chunk_id
+def clinical_result_for_display(row):
+    """Pure read-only projection of SQL rows; v_sonuclar/schema stay unchanged.
 
-    document_id = row["document_id"]
-    if ctx.makale_by_doc.get(document_id) != row["makale_id"]:
-        raise ValueError("Article/document metadata mismatch")
-    chunk_id = row.get("chunk_id")
-    if not chunk_id:
+    Also supports legacy extracted_fields and untranslated_fields notes. An
+    original English result is never labelled Turkish or displayed as translated.
+    """
+    try:
+        note = json.loads(row.get("taslak_notu") or "{}")
+    except (TypeError, ValueError):
+        note = {}
+    if not isinstance(note, dict):
+        note = {}
+    result = note.get("clinical_result")
+    if isinstance(result, dict) and result.get("schema_version") == "clinical-result-v1":
+        result = dict(result)
+        # No translation is displayed without an explicit completed state.
+        if (result.get("translation_status") != "translated"
+                or not isinstance(result.get("translation_text"), str)
+                or not result["translation_text"].strip()):
+            result = clinical_result_payload(result.get("original_text"), result.get("source_language"))
+    else:
+        fields = note.get("extracted_fields") or note.get("untranslated_fields") or {}
+        fields = fields if isinstance(fields, dict) else {}
+        original = fields.get("clinical_outcome")
+        language = note.get("source_language")
+        if not original and row.get("sonuc_olcutu_tr"):
+            original, language = row["sonuc_olcutu_tr"], "tr"
+        result = clinical_result_payload(original, language)
+    return {"makale_id": row.get("makale_id"), "document_id": row.get("document_id"),
+            "review_status": row.get("review_status"), **result}
+
+
+def _check_source(row, ctx):
+    """Use the same source checks as direct save_clinical_findings calls."""
+    from src.clinical_validation import find_chunk_id, validate_source
+
+    ok, _, reason = validate_source(row, ctx)
+    if not ok:
+        raise ValueError(reason)
+    if not row.get("chunk_id"):
         row["chunk_id"] = find_chunk_id(row, ctx)
-        return
-    start = row["kanit_sayfa"]
-    end = row.get("kanit_sayfa_bitis") or start
-    for page in range(start, end + 1):
-        for source_id, text in ctx.chunks.get((document_id, page), []):
-            if source_id == chunk_id and evidence_in_text(
-                row["kanit_cumle"], row["kanit_turu"], "", text,
-            ):
-                return
-    raise ValueError("chunk_id does not support this document/page/quotation")
 
 
 def extract_and_save_clinical_findings(
