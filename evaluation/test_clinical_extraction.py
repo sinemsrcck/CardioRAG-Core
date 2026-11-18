@@ -2,6 +2,8 @@
 import copy
 import ast
 import json
+import math
+from numbers import Real
 import unittest
 import uuid
 from functools import lru_cache
@@ -33,9 +35,9 @@ def branch_contract(filename):
     """Read CURRENT checkout definitions only; no SQL, main or remote ref dependency."""
     tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / filename).read_text(encoding="utf-8-sig"))
     if filename == "database.py":
-        names = {"_optional_float", "_rag_source_rows", "save_rag_result"}
+        names = {"_optional_float", "_rag_source_rows", "_rag_identity_and_latency", "save_rag_result"}
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
-        namespace = {"uuid": uuid, "json": json}
+        namespace = {"uuid": uuid, "json": json, "math": math, "Real": Real}
     else:
         nodes = [n for n in tree.body if isinstance(n, (
             ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign, ast.FunctionDef))
@@ -410,7 +412,7 @@ class RAGSaveAdapterTests(unittest.TestCase):
     def fixture(self, status="generated"):
         sufficient = status != "insufficient_evidence"
         hit = {"chunk_id": "versioned:1", "rrf_score": 0.04, "rerank_score": -1.2}
-        return {"question": "Question?", "answer": None if status == "retrieval_only" else "Answer",
+        return {"query_id": str(uuid.uuid4()), "question": "Question?", "answer": None if status == "retrieval_only" else "Answer",
                 "status": status, "embedding_model": "minilm", "reranker_model": "bge-m3",
                 "llm_enabled": status != "retrieval_only", "sources": [dict(hit)] if sufficient else [],
                 "evidence_check": {"sufficient": sufficient, "reason": "guard_reason"},
@@ -424,6 +426,8 @@ class RAGSaveAdapterTests(unittest.TestCase):
         conn = Mock(autocommit=False)
         namespace = dict(branch_contract("database.py"))
         namespace["_existing_ids"] = Mock(return_value={"versioned:1"})
+        namespace["_validate_rag_sources"] = Mock()
+        conn.cursor.return_value.fetchone.return_value = None
         namespace["get_connection"] = Mock(side_effect=AssertionError("No real SQL"))
         # Rebind only the writer's globals, keeping the branch function unchanged.
         import types
@@ -466,6 +470,7 @@ class RAGSaveAdapterTests(unittest.TestCase):
             result = self.fixture()
             result["reranker_model"] = model
             result["debug"]["retrieved_hits"].append({"chunk_id": "candidate-only", "rrf_score": 0.01})
+            result["debug"]["reranked_hits"].append({"chunk_id": "candidate-only", "rerank_score": -2.0})
             kwargs = prepare_rag_save_kwargs(result, llm_model="actual")
             self.assertEqual(kwargs["result"]["reranker_model"], model)
             rows = branch_contract("database.py")["_rag_source_rows"](kwargs["result"])
@@ -483,6 +488,7 @@ class RAGSaveAdapterTests(unittest.TestCase):
                    "rrf_score": 0.03, "rerank_score": -2.0}
             with patch("src.rag.hybrid_search", return_value=[hit]), \
                  patch("src.rag.rerank", return_value=[hit]), \
+                 patch("src.rag.DEFAULT_LLM", "mock-actual-model"), \
                  patch("src.rag.generate_answer", return_value="Study result [1].") as generate:
                 # Adapter contract fixture uses a supported topic; an unspecified
                 # "Study result?" must now abstain under the strict demo gate.

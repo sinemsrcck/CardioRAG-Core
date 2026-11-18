@@ -2,6 +2,10 @@
 import copy
 import json
 import unittest
+import uuid
+import hashlib
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -65,7 +69,7 @@ class SQLIntegrationTests(unittest.TestCase):
     def rag_result(self, status="generated"):
         sufficient = status != "insufficient_evidence"
         hit = {"chunk_id": "new:chunk", "rrf_score": 0.02, "rerank_score": -1.0}
-        return {"question": "Question?", "answer": None if status == "retrieval_only" else "Answer",
+        return {"query_id": str(uuid.uuid4()), "question": "Question?", "answer": None if status == "retrieval_only" else "Answer",
                 "status": status, "sources": [hit] if sufficient else [],
                 "evidence_check": {"sufficient": sufficient, "reason": "test"},
                 "embedding_model": "minilm", "reranker_model": "bge-m3", "rerank_method": "cross_encoder",
@@ -236,7 +240,9 @@ class SQLIntegrationTests(unittest.TestCase):
             original = copy.deepcopy(result)
             with patch("src.rag.answer_question", return_value=result), \
                  patch("src.rag.DEFAULT_LLM", "actual-model"), \
-                 patch("src.database._existing_ids", return_value={"new:chunk"}):
+                 patch("src.database._existing_ids", return_value={"new:chunk"}), \
+                 patch("src.database._validate_rag_sources"), \
+                 patch.object(self.cursor, "fetchone", return_value=None):
                 output = answer_question_with_sql("Question?", [], connection=self.conn)
             query = next(c.args[1] for c in reversed(self.cursor.execute.call_args_list)
                          if "INSERT INTO rag_sorgulari" in c.args[0])
@@ -257,7 +263,9 @@ class SQLIntegrationTests(unittest.TestCase):
     def test_rag_sql_statement_failure_keeps_answer_and_rolls_back(self):
         self.cursor.executemany.side_effect = RuntimeError("source insert failed")
         with patch("src.rag.answer_question", return_value=self.rag_result()), \
-             patch("src.database._existing_ids", return_value={"new:chunk"}):
+             patch("src.database._existing_ids", return_value={"new:chunk"}), \
+                 patch("src.database._validate_rag_sources"), \
+                 patch.object(self.cursor, "fetchone", return_value=None):
             output = answer_question_with_sql("Question?", [], connection=self.conn)
         self.assertEqual(output["answer"], "Answer")
         self.assertEqual(output["sql_persistence"]["status"], "error")
@@ -284,7 +292,9 @@ class SQLIntegrationTests(unittest.TestCase):
         with patch("src.retrieval.embed_query", return_value=vector), \
              patch("src.rag.rerank", side_effect=rerank), \
              patch("src.rag.generate_answer", side_effect=AssertionError("No LLM")), \
-             patch("src.database._existing_ids", return_value={"new:chunk"}):
+             patch("src.database._existing_ids", return_value={"new:chunk"}), \
+                 patch("src.database._validate_rag_sources"), \
+                 patch.object(self.cursor, "fetchone", return_value=None):
             result = answer_question_with_sql("atrial fibrillation", connection=self.conn, use_llm=False)
         self.assertEqual(result["status"], "retrieval_only")
         self.assertEqual(result["sources"][0]["chunk_id"], "new:chunk")
@@ -939,6 +949,159 @@ class DiagnosticMethodTests(unittest.TestCase):
         self.prepare()
         invalid=self.finding();del invalid["drug"]
         with self.assertRaises(ValueError):_validate_response({"findings":[invalid]},self.candidate["cumle"])
+
+
+
+
+class SafeRAGPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        self.result = {"query_id": str(uuid.uuid4()), "question": "Q", "answer": "A [1]",
+            "embedding_model": "minilm", "llm_model": "gpt-6-luna", "response_time_seconds": 1.234,
+            "evidence_check": {"sufficient": True}, "citation_check": {"claims_verified": False},
+            "sources": [{"chunk_id": "a", "document_id": "doc", "page_number": 2}],
+            "retrieved_count": 2, "debug": {"retrieved_hits": [
+                {"chunk_id": "a", "rrf_score": .02}, {"chunk_id": "b"}],
+                "reranked_hits": [{"chunk_id": "b", "rerank_score": 3.},
+                                  {"chunk_id": "a", "rerank_score": -11.}]}}
+        self.conn = Mock(autocommit=False, in_transaction=False)
+        self.cur = self.conn.cursor.return_value
+        self.cur.fetchone.return_value = None
+        self.enterContext(patch("src.database.get_connection", side_effect=AssertionError("No SQL")))
+        self.enterContext(patch("src.database._existing_ids", return_value={"a", "b"}))
+
+    def save(self):
+        return database.save_rag_result(self.result, "Q", connection=self.conn)
+
+    def test_invalid_times_rejected_before_connection(self):
+        for value in (None, -1, float("nan"), float("inf"), True, "1", 1e20):
+            with self.subTest(value=value):
+                self.result["response_time_seconds"] = value
+                with self.assertRaises(ValueError): self.save()
+        self.conn.cursor.assert_not_called()
+
+    def test_missing_identity_rejected(self):
+        self.result.pop("query_id")
+        with self.assertRaises(ValueError): self.save()
+        self.conn.cursor.assert_not_called()
+
+    def test_incomplete_rank_rejected(self):
+        for value in (None, [], [{"chunk_id": "a"}], [{"chunk_id": "a"}, {"chunk_id": "a"}]):
+            self.result["debug"]["reranked_hits"] = value
+            with self.assertRaises(ValueError): self.save()
+        self.conn.cursor.assert_not_called()
+
+    def test_valid_rank_scores_identity_and_citations_preserved(self):
+        original = copy.deepcopy(self.result)
+        with patch("src.database._validate_rag_sources"):
+            self.assertEqual(self.save(), original["query_id"])
+        query = next(c.args[1] for c in self.cur.execute.call_args_list if "INSERT INTO rag_sorgulari" in c.args[0])
+        self.assertEqual(query["latency_ms"], 1234)
+        self.assertEqual(json.loads(query["citation_check"]), original["citation_check"])
+        rows = self.cur.executemany.call_args.args[1]
+        self.assertEqual(rows[1], (original["query_id"], "a", .02, -11., 2, True))
+        self.assertEqual(self.result, original)
+        self.conn.commit.assert_not_called()
+
+    def test_duplicate_id_rejected_with_rollback(self):
+        self.cur.fetchone.return_value = (self.result["query_id"],)
+        with patch("src.database._validate_rag_sources"), self.assertRaisesRegex(ValueError, "Duplicate"):
+            self.save()
+        self.cur.executemany.assert_not_called()
+        self.assertTrue(any("ROLLBACK TO SAVEPOINT" in c.args[0] for c in self.cur.execute.call_args_list))
+
+    def test_partial_insert_failure_rolled_back(self):
+        self.cur.executemany.side_effect = RuntimeError("mock failure")
+        with patch("src.database._validate_rag_sources"), self.assertRaises(RuntimeError): self.save()
+        self.assertTrue(any("ROLLBACK TO SAVEPOINT" in c.args[0] for c in self.cur.execute.call_args_list))
+
+    def test_active_hash_and_metadata_validation(self):
+        digest = hashlib.sha256(b"text").hexdigest()
+        valid = ["doc", 2, "v1", "text", digest, "v1", "tamamlandi", "a.pdf"]
+        self.cur.fetchone.return_value = tuple(valid)
+        database._validate_rag_sources(self.conn, self.result, database._rag_source_rows(self.result))
+        for index, bad in ((0, "wrong-doc"), (1, 4), (2, "old"), (4, "wrong-hash")):
+            row = valid.copy(); row[index] = bad; self.cur.fetchone.return_value = tuple(row)
+            with self.assertRaises(ValueError):
+                database._validate_rag_sources(self.conn, self.result, database._rag_source_rows(self.result))
+        self.cur.fetchone.return_value = None
+        with self.assertRaises(ValueError):
+            database._validate_rag_sources(self.conn, self.result, database._rag_source_rows(self.result))
+
+    def test_source_failure_prevents_insert(self):
+        with patch("src.database._validate_rag_sources", side_effect=ValueError("stale")), self.assertRaises(ValueError):
+            self.save()
+        self.assertFalse(any("INSERT" in c.args[0] for c in self.cur.execute.call_args_list))
+
+    def test_archive_preserves_result_and_redacts_secrets_without_overwrite(self):
+        self.result.update(client=object(), api_key="secret-value")
+        self.result["debug"]["authorization"] = "secret-value"
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LLM_API_KEY": "secret-value"}):
+            path = Path(directory) / "run.json"
+            database.archive_rag_result(self.result, path)
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(loaded["debug"]["reranked_hits"], self.result["debug"]["reranked_hits"])
+            self.assertEqual(loaded["query_id"], self.result["query_id"])
+            self.assertNotIn("secret-value", path.read_text())
+            self.assertNotIn("client", loaded)
+            with self.assertRaises(FileExistsError): database.archive_rag_result(self.result, path)
+
+    def test_owned_transaction_rolls_back_on_write_or_commit_failure(self):
+        for stage in ("write", "commit"):
+            with self.subTest(stage=stage):
+                conn = Mock(autocommit=False, in_transaction=False)
+                cur = conn.cursor.return_value
+                cur.fetchone.return_value = None
+                if stage == "write":
+                    cur.executemany.side_effect = RuntimeError("mock")
+                else:
+                    conn.commit.side_effect = RuntimeError("mock")
+                with patch("src.database.get_connection", return_value=conn), \
+                     patch("src.database._validate_rag_sources"), self.assertRaises(RuntimeError):
+                    database.save_rag_result(self.result, "Q")
+                conn.start_transaction.assert_called_once()
+                conn.rollback.assert_called_once()
+                conn.close.assert_called_once()
+
+    def test_archive_loaded_result_keeps_identity_and_real_rank(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            database.archive_rag_result(self.result, path)
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(database._rag_identity_and_latency(loaded),
+                             (self.result["query_id"], 1234))
+            self.assertEqual(database._rag_source_rows(loaded)[1]["source_rank"], 2)
+
+    def test_archive_can_feed_writer_without_model_configuration(self):
+        self.result["status"] = "generated"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            database.archive_rag_result(self.result, path)
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        with patch("src.database._validate_rag_sources"):
+            database.save_rag_result(loaded, loaded["question"], connection=self.conn)
+        query = next(c.args[1] for c in self.cur.execute.call_args_list if "INSERT INTO rag_sorgulari" in c.args[0])
+        self.assertEqual(query["llm_model"], "gpt-6-luna")
+        self.assertEqual(query["latency_ms"], 1234)
+
+    def test_non_generated_result_does_not_attribute_configured_model(self):
+        self.result.update(status="insufficient_evidence", llm_enabled=True)
+        with patch("src.database._validate_rag_sources"):
+            self.save()
+        query = next(c.args[1] for c in self.cur.execute.call_args_list if "INSERT INTO rag_sorgulari" in c.args[0])
+        self.assertIsNone(query["llm_model"])
+
+    def test_invalid_json_number_rejected_before_sql_connection(self):
+        self.result["citation_check"]["invalid_number"] = float("nan")
+        with self.assertRaises(ValueError):
+            self.save()
+        self.conn.cursor.assert_not_called()
+
+    def test_archive_rejects_unknown_objects_before_file_creation(self):
+        self.result["debug"]["unexpected"] = object()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            with self.assertRaises(ValueError): database.archive_rag_result(self.result, path)
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

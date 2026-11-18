@@ -12,6 +12,8 @@ Kullanım:
 
 import hashlib
 import json
+import math
+from numbers import Real
 import os
 import re
 import sys
@@ -890,55 +892,128 @@ def _rag_source_rows(result):
 
     - retrieval_score: debug.retrieved_hits[*].rrf_score
     - rerank_score   : debug.reranked_hits[*].rerank_score
-    - source_rank    : yeniden sıralama sonrası sıra (1'den başlar); reranker'dan
-                       geçmemiş aday varsa retrieval sırası ile onların arkasına eklenir.
+    - source_rank    : tam reranker çıktısındaki gerçek sıra (1'den başlar).
     - used_in_context: chunk, sources (LLM bağlamına giren kaynaklar) içindeyse 1.
-    Aynı chunk birden fazla gelirse tek satır (ilk görülen sıra korunur).
+    Eksik veya tekrarlı reranker çıktısı reddedilir; sıra uydurulmaz.
     """
     debug = result.get("debug") or {}
     retrieved = debug.get("retrieved_hits") or []
     reranked = debug.get("reranked_hits") or []
     sources = result.get("sources") or []
 
-    retrieval_scores, rerank_scores, order = {}, {}, []
+    if not isinstance(debug.get("retrieved_hits"), list) or not isinstance(debug.get("reranked_hits"), list):
+        raise ValueError("Complete retrieval and reranker lists are required")
+    ranked_ids = [h["chunk_id"] for h in reranked]
+    retrieved_ids = [h["chunk_id"] for h in retrieved]
+    if (len(set(ranked_ids)) != len(ranked_ids)
+            or len(set(retrieved_ids)) != len(retrieved_ids)
+            or set(ranked_ids) != set(retrieved_ids)
+            or not {h["chunk_id"] for h in sources} <= set(ranked_ids)
+            or result.get("retrieved_count", len(retrieved)) != len(retrieved)):
+        raise ValueError("Missing, truncated or ambiguous real reranker order")
+    for hit in retrieved + reranked + sources:
+        for key in ("rrf_score", "rerank_score"):
+            value = hit.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value)):
+                raise ValueError("Scores must be finite numbers or null")
 
-    for hit in reranked:
-        chunk_id = hit["chunk_id"]
-        rerank_scores.setdefault(chunk_id, hit.get("rerank_score"))
-        if chunk_id not in order:
-            order.append(chunk_id)
-    for hit in retrieved:
-        chunk_id = hit["chunk_id"]
-        retrieval_scores.setdefault(chunk_id, hit.get("rrf_score"))
-        if chunk_id not in order:
-            order.append(chunk_id)
-
-    # Bağlama giren ama debug'da görünmeyen kaynak (beklenmez) yine kaydedilir.
-    for source in sources:
-        chunk_id = source["chunk_id"]
-        retrieval_scores.setdefault(chunk_id, source.get("rrf_score"))
-        rerank_scores.setdefault(chunk_id, source.get("rerank_score"))
-        if chunk_id not in order:
-            order.append(chunk_id)
-
+    retrieval_scores = {hit["chunk_id"]: hit.get("rrf_score") for hit in retrieved}
     used = {source["chunk_id"] for source in sources}
     return [
-        {
-            "chunk_id": chunk_id,
-            "retrieval_score": _optional_float(retrieval_scores.get(chunk_id)),
-            "rerank_score": _optional_float(rerank_scores.get(chunk_id)),
-            "source_rank": rank,
-            "used_in_context": chunk_id in used,
-        }
-        for rank, chunk_id in enumerate(order, start=1)
+        {"chunk_id": hit["chunk_id"],
+         "retrieval_score": _optional_float(retrieval_scores[hit["chunk_id"]]),
+         "rerank_score": _optional_float(hit.get("rerank_score")),
+         "source_rank": rank, "used_in_context": hit["chunk_id"] in used}
+        for rank, hit in enumerate(reranked, 1)
     ]
+
+
+def _rag_identity_and_latency(result):
+    """Never invent identity or timing at persistence time."""
+    identity = result.get("query_id")
+    try:
+        if not isinstance(identity, str) or str(uuid.UUID(identity)) != identity:
+            raise ValueError
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("A stable UUID query_id from the original run is required") from None
+    elapsed = result.get("response_time_seconds")
+    if (isinstance(elapsed, bool) or not isinstance(elapsed, Real)
+            or not math.isfinite(elapsed) or elapsed < 0):
+        raise ValueError("Finite nonnegative response_time_seconds is required")
+    if elapsed > 4294967295 / 1000:
+        raise ValueError("latency_ms exceeds SQL range")
+    milliseconds = round(float(elapsed) * 1000)
+    return identity, milliseconds
+
+
+def _validate_rag_sources(conn, result, source_rows):
+    """Check active SQL text and supplied metadata under shared locks."""
+    hits = result["debug"]["retrieved_hits"] + result["debug"]["reranked_hits"] + result.get("sources", [])
+    cursor = conn.cursor()
+    try:
+        for row in source_rows:
+            cursor.execute("""SELECT c.document_id,c.page_number,c.processing_version,
+                c.text,c.text_sha256,b.processing_version,b.durum,b.filename
+                FROM pdf_chunks c JOIN pdf_belgeleri b ON b.document_id=c.document_id
+                WHERE c.chunk_id=%s FOR SHARE""", (row["chunk_id"],))
+            actual = cursor.fetchone()
+            if actual is None:
+                raise ValueError("Source chunk missing")
+            doc, page, version, text, digest, active, state, filename = actual
+            if (state != "tamamlandi" or version != active
+                    or hashlib.sha256(text.encode("utf-8")).hexdigest() != digest):
+                raise ValueError("Source version or text hash is invalid")
+            for hit in hits:
+                if hit["chunk_id"] != row["chunk_id"]:
+                    continue
+                for key, expected in (("document_id", doc), ("page_number", page),
+                        ("processing_version", version), ("text_sha256", digest),
+                        ("filename", filename), ("text", text), ("source_text", text)):
+                    if hit.get(key) is not None and hit[key] != expected:
+                        raise ValueError("Source metadata/text differs from SQL")
+    finally:
+        cursor.close()
+
+
+def archive_rag_result(result, path):
+    """Explicit opt-in UTF-8 archive of public result fields; never overwrite."""
+    _rag_identity_and_latency(result)
+    _rag_source_rows(result)
+    allowed = {"query_id", "question", "answer", "status", "sources", "citation_check",
+        "cited_sources", "unused_sources", "claim_verification", "generation_error",
+        "retrieved_count", "selected_count", "response_time_seconds", "embedding_model",
+        "reranker_model", "rerank_method", "max_chunks_per_document", "selection_policy",
+        "llm_enabled", "llm_model", "evidence_check", "debug", "top_rerank_score"}
+    secrets = [v for k, v in os.environ.items() if len(v) >= 4 and
+               any(w in k.upper() for w in ("KEY", "TOKEN", "PASSWORD", "SECRET"))]
+    def clean(value):
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items() if isinstance(k, str) and
+                    not any(w in k.lower() for w in ("key", "password", "passwd", "credential", "secret", "token",
+                        "authorization", "client", "url", "connection", "header"))}
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        if isinstance(value, str):
+            for secret in secrets:
+                value = value.replace(secret, "[REDACTED]")
+            value = re.sub(r"(?i)(?:https?|mysql)://\S+", "[REDACTED_URL]", value)
+            return re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", value)
+        if value is None or type(value) in (bool, int, float):
+            return value
+        raise ValueError("Non-JSON object in result")
+    payload = clean({k: v for k, v in result.items() if k in allowed})
+    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, indent=2)
+    with Path(path).open("x", encoding="utf-8") as handle:
+        handle.write(serialized + "\n")
+    return Path(path)
 
 
 def save_rag_result(result, question, llm_model=None, embedding_model=None,
                     reranker_model=None, connection=None):
     """
     src.rag.answer_question sonucunu rag_sorgulari ve rag_sorgu_kaynaklari
-    tablolarına kaydeder; yeni query_id'yi (UUID4) döndürür.
+    tablolarına kaydeder; çalıştırmada atanmış sabit query_id değerini döndürür.
+    Aynı query_id yeniden kullanılırsa hata verir; mevcut kaydı değiştirmez.
 
     Kullanım (Sinem için):
 
@@ -958,17 +1033,19 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
       geri alıp hatayı yükseltir. Bu durumda bağlantı autocommit kapalı
       olmalı ya da açık bir transaction içinde olmalıdır.
     - Model adları önce sonuçtan, yoksa parametrelerden alınır; ikisi de
-      yoksa NULL. answer_question sonucu LLM model adını içermez, bu yüzden
-      llm_model parametreyle verilmelidir. LLM kapalıysa (llm_enabled=False)
-      llm_model NULL yazılır.
+      yoksa NULL. Güncel answer_question sonucu kullanılan LLM modelini içerir.
+      Yanıt üretilmediyse llm_model NULL yazılır.
     """
     if not question or not str(question).strip():
         raise ValueError("Soru boş olamaz.")
 
     evidence = result.get("evidence_check") or {}
+    query_id, latency_ms = _rag_identity_and_latency(result)
     llm_enabled = result.get("llm_enabled", True)
+    if result.get("status") is not None and result["status"] != "generated":
+        llm_enabled = False
     query_row = {
-        "query_id": str(uuid.uuid4()),
+        "query_id": query_id,
         "question": question,
         "answer": result.get("answer"),
         "llm_model": (result.get("llm_model") or llm_model) if llm_enabled else None,
@@ -977,9 +1054,9 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
         "evidence_status": "sufficient" if evidence.get("sufficient") else "insufficient",
         "evidence_score": _optional_float(result.get("top_rerank_score")),
         "guard_reason": evidence.get("reason"),
-        "latency_ms": int(round(float(result.get("response_time_seconds") or 0) * 1000)),
+        "latency_ms": latency_ms,
         "rerank_method": result.get("rerank_method"),
-        "citation_check": (json.dumps(result["citation_check"], ensure_ascii=False)
+        "citation_check": (json.dumps(result["citation_check"], ensure_ascii=False, allow_nan=False)
                            if result.get("citation_check") is not None else None),
     }
     if not query_row["embedding_model"]:
@@ -998,6 +1075,8 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
 
     cursor = conn.cursor()
     try:
+        if own_connection:
+            conn.start_transaction()
         # FK ön kontrolü: hiçbir şey yazmadan önce.
         chunk_ids = [row["chunk_id"] for row in source_rows]
         found = _existing_ids(conn, "pdf_chunks", chunk_ids)
@@ -1011,6 +1090,10 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
         if not own_connection:
             cursor.execute("SAVEPOINT save_rag_result")
         try:
+            _validate_rag_sources(conn, result, source_rows)
+            cursor.execute("SELECT query_id FROM rag_sorgulari WHERE query_id=%s", (query_id,))
+            if cursor.fetchone() is not None:
+                raise ValueError("Duplicate query_id: this run is already recorded")
             cursor.execute(
                 """
                 INSERT INTO rag_sorgulari
@@ -1039,9 +1122,7 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
                     ],
                 )
         except Exception:
-            if own_connection:
-                conn.rollback()
-            else:
+            if not own_connection:
                 cursor.execute("ROLLBACK TO SAVEPOINT save_rag_result")
             raise
 
@@ -1051,6 +1132,10 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
             cursor.execute("RELEASE SAVEPOINT save_rag_result")
         return query_row["query_id"]
 
+    except Exception:
+        if own_connection:
+            conn.rollback()
+        raise
     finally:
         cursor.close()
         if own_connection:
