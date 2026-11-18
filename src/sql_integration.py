@@ -9,6 +9,7 @@ from src.clinical_extraction import (
     FIELDS, _metadata, _validate_response, extract_clinical_findings,
     prepare_rag_save_kwargs,
     clinical_result_payload,
+    EXTRACTION_SCHEMA_VERSION,
 )
 from src.clinical_review import ClinicalReviewError, CLASSIFICATION_FIELDS, validate_clinical_reviews
 
@@ -50,6 +51,12 @@ def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
     ):
         raise ValueError("chunk_id must be a nonempty source string or absent")
     reviewed_fields = {key: review[key] for key in CLASSIFICATION_FIELDS if key in review}
+    diagnostic_method = finding.get("diagnostic_method")
+    if diagnostic_method:
+        if review["mudahale_turu"] != "tanı testi":
+            raise ValueError("diagnostic_method requires human-reviewed tanı testi classification")
+        if source_language != "en":
+            raise ValueError("diagnostic_method requires explicit English source language")
     row = dict.fromkeys(KLINIK_INSERT_COLUMNS)
     row.update(
         makale_id=metadata["makale_id"], document_id=metadata["document_id"],
@@ -67,14 +74,17 @@ def to_clinical_sql_row(finding, *, reviewed_fields=None, source_language=None):
     if source_language is not None:
         row["tani_" + source_language] = finding["diagnosis"]
         row["mudahale_" + source_language] = finding["drug"]
+    if diagnostic_method:
+        row["mudahale_en"] = diagnostic_method
     if source_language == "tr":
         row["sonuc_olcutu_tr"] = finding["clinical_outcome"]
     row["taslak_notu"] = json.dumps({
         "filename": metadata["filename"], "aday_id": metadata.get("aday_id"),
         "source_language": source_language,
+        "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
         "clinical_result": clinical_result_payload(finding["clinical_outcome"], source_language),
         **({"table_context": source_candidate["table_context"]} if "table_context" in source_candidate else {}),
-        "extracted_fields": {field: finding[field] for field in FIELDS},
+        "extracted_fields": {field: finding.get(field) for field in FIELDS},
         "classification_review": review,
         "notice": "Automated candidate; clinical relationships require human review",
     }, ensure_ascii=False)

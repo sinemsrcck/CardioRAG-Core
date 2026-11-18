@@ -201,6 +201,7 @@ def answer_question(
         question=question,
         enforce_keyword_overlap=False,
     )
+    eligible_ids = [chunk.get("chunk_id") for chunk in evidence_check.get("chunks", [])]
     
     selected = select_diverse_sources(
         evidence_check.get("chunks", []) if evidence_check["sufficient"] else [],
@@ -262,12 +263,16 @@ def answer_question(
         "embedding_model": embedding_model,
         "reranker_model": reranker_model,
         "rerank_method": rerank_method,
+        "max_chunks_per_document": max_chunks_per_document,
+        "selection_policy": "eligible_top_k_no_backfill",
         "llm_enabled": use_llm,
         "evidence_check": {
             "sufficient": evidence_check["sufficient"],
             "reason": evidence_check["reason"],
+            "scope": "demo_facets_v1_not_clinical_verification",
         },
         "debug": {
+            "eligible_chunk_ids": eligible_ids,
             "retrieved_hits": [
                 {
                     "chunk_id": hit["chunk_id"],

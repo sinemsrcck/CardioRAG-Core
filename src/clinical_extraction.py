@@ -18,11 +18,13 @@ DEFAULT_MAX_LLM_CALLS = 10
 DEFAULT_MAX_COMPLETION_TOKENS = 2400
 
 
-FIELDS = (
+LEGACY_FIELDS = (
     "diagnosis", "drug", "dose", "dose_unit", "treatment_duration",
     "patient_group", "comparison", "clinical_outcome", "numeric_value",
     "value_unit",
 )
+EXTRACTION_SCHEMA_VERSION = "clinical-extraction-v2"
+FIELDS = (*LEGACY_FIELDS, "diagnostic_method")
 FINDING_SCHEMA = {
     "type": "object",
     "properties": {
@@ -47,6 +49,11 @@ Copy every non-null field verbatim from that finding's evidence_quote; use null
 for absent information. Do not translate, calculate, expand abbreviations, or
 combine separate observations. evidence_quote must be an exact contiguous quote
 from the candidate and include enough context to support all its fields.
+Use diagnostic_method for a named diagnostic/detection method, never drug or
+clinical_outcome. drug means a medication only. Emit a separate finding for
+each explicitly stated diagnostic method, retaining a complete supporting quote.
+clinical_outcome is an observed clinical outcome, not a list of detection methods.
+Do not invent a specific test/device from a generic clinical encounter.
 Return no metadata, commentary, Markdown, approval status or extra properties.
 table_context is contextual source data, not a synthetic quotation. Copy
 evidence_quote only from candidate_text (the literal target data row). Never
@@ -60,9 +67,14 @@ def _validate_response(payload, text):
         raise ValueError("Expected only a findings array")
     if not isinstance(payload["findings"], list):
         raise ValueError("findings must be an array")
-    for finding in payload["findings"]:
-        if not isinstance(finding, dict) or set(finding) != set(FINDING_SCHEMA["required"]):
+    normalized = []
+    for original in payload["findings"]:
+        if not isinstance(original, dict) or set(original) not in (
+            set(FINDING_SCHEMA["required"]), {*LEGACY_FIELDS, "evidence_quote"}
+        ):
             raise ValueError("Missing or unexpected finding fields")
+        # Legacy data is accepted without reinterpreting any existing field.
+        finding = {**original, "diagnostic_method": original.get("diagnostic_method")}
         quote = finding["evidence_quote"]
         if not isinstance(quote, str) or not quote.strip() or quote not in text:
             raise ValueError("evidence_quote is not a verbatim candidate substring")
@@ -74,7 +86,13 @@ def _validate_response(payload, text):
                 raise ValueError(f"{field} must be null or verbatim evidence text")
         if all(finding[field] is None for field in FIELDS):
             raise ValueError("Finding has no clinical fields")
-    return payload["findings"]
+        if finding["diagnostic_method"] is not None:
+            from src.clinical_validation import assess_diagnostic_relationship
+            status = assess_diagnostic_relationship(finding, quote)
+            if status != "supported_local":
+                raise ValueError("diagnostic_relationship_" + status)
+        normalized.append(finding)
+    return normalized
 
 
 def _metadata(candidate):
@@ -288,6 +306,9 @@ def to_clinical_draft_row(finding, *, source_language=None):
     _validate_response({"findings": [payload]}, quote if isinstance(quote, str) else "")
     if source_language not in (None, "en", "tr"):
         raise ValueError("source_language must be en, tr or None")
+    if finding.get("diagnostic_method"):
+        if source_language != "en":
+            raise ValueError("diagnostic_method requires explicit English source language")
     for key in ("aday_id", "kaynak_turu"):
         if not isinstance(finding.get(key), str) or not finding[key].strip():
             raise ValueError(f"Missing draft metadata: {key}")
@@ -309,6 +330,8 @@ def to_clinical_draft_row(finding, *, source_language=None):
     if source_language:
         row["tani_" + source_language] = finding["diagnosis"] or ""
         row["mudahale_" + source_language] = finding["drug"] or ""
+    if finding.get("diagnostic_method"):
+        row["mudahale_en"] = finding["diagnostic_method"]
     if source_language == "tr":
         row["sonuc_olcutu_tr"] = finding["clinical_outcome"] or ""
     if finding["dose"] and finding["dose_unit"]:
@@ -321,6 +344,9 @@ def to_clinical_draft_row(finding, *, source_language=None):
         "dose_unit": finding.get("dose_unit"), "sayfa_bitis": finding.get("sayfa_bitis"),
         "birlestirme": finding.get("birlestirme"),
         "source_language": source_language,
+        "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
+        "diagnostic_method": finding.get("diagnostic_method"),
+        "extracted_fields": {field: finding.get(field) for field in FIELDS},
         "clinical_result": clinical_result_payload(finding["clinical_outcome"], source_language),
         **({"table_context": finding["source_candidate"]["table_context"]}
            if isinstance(finding.get("source_candidate"), dict) and "table_context" in finding["source_candidate"] else {}),
@@ -343,6 +369,8 @@ def to_clinical_draft_item(finding, *, reviewed_fields, source_language=None):
     required = {"tani", *REVIEW_ENUMS}
     if not isinstance(reviewed_fields, dict) or set(reviewed_fields) != required:
         raise ValueError("Provide only reviewed tani and the four clinical enums")
+    if finding.get("diagnostic_method") and reviewed_fields["mudahale_turu"] != "tanı testi":
+        raise ValueError("diagnostic_method requires tanı testi classification")
     if not isinstance(reviewed_fields["tani"], str) or not reviewed_fields["tani"].strip():
         raise ValueError("A reviewed diagnosis key is required")
     for key, allowed in REVIEW_ENUMS.items():

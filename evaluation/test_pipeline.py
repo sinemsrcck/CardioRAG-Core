@@ -67,9 +67,9 @@ def main():
 
     assert result["status"] == "retrieval_only"
     assert result["retrieved_count"] == 2
-    assert result["selected_count"] == 2
+    assert result["selected_count"] == 1
     assert result["top_rerank_score"] == 2.0
-    assert len(result["sources"]) == 2
+    assert len(result["sources"]) == 1
 
     print("TEST BAŞARILI")
     print("Durum:", result["status"])
@@ -707,6 +707,106 @@ class EvaluationInfrastructureTests(unittest.TestCase):
         hits[0]["rerank_score"] = True
         row["reranked_candidates_json"] = json.dumps(hits)
         self.assertEqual(evaluate_threshold([row], 1.0, "minilm")["excluded_pairs"], 1)
+
+
+class DemoEvidenceSelectionTests(unittest.TestCase):
+    def run_text(self, question, text):
+        hit={**TEST_CHUNKS[0],"text":text,"rerank_score":100.0}
+        with patch("src.rag.hybrid_search",return_value=[hit]), \
+             patch("src.rag.rerank",return_value=[hit]), \
+             patch("src.rag.generate_answer",return_value="Supported answer [1].") as generate:
+            result=answer_question(question,[hit],use_llm=True)
+        return result,generate
+
+    def test_positive_score_on_irrelevant_af_treatment_does_not_open_gate(self):
+        question="How can atrial fibrillation be detected?"
+        result,generate=self.run_text(question,"Atrial fibrillation catheter ablation trials compare recurrence and treatment outcomes in patients. "*2)
+        self.assertEqual(result["status"],"insufficient_evidence")
+        generate.assert_not_called()
+
+    def test_bilingual_detection_facets_do_not_require_literal_query_overlap(self):
+        text="AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices."
+        for question in ("Atriyal fibrilasyon hangi yöntemlerle tespit edilebilir?","How can atrial fibrillation be detected?"):
+            with self.subTest(question=question):
+                check=check_evidence([{**TEST_CHUNKS[0],"text":text,"rerank_score":-50}],question=question,enforce_keyword_overlap=False)
+                self.assertTrue(check["sufficient"])
+
+    def test_negated_detection_statement_abstains(self):
+        result,generate=self.run_text("How can atrial fibrillation be detected?",
+            "AF cannot be detected with wearable devices according to this unrelated illustrative statement. "*2)
+        self.assertEqual(result["status"],"insufficient_evidence")
+        generate.assert_not_called()
+
+    def test_carotid_is_not_coronary_diagnosis(self):
+        result,generate=self.run_text("Koroner arter hastalığının tanısında hangi yöntemler kullanılır?",
+            "Carotid artery stenosis (CAS) was assessed with carotid ultrasound. Inflammatory biomarkers were compared between study groups.")
+        self.assertEqual(result["status"],"insufficient_evidence")
+        generate.assert_not_called()
+
+    def test_cad_diagnostic_methods_pass(self):
+        text="A multimodal diagnostic approach for CAD detection includes CCTA, stress echocardiography, CMR and nuclear imaging in selected patients."
+        result,_=self.run_text("Which diagnostic methods are used for coronary artery disease?",text)
+        self.assertEqual(result["status"],"generated")
+
+    def test_troponin_context_without_delta_abstains(self):
+        result,generate=self.run_text("How is the change in troponin evaluated in diagnosing acute myocardial infarction?",
+            "CCTA was considered in patients with uncertain high sensitive cardiac troponin and no recurrent chest pain. Diagnostic imaging was performed.")
+        self.assertEqual(result["status"],"insufficient_evidence")
+        generate.assert_not_called()
+
+    def test_troponin_delta_with_ami_passes(self):
+        text="Delta HS troponin I values at 0-1h and 0-3h were evaluated as percentage changes in patients diagnosed with AMI in this study."
+        result,_=self.run_text("Troponin değişimi akut miyokard enfarktüsü tanısında nasıl değerlendirilir?",text)
+        self.assertEqual(result["status"],"generated")
+
+    def test_unknown_question_does_not_pass_on_positive_scores(self):
+        result,generate=self.run_text("What is the temperature on Mars?",TEST_CHUNKS[0]["text"])
+        self.assertEqual(result["status"],"insufficient_evidence")
+        generate.assert_not_called()
+
+    def test_missing_question_is_not_sufficient(self):
+        self.assertFalse(check_evidence(TEST_CHUNKS)["sufficient"])
+
+    def test_caller_score_filter_cannot_replace_topic_task_support(self):
+        # Synthetic scores exercise order of checks, not production calibration.
+        hit={**TEST_CHUNKS[0],"text":"AF ablation trials compare recurrence after treatment in study patients. "*2,"rerank_score":100.0}
+        check=check_evidence([hit],question="How can atrial fibrillation be detected?",
+                             enforce_keyword_overlap=False,min_score=0)
+        self.assertFalse(check["sufficient"])
+
+    def test_rag_document_limit_returns_fewer_sources_without_irrelevant_fill(self):
+        text="AF can be detected incidentally during clinical encounters, with wearable devices and an ECG monitoring device in the described clinical setting."
+        hits=[{**TEST_CHUNKS[0],"chunk_id":i,"text":text,"rerank_score":-i} for i in (1,2,3)]
+        hits.append({**TEST_CHUNKS[1],"chunk_id":4,"rerank_score":-4})
+        with patch("src.rag.hybrid_search",return_value=hits),patch("src.rag.rerank",return_value=hits), \
+             patch("src.rag.generate_answer",side_effect=AssertionError("No LLM")):
+            bounded=answer_question("How can atrial fibrillation be detected?",hits,use_llm=False)
+            unlimited=answer_question("How can atrial fibrillation be detected?",hits,use_llm=False,max_chunks_per_document=None)
+        self.assertEqual(bounded["selected_count"],2)
+        self.assertEqual(unlimited["selected_count"],3)
+        self.assertNotIn(4,[s["chunk_id"] for s in unlimited["sources"]])
+
+    def test_facets_cannot_be_assembled_across_unrelated_paragraphs(self):
+        text="AF is associated with cardiovascular morbidity in this study.\n\nECG screening and detection were discussed for an unrelated disease."
+        result,generate=self.run_text("How can atrial fibrillation be detected?",text)
+        self.assertEqual(result["status"],"insufficient_evidence")
+        generate.assert_not_called()
+
+    def test_diversity_does_not_fill_from_lower_ranked_tail(self):
+        from src.source_diversity import select_diverse_sources
+        hits=[{"chunk_id":i,"document_id":"a" if i<4 else "b"} for i in range(1,6)]
+        self.assertEqual([x["chunk_id"] for x in select_diverse_sources(hits,top_k=3,max_chunks_per_document=2)],[1,2])
+
+    def test_document_limit_can_be_disabled_without_changing_ranking(self):
+        from src.source_diversity import select_diverse_sources
+        hits=[{"chunk_id":i,"document_id":"a"} for i in range(1,6)]
+        self.assertEqual(select_diverse_sources(hits,top_k=5,max_chunks_per_document=None),hits)
+        self.assertEqual(len(select_diverse_sources(hits,top_k=5,max_chunks_per_document=3)),3)
+
+    def test_duplicate_sources_do_not_consume_the_ranked_prefix(self):
+        from src.source_diversity import select_diverse_sources
+        a={"chunk_id":"a","document_id":"a"};b={"chunk_id":"b","document_id":"b"}
+        self.assertEqual(select_diverse_sources([a,a,b],top_k=2),[a,b])
 
 
 if __name__ == "__main__":

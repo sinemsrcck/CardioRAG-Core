@@ -6,6 +6,48 @@ def normalize_text(text):
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
+def demo_relevance(question, text):
+    """Conservative bilingual demo facets, not calibrated semantic certainty.
+
+    Recognises only the documented AF/CAD/troponin intents. Unsupported intents
+    abstain. Facets must coexist in a source paragraph; scores and source count
+    are never proof. This does not validate claims or clinical truth.
+    """
+    query = normalize_text(question).casefold()
+    af = r"\baf\b|atrial fibrillation|atriyal fibrilasyon\w*"
+    cad = r"\bcad\b|coronary artery disease|koroner arter hastal\w*"
+    troponin = r"troponin"
+    if re.search(af, query):
+        entity = af
+        if re.search(r"tespit|saptan|detect|screen", query):
+            intent = "af_detection"
+            facets = (r"(?:\baf\b|atrial fibrillation)\s+(?:detection|screening|can be detected|is detected|was detected|was diagnosed)",
+                      r"ecg|electrocardiogram|wearable|implanted|implantable|loop recorder|pacemaker")
+        elif re.search(r"stroke|inme", query):
+            intent, facets = "af_stroke", (r"stroke|inme",)
+        elif re.search(r"what is|nedir", query):
+            intent, facets = "af_definition", (r"arrhythmia|irregular|aritmi|düzensiz",)
+        elif query in ("atrial fibrillation", "af", "atriyal fibrilasyon"):
+            intent, facets = "af_topic", (r"patient|clinical|risk|arrhythmia|hasta",)
+        else:
+            return False, "unsupported_intent"
+    elif re.search(cad, query) and re.search(r"diagnos|tanı|yöntem|method", query):
+        entity, intent = cad, "cad_diagnosis"
+        facets = (r"diagnos|detect|screen|testing|tanı", r"\bccta\b|\bcmr\b|\bspect\b|\bpet\b|\becg\b|echocardiograph|angiograph|computed tomography")
+    elif re.search(troponin, query) and re.search(r"değiş|change|delta", query):
+        entity, intent = troponin, "troponin_delta"
+        facets = (r"delta|change|değiş", r"\bami\b|\bmi\b|myocardial infarction|miyokard enfarkt")
+    else:
+        return False, "unsupported_intent"
+    paragraphs = re.split(r"\n\s*\n", str(text or ""))
+    supported = any(re.search(entity, normalize_text(p).casefold())
+                    and all(re.search(f, normalize_text(p).casefold()) for f in facets)
+                    and not re.search(r"cannot be detected|can not be detected|does not detect|not a diagnostic",
+                                      normalize_text(p).casefold())
+                    for p in paragraphs)
+    return supported, intent
+
+
 def check_evidence(
     ranked_chunks,
     min_score=None,
@@ -23,11 +65,11 @@ def check_evidence(
     veya kaynak tarafından desteklendiğini
     tek başına kanıtlamaz.
 
-    enforce_keyword_overlap=False, diller arası sorgularda birebir
-    sözcük eşleşmesini ret koşulu olmaktan çıkarır. Eski doğrudan
-    çağrıların davranışı varsayılan olarak korunur. Bu durumda ilgililik
-    elemesi için dışarıdan kalibre edilmiş min_score sağlanmalıdır;
-    yalnızca kullanılabilir metin bulunması anlamsal yeterlilik değildir.
+    enforce_keyword_overlap=False diller arası birebir sözcük zorunluluğunu
+    kaldırır; sınırlı demo niyetleri için iki dilli konu/görev kontrolü yine
+    zorunludur. Desteklenmeyen sorularda çekimser kalır. min_score verilse
+    bile skor tek başına yeterlilik değildir. Bu kontroller klinik iddia
+    doğrulaması veya kalibre edilmiş anlamsal yeterlilik ölçümü değildir.
     """
 
     if not ranked_chunks:
@@ -114,6 +156,13 @@ def check_evidence(
 
             valid = relevant
 
+    # A usable paragraph or a positive/thresholded score is not sufficient.
+    if not question:
+        return {"sufficient": False, "reason": "question_required", "chunks": []}
+    supported = [chunk for chunk in valid if demo_relevance(question, chunk.get("text"))[0]]
+    if not supported:
+        return {"sufficient": False, "reason": "no_explicit_demo_support", "chunks": []}
+    valid = supported
     return {
         "sufficient": True,
         "reason": "passed_relevance_filters",

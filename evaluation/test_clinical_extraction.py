@@ -484,7 +484,9 @@ class RAGSaveAdapterTests(unittest.TestCase):
             with patch("src.rag.hybrid_search", return_value=[hit]), \
                  patch("src.rag.rerank", return_value=[hit]), \
                  patch("src.rag.generate_answer", return_value="Study result [1].") as generate:
-                result = answer_question("Study result?", [hit], use_llm=use_llm)
+                # Adapter contract fixture uses a supported topic; an unspecified
+                # "Study result?" must now abstain under the strict demo gate.
+                result = answer_question("atrial fibrillation", [hit], use_llm=use_llm)
             kwargs = prepare_rag_save_kwargs(result, llm_model="mock-actual-model")
             self.assertEqual(kwargs["result"]["evidence_check"]["sufficient"], sufficient)
             self.assertEqual(generate.call_count, int(use_llm and sufficient))

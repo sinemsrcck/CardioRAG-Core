@@ -757,5 +757,189 @@ class TableContextAndResultTests(unittest.TestCase):
         self.assertEqual(json.loads(records[1]["table_context"]), self.candidate["table_context"])
 
 
+class DiagnosticMethodTests(unittest.TestCase):
+    """Synthetic P01 replay only. No real pilot approval, API or database IO."""
+    setUp = ClinicalSourceValidationTests.setUp
+    save = ClinicalSourceValidationTests.save
+    assert_rejected = ClinicalSourceValidationTests.assert_rejected
+    quote = ("AF can be detected incidentally during clinical encounters, with wearable devices, "
+             "or through interrogation of cardiac implanted electronic devices.")
+
+    def prepare(self, quote=None):
+        quote = quote or type(self).quote
+        self.ctx.pages["doc"][2] = quote
+        self.ctx.chunks[("doc", 2)] = [("chunk", quote)]
+        self.row.update(kanit_cumle=quote, mudahale_turu="tan\u0131 testi", tani_en="AF",
+                        mudahale_en="wearable devices")
+        self.candidate = bind_fixture(dict(dosya="fixture.pdf",makale_id="article",document_id="doc",
+            sayfa=2,sayfa_bitis="",birlestirme="",kaynak_turu="metin",cumle=quote,chunk_id="chunk"))
+        self.reviews = mock_approved_reviews([self.candidate], mudahale_turu="tan\u0131 testi")
+
+    def finding(self, method="wearable devices", **changes):
+        fields = {key:None for key in FIELDS}
+        fields.update(diagnosis="AF", diagnostic_method=method,evidence_quote=self.candidate["cumle"])
+        fields.update(changes)
+        return fields
+
+    def extract(self, payload):
+        from src.clinical_extraction import extract_clinical_findings
+        client=Mock(api_key="test-only-key");client.with_options.return_value=client
+        client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="stop",message=SimpleNamespace(content=json.dumps({"findings":payload})))])
+        self.client=client
+        return extract_clinical_findings([self.candidate],client=client,model="mock-model",
+                                         reviewed_fields_by_candidate=self.reviews)
+
+    def test_two_p01_methods_are_separate_pending_findings(self):
+        from src.clinical_validation import assess_clinical_relationships
+        self.prepare()
+        methods=["wearable devices","interrogation of cardiac implanted electronic devices"]
+        result=self.extract([self.finding(m) for m in methods])
+        self.assertEqual([f["diagnostic_method"] for f in result["findings"]],methods)
+        rows=[to_clinical_sql_row(f,source_language="en") for f in result["findings"]]
+        self.assertEqual(database.save_clinical_findings(rows,"rag",connection=self.conn)["yazilan"],2)
+        for row,method in zip(rows,methods):
+            self.assertEqual(assess_clinical_relationships(self.finding(method),self.candidate["cumle"]),"supported_local")
+            self.assertEqual(row["mudahale_en"],method)
+            self.assertEqual(row["mudahale_turu"],"tan\u0131 testi")
+            self.assertEqual(row["review_status"],"pending")
+            self.assertIsNone(row["sonuc_olcutu_tr"])
+            note=json.loads(row["taslak_notu"])
+            self.assertEqual(note["extracted_fields"]["diagnostic_method"],method)
+            self.assertIsNone(note["extracted_fields"]["drug"])
+            self.assertEqual(note["extraction_schema_version"],"clinical-extraction-v2")
+
+    def test_direct_sql_without_json_requires_explicit_diagnostic_link(self):
+        self.prepare()
+        self.assertEqual(self.save(self.row)["yazilan"],1)
+
+    def test_wrong_disease_method_link_rejected_by_direct_writer(self):
+        self.prepare(type(self).quote+" MI is discussed separately.")
+        self.assert_rejected({**self.row,"tani_en":"MI"})
+
+    def test_cooccurrence_is_not_a_diagnostic_link(self):
+        self.prepare("AF and wearable devices were discussed.")
+        self.assert_rejected(self.row)
+
+    def test_negated_diagnostic_link_is_not_accepted(self):
+        self.prepare("AF cannot be detected with wearable devices.")
+        self.assert_rejected(self.row)
+
+    def test_different_disease_in_next_clause_cannot_donate_method(self):
+        self.prepare("AF was discussed. MI can be detected with wearable devices.")
+        self.assert_rejected(self.row)
+
+    def test_drug_and_method_cannot_share_one_finding(self):
+        from src.clinical_extraction import _validate_response
+        self.prepare(type(self).quote+" Apixaban 5 mg was administered.")
+        with self.assertRaisesRegex(ValueError,"diagnostic_relationship_contradicted"):
+            _validate_response({"findings":[self.finding(drug="Apixaban")]},self.candidate["cumle"])
+
+    def test_unrelated_dose_rejected_even_if_present_in_chunk(self):
+        self.prepare(type(self).quote+" Apixaban 5 mg was administered.")
+        self.assert_rejected({**self.row,"doz":"5 mg"})
+
+    def test_diagnostic_method_cannot_add_unrelated_clinical_benefit(self):
+        self.prepare(type(self).quote+" Treatment reduced mortality.")
+        self.assert_rejected({**self.row,"sonuc_olcutu_tr":"mortality"})
+
+    def test_combined_method_list_needs_separate_findings(self):
+        self.prepare()
+        result=self.extract([self.finding("wearable devices, or through interrogation of cardiac implanted electronic devices")])
+        self.assertTrue(result["stopped"])
+        self.assertEqual(result["findings"],[])
+
+    def test_clinical_encounters_does_not_become_a_named_test(self):
+        self.prepare()
+        result=self.extract([self.finding("clinical encounters")])
+        self.assertTrue(result["stopped"])
+
+    def test_invented_device_rejected_by_substring_check(self):
+        self.prepare()
+        self.assertTrue(self.extract([self.finding("12-lead ECG")])["stopped"])
+
+    def test_incorrect_human_classification_is_not_overridden(self):
+        self.prepare()
+        self.reviews=mock_approved_reviews([self.candidate],mudahale_turu="tedavi")
+        finding=self.extract([self.finding()])["findings"][0]
+        with self.assertRaises(ValueError):to_clinical_sql_row(finding,source_language="en")
+        self.cursor.executemany.assert_not_called()
+
+    def test_direct_writer_cannot_hide_diagnostic_field_under_treatment(self):
+        self.prepare()
+        row=to_clinical_sql_row(self.extract([self.finding()])["findings"][0],source_language="en")
+        row["mudahale_turu"]="tedavi"
+        self.assert_rejected(row)
+
+    def test_direct_writer_checks_json_method_against_sql_method(self):
+        self.prepare()
+        row=to_clinical_sql_row(self.extract([self.finding()])["findings"][0],source_language="en")
+        row["mudahale_en"]="interrogation of cardiac implanted electronic devices"
+        self.assert_rejected(row)
+
+    def test_unknown_or_turkish_language_not_mislabelled_english(self):
+        self.prepare()
+        finding=self.extract([self.finding()])["findings"][0]
+        for language in (None,"tr"):
+            with self.subTest(language=language),self.assertRaises(ValueError):
+                to_clinical_sql_row(finding,source_language=language)
+
+    def test_legacy_misused_outcome_is_not_converted_or_approved(self):
+        from src.clinical_extraction import _validate_response
+        self.prepare()
+        old=self.finding(None,clinical_outcome=type(self).quote[3:-1])
+        del old["diagnostic_method"]
+        original=copy.deepcopy(old)
+        normalized=_validate_response({"findings":[old]},type(self).quote)[0]
+        self.assertIsNone(normalized["diagnostic_method"])
+        self.assertEqual(old,original)
+        finding=self.extract([old])["findings"][0]
+        row=to_clinical_sql_row(finding,source_language="en")
+        self.assertIsNone(row["mudahale_en"])
+        self.assert_rejected(row)
+
+    def test_legacy_medication_schema_remains_compatible(self):
+        from src.clinical_extraction import _validate_response
+        self.prepare("Patients received apixaban 5 mg.")
+        old=self.finding(None,diagnosis=None,drug="apixaban",dose="5",dose_unit="mg")
+        del old["diagnostic_method"]
+        parsed=_validate_response({"findings":[old]},self.candidate["cumle"])[0]
+        self.assertEqual(parsed["drug"],"apixaban")
+        self.assertIsNone(parsed["diagnostic_method"])
+
+    def test_alternative_explicit_detection_grammar(self):
+        self.prepare("ECG detects AF.")
+        self.assertEqual(self.save({**self.row,"mudahale_en":"ECG"})["yazilan"],1)
+
+    def test_detection_description_cannot_fill_outcome_in_new_schema(self):
+        self.prepare()
+        result=self.extract([self.finding(clinical_outcome=type(self).quote[3:-1])])
+        self.assertTrue(result["stopped"])
+        self.assertEqual(result["findings"],[])
+
+    def test_direct_writer_cannot_treat_single_clause_detection_as_outcome(self):
+        self.prepare("AF can be detected with ECG.")
+        row={**self.row,"mudahale_en":None,"sonuc_olcutu_tr":"AF can be detected with ECG"}
+        self.assert_rejected(row)
+
+    def test_draft_adapter_also_preserves_diagnostic_method(self):
+        from src.clinical_extraction import to_clinical_draft_row
+        self.prepare()
+        finding=self.extract([self.finding()])["findings"][0]
+        row=to_clinical_draft_row(finding,source_language="en")
+        self.assertEqual(row["mudahale_en"],"wearable devices")
+        self.assertEqual(row["review_status"],"pending")
+        self.assertEqual(json.loads(row["taslak_notu"])["extracted_fields"]["diagnostic_method"],"wearable devices")
+
+    def test_new_request_schema_names_method_without_relaxing_legacy_keys(self):
+        from src.clinical_extraction import FINDING_SCHEMA,EXTRACTION_SCHEMA_VERSION,_validate_response
+        self.assertEqual(EXTRACTION_SCHEMA_VERSION,"clinical-extraction-v2")
+        self.assertIn("diagnostic_method",FINDING_SCHEMA["required"])
+        self.assertFalse(FINDING_SCHEMA["additionalProperties"])
+        self.prepare()
+        invalid=self.finding();del invalid["drug"]
+        with self.assertRaises(ValueError):_validate_response({"findings":[invalid]},self.candidate["cumle"])
+
+
 if __name__ == "__main__":
     unittest.main()

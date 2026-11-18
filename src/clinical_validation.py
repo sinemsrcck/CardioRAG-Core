@@ -261,6 +261,45 @@ def validate_source(row, conn_or_cache):
     return True, None, None
 
 
+def assess_diagnostic_relationship(fields, evidence):
+    """Explicit detection statements only; not diagnostic accuracy or benefit.
+
+    This intentionally small English grammar handles named methods and simple
+    coordinated alternatives. Co-occurrence, ambiguous clauses and richer
+    diagnostic studies remain review-only. No clinical truth is inferred.
+    """
+    diagnosis, method = fields.get("diagnosis"), fields.get("diagnostic_method")
+    if not isinstance(diagnosis, str) or not diagnosis.strip() or not isinstance(method, str) or not method.strip():
+        return "uncertain"
+    diagnosis, method, quote = norm_ws(diagnosis), norm_ws(method), norm_ws(evidence)
+    if method.casefold() in ("clinical encounters", "clinical encounter"):
+        return "uncertain"
+    if any(fields.get(k) not in (None, "") for k in ("drug", "dose", "dose_unit", "treatment_duration")):
+        return "contradicted"
+    if any(fields.get(k) not in (None, "") for k in (
+        "patient_group", "comparison", "clinical_outcome", "numeric_value", "value_unit"
+    )):
+        return "uncertain"
+    if not all(re.search(r"(?<!\w)" + re.escape(v) + r"(?!\w)", quote) for v in (diagnosis, method)):
+        return "contradicted"
+    if re.search(r",|\b(?:and|or)\b", method):
+        return "uncertain"  # one method per finding
+    for sentence in re.split(r"(?<=[.!?])\s+|;|\b(?:whereas|while|but|and)\b", quote):
+        sentence = sentence.strip()
+        head = re.match(re.escape(diagnosis) +
+            r"\s+(?:can be|may be|is|was)\s+(?:detected|diagnosed|identified)\b(.*)", sentence)
+        if head:
+            tail = re.sub(r"^\s*(?:incidentally\s*)?(?:during clinical encounters\s*)?,?\s*", "", head[1])
+            parts = re.split(r",\s*(?:or\s+)?|\s+or\s+", tail.rstrip(".!?"))
+            if any(re.fullmatch(r"(?:with|using|through|by)\s+(?:(?:a|an|the)\s+)?" + re.escape(method),
+                                part.strip()) for part in parts):
+                return "supported_local"
+        if re.fullmatch(re.escape(method) + r"\s+(?:detects|can detect|is used to detect|was used to diagnose)\s+"
+                        + re.escape(diagnosis) + r"[.!?]?", sentence):
+            return "supported_local"
+    return "uncertain"
+
+
 def assess_clinical_relationships(fields, evidence, source_text=None, source_type="metin"):
     """Local textual support, NOT clinical truth or human approval.
 
@@ -268,6 +307,8 @@ def assess_clinical_relationships(fields, evidence, source_text=None, source_typ
     labelled table rows are supported. Complex comparisons/coreference need
     review rather than a guessed relationship. No LLM judgement is consumed.
     """
+    if fields.get("diagnostic_method") is not None:
+        return assess_diagnostic_relationship(fields, evidence)
     names = ("drug", "dose", "patient_group", "clinical_outcome", "numeric_value")
     if any(fields.get(k) is not None and not isinstance(fields[k], str)
            for k in (*names, "dose_unit")):
@@ -375,11 +416,52 @@ def validate_relationship_row(row, ctx):
                   numeric_value=row.get("deger"))
     representations = [native]
     note = row.get("taslak_notu")
+    payload = {}
     if note:
         try:
             payload = json.loads(note)
         except (TypeError, ValueError):
             return "uncertain"
+        if not isinstance(payload, dict):
+            return "uncertain"
+        extracted = payload.get("extracted_fields", {})
+        if not isinstance(extracted, dict):
+            return "uncertain"
+        if extracted.get("diagnostic_method") and row.get("mudahale_turu") != "tanı testi":
+            return "contradicted"
+    extracted = payload.get("extracted_fields", {})
+    capability = row.get("sonuc_olcutu_tr") or extracted.get("clinical_outcome")
+    if row.get("mudahale_turu") == "tanı testi" and capability and re.search(
+        r"\b(?:can|may) be (?:detected|diagnosed|identified)\b", norm_ws(capability)
+    ):
+        return "uncertain"  # diagnostic capability is not an observed clinical outcome
+    if row.get("mudahale_turu") == "tanı testi" and (native["drug"] or extracted.get("diagnostic_method")):
+        method = row.get("mudahale_en") or row.get("mudahale_tr")
+        if (extracted.get("diagnostic_method") and extracted["diagnostic_method"] != method
+            or row.get("mudahale_en") and row.get("mudahale_tr") and row["mudahale_en"] != row["mudahale_tr"]):
+            return "contradicted"
+        diagnostic = dict(diagnosis=row.get("tani_en") or row.get("tani_tr") or extracted.get("diagnosis"),
+            diagnostic_method=method, drug=None, dose=row.get("doz"), treatment_duration=row.get("sure"),
+            patient_group=row.get("hasta_grubu"), comparison=row.get("comparator"),
+            clinical_outcome=row.get("sonuc_olcutu_tr") or extracted.get("clinical_outcome"),
+            numeric_value=row.get("deger"), value_unit=row.get("unit"))
+        result = assess_diagnostic_relationship(diagnostic, row.get("kanit_cumle"))
+        if result != "supported_local":
+            return result
+        if extracted:
+            # A valid SQL representation cannot hide conflicting original fields.
+            if not extracted.get("diagnostic_method"):
+                return "uncertain"  # do not silently reinterpret legacy drug/outcome
+            if diagnostic["diagnosis"] != extracted.get("diagnosis"):
+                return "contradicted"
+            result = assess_diagnostic_relationship(extracted, row.get("kanit_cumle"))
+            if result != "supported_local":
+                return result
+        stored_result = payload.get("clinical_result")
+        if isinstance(stored_result, dict) and stored_result.get("original_text"):
+            return "uncertain"
+        return "supported_local"
+    if note:
         if isinstance(payload, dict) and "extracted_fields" in payload:
             if not isinstance(payload["extracted_fields"], dict):
                 return "uncertain"
