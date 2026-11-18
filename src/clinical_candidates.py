@@ -53,6 +53,13 @@ def candidate_binding(candidate):
     source_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
     binding = {"document_id": document_id, "sayfa": page, "sayfa_bitis": end,
                "kaynak_turu": kind, "birlestirme": joined, "source_text_sha256": source_hash}
+    if "table_context" in candidate:
+        context = candidate["table_context"]
+        if not isinstance(context, dict):
+            raise ValueError("Invalid table context")
+        binding["table_context_sha256"] = hashlib.sha256(json.dumps(
+            context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
     encoded = json.dumps(binding, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return {**binding, "aday_id": CANDIDATE_ID_VERSION + ":" + hashlib.sha256(encoded).hexdigest()}
 
@@ -217,10 +224,8 @@ def page_blocks(page, page_text):
             flush()
             if re.fullmatch(r"\|(?:\s*:?-{3,}:?\s*\|)+", stripped):
                 continue  # tablo başlık ayracı
-            cells = [strip_markdown(c) for c in stripped.strip("|").split("|")]
-            row = " | ".join(c for c in cells if c)
-            if row:
-                blocks.append(["tablo", row, page])
+            # Keep the literal row: empty cells and column offsets are evidence.
+            blocks.append(["tablo", stripped, page])
         elif not stripped or "intentionally omitted" in stripped:
             flush()
         elif re.match(r"^#{1,6}\s", stripped):
@@ -367,17 +372,64 @@ def load_our_articles(conn):
     return rows
 
 
+def table_contexts(page_text):
+    """Raw table context indexed by data row; complex tables stay review-only."""
+    lines = page_text.splitlines()
+    contexts = {}
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("|"):
+            i += 1
+            continue
+        start = i
+        while i < len(lines) and lines[i].strip().startswith("|"):
+            i += 1
+        block = [line.strip() for line in lines[start:i]]
+        separators = [j for j, line in enumerate(block)
+                      if re.fullmatch(r"\|(?:\s*:?-{3,}:?\s*\|)+", line)]
+        if not separators:
+            headers, data, separator = [], block, None
+        else:
+            boundary = separators[0]
+            headers, data, separator = block[:boundary], block[boundary + 1:], block[boundary]
+        previous = start - 1
+        while previous >= 0 and not lines[previous].strip():
+            previous -= 1
+        caption = (lines[previous].strip() if previous >= 0 and re.match(
+            r"^(?:table|tablo|box)\s*(?:\d+[A-Za-z]?|[IVX]+)(?:[.:]|\s)",
+            strip_markdown(lines[previous]), re.I) else None)
+        for row in data:
+            # Remove exactly the outer delimiters, never empty interior cells.
+            cells = row[1:-1].split("|") if row.endswith("|") else row[1:].split("|")
+            columns = headers[0][1:-1].split("|") if len(headers) == 1 and headers[0].endswith("|") else []
+            simple = (len(headers) == 1 and len(separators) == 1 and bool(columns)
+                      and len(cells) == len(columns) and all(c.strip() for c in columns)
+                      and row.endswith("|") and len({strip_markdown(c).casefold() for c in columns}) == len(columns))
+            context = {"schema_version": "table-context-v1", "caption": caption,
+                       "header_lines": headers, "separator": separator,
+                       "columns": columns, "row_cells": cells, "data_row": row,
+                       "status": "simple" if simple else "pending_review"}
+            if row in contexts:
+                context["status"] = "pending_review"  # repeated rows cannot be disambiguated by text
+            contexts[row] = context
+    return contexts
+
+
 def collect_candidates(articles):
     candidates = []
     for filename, makale_id, document_id, full_text in articles:
         if not PAGE_MARKER.search(full_text or ""):
             raise ValueError(f"tam_metin sayfa işaretsiz: {filename}")
-        blocks = []
+        blocks, tables = [], {}
         for page, page_text in iter_pages(full_text):
             blocks += page_blocks(page, page_text)
+            tables[page] = table_contexts(page_text)
 
         seen = set()
         for source_type, sentence, page, end_page, joined in iter_units(blocks):
+            context = tables.get(page, {}).get(sentence) if source_type == "tablo" else None
+            if source_type == "tablo" and context is None:
+                continue  # header rows are context, not independent observations
             key = (page, sentence)
             if key in seen:
                 continue
@@ -403,6 +455,8 @@ def collect_candidates(articles):
                 "cumle": sentence,
                 "karakter": len(sentence),
             }
+            if context is not None:
+                candidate["table_context"] = context
             binding = candidate_binding(candidate)
             candidate.update(aday_id=binding["aday_id"], source_text_sha256=binding["source_text_sha256"],
                              candidate_id_version=CANDIDATE_ID_VERSION)
@@ -411,11 +465,15 @@ def collect_candidates(articles):
 
 
 def write_csv(candidates, path=OUTPUT_FILE):
+    if not candidates:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(candidates[0]), delimiter=";")
+        columns = list(dict.fromkeys(key for candidate in candidates for key in candidate))
+        writer = csv.DictWriter(file, fieldnames=columns, delimiter=";")
         writer.writeheader()
-        writer.writerows(candidates)
+        writer.writerows({**candidate, **({"table_context": json.dumps(candidate["table_context"], ensure_ascii=False)}
+                          if "table_context" in candidate else {})} for candidate in candidates)
 
 
 def print_summary(candidates, articles):

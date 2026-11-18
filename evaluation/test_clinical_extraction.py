@@ -227,7 +227,9 @@ class ClinicalExtractionTests(unittest.TestCase):
         ctx = ValidationContext(pages={"doc1": {26: self.text}},
                                 makale_by_doc={"doc1": "article1"},
                                 chunks={("doc1", 26): [("actual-new-chunk", self.text)]},
-                                chunk_ids={"actual-new-chunk"})
+                                chunk_ids={"actual-new-chunk"},
+                                chunk_versions={"actual-new-chunk": "current-v1"},
+                                active_versions={"doc1": "current-v1"})
         self.assertEqual(validate_row(row, ctx), (True, None, None))
         self.assertEqual(find_chunk_id(row, ctx), "actual-new-chunk")
         self.assertEqual(row["kanit_cumle"], finding["evidence_quote"])
