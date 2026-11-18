@@ -83,6 +83,7 @@ class LLMRequestCompatibilityTests(unittest.TestCase):
         from src.rag import generate_answer
 
         client = Mock()
+        client.with_options.return_value = client
         client.chat.completions.create.return_value = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="  Supported answer [1].  "))])
         with patch("src.rag.get_llm_client", return_value=client), \
@@ -807,6 +808,158 @@ class DemoEvidenceSelectionTests(unittest.TestCase):
         from src.source_diversity import select_diverse_sources
         a={"chunk_id":"a","document_id":"a"};b={"chunk_id":"b","document_id":"b"}
         self.assertEqual(select_diverse_sources([a,a,b],top_k=2),[a,b])
+
+
+class SafeRAGGenerationTests(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+        from src.rag import get_llm_client
+        self.real_factory=get_llm_client
+        self.client=Mock()
+        self.client.with_options.return_value=self.client
+        self.client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="stop",message=SimpleNamespace(content="Anticoagulation may reduce stroke risk [1]."))])
+        self.factory=self.enterContext(patch("src.rag.get_llm_client",return_value=self.client))
+        self.enterContext(patch("src.rag.hybrid_search",side_effect=fake_hybrid_search))
+        self.enterContext(patch("src.rag.rerank",side_effect=fake_rerank))
+
+    def run_rag(self,chunks=None):
+        return answer_question("Atriyal fibrilasyonun inme riski nedir?",
+                               TEST_CHUNKS if chunks is None else chunks,use_llm=True)
+
+    def test_sufficient_context_makes_exactly_one_bounded_request(self):
+        result=self.run_rag()
+        self.assertEqual(result["status"],"generated")
+        self.client.with_options.assert_called_once_with(timeout=60.0,max_retries=0)
+        self.client.chat.completions.create.assert_called_once()
+        self.client.close.assert_called_once()
+
+    def test_actual_model_is_preserved_only_after_generation(self):
+        with patch("src.rag.DEFAULT_LLM", "mock-actual-model"):
+            self.assertEqual(self.run_rag()["llm_model"], "mock-actual-model")
+        self.assertIsNone(self.run_rag([])["llm_model"])
+
+    def test_insufficient_evidence_never_initializes_client(self):
+        result=self.run_rag([])
+        self.assertEqual(result["status"],"insufficient_evidence")
+        self.factory.assert_not_called()
+        self.client.chat.completions.create.assert_not_called()
+
+    def test_prompt_preserves_pdf_physical_page_and_chunk_identity(self):
+        self.run_rag()
+        request=self.client.chat.completions.create.call_args.kwargs
+        prompt=request["messages"][1]["content"]
+        self.assertIn("Dosya: cardiology_test.pdf",prompt)
+        self.assertIn("Sayfa: 2",prompt)
+        self.assertIn("Chunk ID: 1",prompt)
+        self.assertIn(TEST_CHUNKS[0]["text"],prompt)
+        self.assertEqual(request["max_completion_tokens"],4096)
+        self.assertNotIn("max_tokens",request)
+        self.assertNotIn("temperature",request)
+
+    def test_timeout_returns_safe_failure_without_retry(self):
+        import json
+        self.client.chat.completions.create.side_effect=TimeoutError("fake-secret-do-not-return")
+        result=self.run_rag()
+        self.assertEqual(result["status"],"generation_failed")
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["generation_error"]["code"],"llm_timeout")
+        self.assertNotIn("fake-secret",json.dumps(result))
+        self.client.chat.completions.create.assert_called_once()
+
+    def test_provider_error_exposes_only_safe_code_and_status(self):
+        import json
+        error=RuntimeError("password=fake-secret; Authorization: fake-secret")
+        error.status_code=401
+        self.client.chat.completions.create.side_effect=error
+        result=self.run_rag()
+        self.assertEqual(result["status"],"generation_failed")
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["generation_error"],{"code":"llm_request_failed","http_status":401})
+        self.assertNotIn("fake-secret",json.dumps(result))
+        self.client.chat.completions.create.assert_called_once()
+
+    def test_client_configuration_error_is_safe_and_sends_no_request(self):
+        import json
+        self.factory.side_effect=ValueError("fake-secret configuration")
+        result=self.run_rag()
+        self.assertEqual(result["status"],"generation_failed")
+        self.assertNotIn("fake-secret",json.dumps(result))
+        self.client.chat.completions.create.assert_not_called()
+
+    def test_empty_or_truncated_response_is_not_a_generated_answer(self):
+        from types import SimpleNamespace
+        for choices,code in (([],"incomplete_llm_response"),
+            ([SimpleNamespace(finish_reason="length",message=SimpleNamespace(content="Partial"))],"incomplete_llm_response"),
+            ([SimpleNamespace(finish_reason="stop",message=SimpleNamespace(content="  "))],"empty_llm_answer")):
+            with self.subTest(code=code):
+                self.client.chat.completions.create.return_value=SimpleNamespace(choices=choices)
+                result=self.run_rag()
+                self.assertEqual(result["status"],"generation_failed")
+                self.assertEqual(result["generation_error"]["code"],code)
+                self.assertIsNone(result["answer"])
+
+    def test_unused_sources_are_not_marked_as_cited_or_verified(self):
+        second={**TEST_CHUNKS[0],"chunk_id":2,"document_id":102,"filename":"second.pdf"}
+        result=self.run_rag([TEST_CHUNKS[0],second])
+        self.assertEqual(len(result["sources"]),2)
+        self.assertEqual([s["chunk_id"] for s in result["cited_sources"]],[1])
+        self.assertEqual([s["chunk_id"] for s in result["unused_sources"]],[2])
+        self.assertEqual(result["claim_verification"]["status"],"not_performed")
+        self.assertIsNone(result["claim_verification"]["all_claims_supported"])
+        self.assertFalse(result["citation_check"]["claims_verified"])
+
+    def test_even_syntactically_valid_citation_does_not_verify_invented_claim(self):
+        self.client.chat.completions.create.return_value.choices[0].message.content="Invented clinical benefit [1]."
+        result=self.run_rag()
+        self.assertTrue(result["citation_check"]["valid"])
+        self.assertEqual(result["citation_check"]["scope"],"citation_syntax_only")
+        self.assertFalse(result["citation_check"]["claims_verified"])
+        self.assertIsNone(result["claim_verification"]["all_claims_supported"])
+
+    def test_unknown_citation_cannot_invent_a_cited_source(self):
+        self.client.chat.completions.create.return_value.choices[0].message.content="Claim [99]."
+        result=self.run_rag()
+        self.assertFalse(result["citation_check"]["valid"])
+        self.assertEqual(result["cited_sources"],[])
+        self.assertEqual(result["citation_check"]["invalid_citations"],[99])
+
+    def test_client_factory_has_explicit_timeout_and_zero_retries(self):
+        # Constructor is mocked: no API/client network activity.
+        with patch.dict("os.environ",{"LLM_BASE_URL":"https://example.invalid/v1","LLM_API_KEY":"test-only-key"}), \
+             patch("src.rag.OpenAI") as constructor:
+            self.real_factory()
+        self.assertEqual(constructor.call_args.kwargs["timeout"],60.0)
+        self.assertEqual(constructor.call_args.kwargs["max_retries"],0)
+
+    def test_real_sdk_mock_transport_has_no_hidden_retry(self):
+        from openai import OpenAI
+        from evaluation.test_clinical_extraction import sdk_mock_transport_module
+        http=sdk_mock_transport_module();requests=[]
+        def handler(request):
+            requests.append(request)
+            return http.Response(500,json={"error":{"message":"mock server error","type":"server_error"}})
+        client=OpenAI(api_key="test-only-key",base_url="https://example.invalid/v1",
+                      max_retries=2,http_client=http.Client(transport=http.MockTransport(handler)))
+        self.factory.return_value=client
+        result=self.run_rag()
+        self.assertEqual(result["status"],"generation_failed")
+        self.assertEqual(len(requests),1)
+        self.assertEqual(requests[0].extensions["timeout"]["read"],60.0)
+
+    def test_sdk_transport_timeout_is_safe_and_not_retried(self):
+        from openai import OpenAI
+        from evaluation.test_clinical_extraction import sdk_mock_transport_module
+        http=sdk_mock_transport_module();attempts=[]
+        def handler(request):
+            attempts.append(request)
+            raise http.ReadTimeout("fake-secret transport timeout",request=request)
+        self.factory.return_value=OpenAI(api_key="test-only-key",base_url="https://example.invalid/v1",
+            max_retries=2,http_client=http.Client(transport=http.MockTransport(handler)))
+        result=self.run_rag()
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(result["generation_error"]["code"],"llm_timeout")
+        self.assertEqual(result["status"],"generation_failed")
 
 
 if __name__ == "__main__":

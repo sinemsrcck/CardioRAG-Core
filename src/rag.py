@@ -1,8 +1,9 @@
 import os
 import time
+import uuid
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, APITimeoutError
 
 from src.retrieval import hybrid_search
 from src.reranker import rerank, rerank_hybrid
@@ -16,6 +17,16 @@ DEFAULT_LLM = os.getenv("LLM_MODEL", "Qwen/Qwen3-8B")
 # Completion budget includes any reasoning tokens as well as visible output.
 # This is an initial RAG budget, not a guarantee against response truncation.
 MAX_COMPLETION_TOKENS = 4096
+LLM_TIMEOUT_SECONDS = 60.0
+LLM_MAX_RETRIES = 0
+
+
+class RAGGenerationError(RuntimeError):
+    """Safe public error code; never contains provider messages or credentials."""
+    def __init__(self, code, http_status=None):
+        self.code = code
+        self.http_status = http_status if type(http_status) is int else None
+        super().__init__(code)
 
 
 def get_llm_client():
@@ -29,6 +40,8 @@ def get_llm_client():
     return OpenAI(
         api_key=api_key or "not-required",
         base_url=base_url,
+        timeout=LLM_TIMEOUT_SECONDS,
+        max_retries=LLM_MAX_RETRIES,
     )
 
 
@@ -52,6 +65,7 @@ def build_context(chunks, max_chars=14000):
             f"[{source_number}]\n"
             f"Dosya: {filename}\n"
             f"Sayfa: {page_number}\n"
+            f"Chunk ID: {chunk.get('chunk_id')}\n"
             f"Metin:\n{text}"
         )
 
@@ -127,8 +141,6 @@ def generate_answer(question, context, sources):
             "bulunamadı."
         )
 
-    client = get_llm_client()
-
     user_prompt = (
         f"Kaynaklar:\n{context}\n\n"
         f"Soru: {question}\n\n"
@@ -136,18 +148,36 @@ def generate_answer(question, context, sources):
         "Her önemli iddiayı kaynak numarasıyla belirt."
     )
 
-    response = client.chat.completions.create(
-        model=DEFAULT_LLM,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        max_completion_tokens=MAX_COMPLETION_TOKENS,
-    )
-
-    answer = response.choices[0].message.content or ""
-
-    return answer.strip()
+    client = None
+    try:
+        client = get_llm_client()
+        request_client = client.with_options(timeout=LLM_TIMEOUT_SECONDS, max_retries=LLM_MAX_RETRIES)
+        response = request_client.chat.completions.create(
+            model=DEFAULT_LLM,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
+        )
+        if not response.choices or getattr(response.choices[0], "finish_reason", "stop") != "stop":
+            raise RAGGenerationError("incomplete_llm_response")
+        answer = response.choices[0].message.content
+        if not isinstance(answer, str) or not answer.strip():
+            raise RAGGenerationError("empty_llm_answer")
+        return answer.strip()
+    except RAGGenerationError:
+        raise
+    except (APITimeoutError, TimeoutError):
+        raise RAGGenerationError("llm_timeout") from None
+    except Exception as exc:
+        raise RAGGenerationError("llm_request_failed", getattr(exc, "status_code", None)) from None
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass  # Cleanup must not expose secrets or retry a completed request.
 
 def answer_question(
     question,
@@ -163,6 +193,7 @@ def answer_question(
 ):
     """Kaynak seçimi, yanıt üretimi ve atıf kontrolü."""
     start_time = time.perf_counter()
+    query_id = str(uuid.uuid4())
 
     if not question.strip():
         raise ValueError("Soru boş olamaz.")
@@ -230,6 +261,7 @@ def answer_question(
                 "chunks": [],
             }
 
+    generation_error = None
     if not evidence_check["sufficient"]:
         context, sources = "", []
         status = "insufficient_evidence"
@@ -240,14 +272,26 @@ def answer_question(
         answer = None
 
     else:
-        status = "generated"
-        answer = generate_answer(question, context, sources)
+        try:
+            answer = generate_answer(question, context, sources)
+            status = "generated"
+        except RAGGenerationError as exc:
+            status, answer = "generation_failed", None
+            generation_error = {"code": exc.code, "http_status": exc.http_status}
+        except Exception:
+            status, answer = "generation_failed", None
+            generation_error = {"code": "llm_request_failed", "http_status": None}
 
     citation_check = (
         validate_citations(answer, sources)
         if answer
         else None
     )
+    if citation_check is not None:
+        citation_check = {**citation_check, "scope": "citation_syntax_only", "claims_verified": False}
+    cited_numbers = set(citation_check["used_citations"]) if citation_check else set()
+    # Citation use is declared by the answer, not proof of factual entailment.
+    cited_sources = [source for source in sources if source["number"] in cited_numbers]
 
     elapsed = time.perf_counter() - start_time
 
@@ -257,8 +301,13 @@ def answer_question(
         "status": status,
         "sources": sources,
         "citation_check": citation_check,
+        "cited_sources": cited_sources,
+        "unused_sources": [source for source in sources if source["number"] not in cited_numbers],
+        "claim_verification": {"status": "not_performed", "all_claims_supported": None},
+        "generation_error": generation_error,
         "retrieved_count": len(retrieved),
         "selected_count": len(sources),
+        "query_id": query_id,
         "response_time_seconds": round(elapsed, 3),
         "embedding_model": embedding_model,
         "reranker_model": reranker_model,
@@ -266,6 +315,7 @@ def answer_question(
         "max_chunks_per_document": max_chunks_per_document,
         "selection_policy": "eligible_top_k_no_backfill",
         "llm_enabled": use_llm,
+        "llm_model": DEFAULT_LLM if status == "generated" else None,
         "evidence_check": {
             "sufficient": evidence_check["sufficient"],
             "reason": evidence_check["reason"],
