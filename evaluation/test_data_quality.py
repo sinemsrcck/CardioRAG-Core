@@ -462,6 +462,70 @@ def test_database(tmp):
     check("sonda: klinik_bulgular, kalite tabloları, review_status, hoca tabloları değişmedi", before, after)
 
 
+def test_own_transaction_after_select():
+    """Gerçek DB yolu: autocommit=False bağlantıda önce SELECT, sonra write_flags(own_transaction=True).
+
+    run_quality kendi bağlantısını açınca (connection=None) önceki SELECT'ler örtük bir
+    transaction başlatır; write_flags bunu kapatıp kendi transaction'ını açmalı ve commit etmeli.
+    Yalnız benzersiz bir test sürümü yazılır ve sonda silinir; gerçek satırlara dokunulmaz.
+    """
+    import uuid
+
+    from src.data_quality import write_flags
+    from src.database import get_connection
+
+    before = db_state()
+    version = f"test-tx-{uuid.uuid4().hex[:12]}"
+    fake_hash = hashlib.sha256(version.encode()).hexdigest()
+    flags = [{"klinik_bulgu_id": None, "satir_hash": fake_hash, "kontrol_kodu": "test_transaction",
+              "kategori": "tekrar", "seviye": "bilgi", "grup_id": "", "aciklama": "transaction testi",
+              "ayrinti": {"test": True}}]
+    rows = [{"satir_hash": fake_hash}]
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        # Tabloya dokunan bir SELECT gerekir ("SELECT 1" transaction başlatmaz);
+        # run_quality'deki load_db_rows / schema_ready ile aynı durum.
+        cursor.execute("SELECT COUNT(*) FROM klinik_bulgular")
+        cursor.fetchall()
+        cursor.close()
+        check("own_transaction: SELECT sonrası örtük transaction açık", (False, True),
+              (conn.autocommit, conn.in_transaction))
+        try:
+            write_flags(conn, flags, rows, version, "test kapsamı", own_transaction=True,
+                        delete_old_versions=False)
+            error = None
+        except Exception as exc:  # noqa: BLE001 - hatanın kendisi raporlanır
+            error = f"{type(exc).__name__}: {exc}"
+        check("own_transaction: SELECT sonrası write_flags hata vermez", None, error)
+
+        other = get_connection()
+        try:
+            oc = other.cursor()
+            oc.execute("SELECT COUNT(*) FROM kalite_isaretleri WHERE kontrol_surumu = %s", (version,))
+            flag_count = oc.fetchone()[0]
+            oc.execute("SELECT satir_sayisi, isaret_sayisi FROM kalite_calistirmalari WHERE kontrol_surumu = %s",
+                       (version,))
+            run_row = oc.fetchone()
+            other.rollback()
+        finally:
+            other.close()
+        check("own_transaction: yazım commit edildi (başka bağlantıdan görünüyor)", (1, (1, 1)),
+              (flag_count, tuple(run_row) if run_row else None))
+    finally:
+        try:
+            conn.rollback()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM kalite_isaretleri WHERE kontrol_surumu = %s", (version,))
+            cursor.execute("DELETE FROM kalite_calistirmalari WHERE kontrol_surumu = %s", (version,))
+            conn.commit()
+            cursor.close()
+        finally:
+            conn.close()
+    check("own_transaction: test verisi temizlendi, tablolar başlangıçla aynı", before, db_state())
+
+
 def main():
     test_normalization()
     test_numeric()
@@ -473,6 +537,7 @@ def main():
         test_collisions(tmp)
     with tempfile.TemporaryDirectory() as tmp:
         test_database(tmp)
+    test_own_transaction_after_select()
 
     width = max(len(r[0]) for r in results)
     print(f"\n{'Kontrol':<{width}}  {'Beklenen':<22}  {'Bulunan':<40}  Sonuç")

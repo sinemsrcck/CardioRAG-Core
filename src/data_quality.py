@@ -774,6 +774,13 @@ def write_flags(conn, flags, rows, version, scope, *, own_transaction, delete_ol
     cursor = conn.cursor()
     try:
         if own_transaction:
+            # get_connection() bağlantıyı autocommit=False açar; run_quality'nin önceki
+            # SELECT'leri (load_db_rows, load_source_context, schema_ready) örtük bir
+            # salt-okuma transaction'ı başlatmış olur ve start_transaction() "Transaction
+            # already in progress" verir. Bağlantı bizim ve o ana kadar yazım yok: kapatmak
+            # güvenli. Dış bağlantıda (own_transaction=False) çağıranın transaction'ına dokunulmaz.
+            if conn.in_transaction:
+                conn.rollback()
             conn.start_transaction()
         for start in range(0, len(hashes), 500):
             part = hashes[start:start + 500]
