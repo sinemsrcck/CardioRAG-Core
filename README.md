@@ -262,6 +262,8 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 | `clinical_pipeline.py` | Klinik çıkarım toplu işinin mantığı: aday hazırlama (güvenli alıntı parçaları), LLM çağrısı, bulgu bazında doğrulama, `klinik_bulgular` satırı. IO yapmaz. |
 | `run_clinical_batch.py` | Toplu iş CLI'si: ilerleme, devam etme, önbellek, kilit, loglar (bkz. [Klinik çıkarım toplu işi](#klinik-çıkarım-toplu-işi)). |
 | `data_quality.py` | `klinik_bulgular` için tekrar / sayısal / kaynak / tutarlılık işaretleri; `kalite_isaretleri`'ne yazar, bulgulara dokunmaz (bkz. [Veri kalitesi](#veri-kalitesi)). |
+| `gold_set.py` | Gold set: alan listesi, deterministik katmanlı örneklem, etiketleme xlsx'i üretme/okuma, insan etiketlerinin doğrulanması. |
+| `evaluate_extraction.py` | Gold set'e karşı alan bazında P/R/F1 (ham ve doğrulanmış seviye, birebir/gevşek), rapor ve CLI (bkz. [Çıkarım değerlendirmesi](#çıkarım-değerlendirmesi)). |
 
 ## Testler (`evaluation/`)
 
@@ -278,6 +280,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_klinik_bulgular` | Referans taslağı `save_clinical_findings` ile yazar, bozuk satırların reddini, VIEW sayılarını ve hoca tablolarını kontrol eder. Bütün yazımlar geri alınır. |
 | `test_clinical_pipeline` | Klinik çıkarım toplu işi, sahte LLM ile: aday ayırma, bulgu bazında red, `procedure` senaryoları, otomatik doğrulama izi, `alan_cok_uzun`, `<think>`/HTTP 400 ve `--max-tokens-param` davranışı, devam etme, kilit, `--no-save`, `--mock`, `--from-cache` (iki "bilgisayarda" aynı satırlar), `--dry-run`. Bütün yazımlar geri alınır; sonda sayılar karşılaştırılır. |
 | `test_data_quality` | Veri kalitesi: normalizasyon, her kontrol için pozitif/negatif örnek, determinizm (ters ekleme sırası → aynı `grup_id`), sürüm hash'i, `satir_hash` çakışması, JSONL ve `--referans` modlarının tabloya yazmaması. Kalite tabloları yoksa transaction dışında kurar; sahte satırlar geri alınır. |
+| `test_evaluate_extraction` | Çıkarım değerlendirmesi: elle hesaplanmış örnekle birebir TP/FP/FN/P/R/F1, birebir/gevşek mod, eşleme, "bulgu yok", yalnız `dogrulandi` adaylar, yanıtsız aday, örneklem determinizmi, xlsx üret-oku turu (Türkçe karakter), ham vs doğrulanmış, `--mock` raporu. Veritabanına yazmaz. |
 
 **MySQL gerektirmeyenler:**
 
@@ -405,6 +408,28 @@ python -m src.data_quality --referans --dry-run                        # referan
 - **Girdiler:** varsayılan veritabanı (`cikarma_yontemi = 'rag'`; `--hepsi` ile hepsi). `--jsonl` toplu işin önizlemesini **tabloya yazmadan** inceler (`--jsonl-ile-db` kayıtlı satırlarla birlikte; `--offline` veritabanısız, kaynak kontrolü yok). `--referans` yalnızca `--dry-run` ile çalışır; satırlar `validate_row`'a sokulmadan okunur ve bütün çıktılar "**referans_taslak: doğrulanmamış veri**" etiketini taşır.
 - **`satir_hash` çakışması:** `satir_hash` `taslak_notu`'nu kapsamadığı için aynı adaydan farklı İngilizce sonuçlu iki bulgu tek satıra iner. `--batch-dir`, toplu işin `would_save.jsonl` kayıtlarında aynı hash'e sahip farklı bulguları sayar, kayıtlı satırı `hash_cakismasi_kayip_bulgu` ile işaretler ve `state.jsonl`'daki `zaten_var` ipucunu özete yazar.
 - **Çıktılar** (`data/review/kalite/<zaman>-<mod>/`, git'e girmez): `isaretler.csv` (insan incelemesi için), `isaretler.json`, `gruplar.csv`, `ozet.json` (kategori × seviye sayıları, tekrar grubu, çakışma).
+
+## Çıkarım değerlendirmesi
+
+Otomatik çıkarımı insan tarafından doğrulanmış bir **gold set**'e karşı alan bazında precision / recall / F1 ile ölçer. LLM çağrılmaz, veritabanına yazılmaz. `openpyxl` gerekir (`requirements.txt`'te).
+
+```powershell
+python -m src.evaluate_extraction --gold-olustur                       # data/review/gold/gold_etiketleme.xlsx
+python -m src.evaluate_extraction --gold-yukle data/review/gold/gold_etiketleme.xlsx   # -> data/clinical/gold_set.json
+python -m src.evaluate_extraction --degerlendir --from-cache           # toplu iş önbelleğinden (model koşusundan sonra)
+python -m src.evaluate_extraction --degerlendir --db                   # kayıtlı klinik_bulgular (yalnız dogrulanmis seviye)
+python -m src.evaluate_extraction --degerlendir --mock                 # sahte LLM; gerçek performans DEĞİL
+```
+
+- **Gold set yalnızca insan tarafından doğrulanır.** Kod hiçbir satırı `dogrulandi` yapmaz; üretilen xlsx'te her satır `taslak` başlar, referans taslaktan gelen değerler sarı ve "referans_taslak (doğrulanmadı)" işaretlidir. Yalnızca `durum = dogrulandi` ve hatasız adaylar metriğe girer. `data/clinical/gold_set.json` git'e girer; xlsx ve raporlar `data/review/` altındadır (git'e girmez).
+- **Birim = aday cümlesi.** Bir adayın bütün bulguları etiketlenir; bulgusu yoksa `bulgu_yok = EVET`. Değerler aday cümlesinden **birebir** kopyalanır (cümlede geçmeyen değer uyarı verir); bir bulgu = tek müdahale. Referansın cümlede birebir geçmeyen önerileri `taslak_referans` sütunundadır. Var olan xlsx'in üzerine yazılmaz; `gold_set.json` varsa yeni dosya ondaki etiket ve durumlarla doldurulur.
+- **Örneklem** (`--n 60 --seed 42`): LLM'e giden adaylardan ~2/3 referans taslakla eşleşenlerden, ~1/3 diğerlerinden; her havuzda (dosya, `kaynak_turu`) katmanlarına orantılı, her katmandan en az 1; katman içinde `sha256(seed|aday_id)` sırası (deterministik).
+- **Alan listesi** tek yerde: `src/gold_set.py` `GOLD_FIELDS`. Sistemin henüz çıkarmadığı alanlar (`p`, `ci95`, `hasta_sayisi`, `etki_turu`, `icd10`) etiketlenir ama "değerlendirilemez" raporlanır ve ortalamalara girmez; çıkarıma eklenince yalnızca o satırdaki eşleme doldurulur.
+- **İki seviye:** `ham` (LLM yanıtındaki bütün bulgular, doğrulama öncesi) ve `dogrulanmis` (`validate_row`'dan geçen, kaydedilecek satırlar); aradaki fark doğrulamanın etkisidir.
+- **Eşleme:** aynı aday içinde gold ve sistem bulguları normalize müdahale ile eşlenir (en çok çift, sonra en çok alan uyuşması; deterministik). Normalizasyon `data_quality` ile aynıdır.
+- **Sayım** (alan f): eşlenmiş çiftte ikisi dolu ve eşit → TP; ikisi dolu ve farklı → FP + FN; yalnız sistem dolu → FP; yalnız gold dolu → FN; eşlenmemiş sistem bulgusunun dolu alanları FP, eşlenmemiş gold bulgusununkiler FN. P = TP/(TP+FP), R = TP/(TP+FN), F1 = 2PR/(P+R); 0/0 → tanımsız. Micro = aktif alanların toplamı; macro = tanımlı F1'lerin ortalaması; ayrıca bulgu ve aday ("bulgu yok" isabeti) düzeyi. **Birebir** (ana) ve **gevşek** (içerme veya token Jaccard ≥ 0.5) mod; micro F1 için seed'li bootstrap %95 aralığı (`--bootstrap 1000`, 0 = kapalı).
+- **Yanıtı olmayan gold adayları** (önbellekte yok / LLM'e gitmeyen) raporda listelenir: ana metrik yanıtı olan adaylar üzerindendir, "konservatif" satırda boş çıktı (FN) sayılırlar.
+- **Rapor** (`data/review/degerlendirme/<zaman>-<kaynak>/`): `metrics.json` (sürümler: `pipeline_version`, model, `gold_hash`, alan listesi ve normalizasyon sürümü), `alanlar.csv`, `kirilim.csv` (makale ve `kaynak_turu`), `hatalar.csv` (FP/FN/yanlış değer örnekleri).
 
 ## Bilinen sınırlar
 
