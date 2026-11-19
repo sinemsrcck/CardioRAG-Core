@@ -261,8 +261,112 @@ def validate_source(row, conn_or_cache):
     return True, None, None
 
 
+
+def _pilot_relationship(fields, evidence):
+    """Closed prose grammars for local pilot relations; None uses legacy rules.
+
+    Not a general entailment engine. All captured roles must match independently;
+    unknown fields, other sentence shapes and extra statistics stay review-only.
+    """
+    if not isinstance(evidence, str):
+        return "uncertain"
+    role_keys = ("diagnostic_method", "diagnosis", "procedure", "drug", "dose", "dose_unit",
+                 "treatment_duration", "clinical_outcome", "numeric_value", "value_unit", "patient_group",
+                 "comparison", "p_value", "confidence_interval", "sample_size", "effect_measure")
+    if any(fields.get(k) is not None and not isinstance(fields[k], str) for k in role_keys):
+        return "uncertain"
+    q = norm_ws(evidence)
+    method = fields.get("diagnostic_method")
+    if method and re.search(r"[,;/+&]|\b(?:and|or|not|may|might)\b",
+                            re.sub(r" \(ie, subcutaneous telemetry device\)$", "", method), re.I):
+        return "uncertain"
+    procedure = fields.get("procedure") or fields.get("drug")
+    metric = fields.get("clinical_outcome")
+    value = fields.get("numeric_value")
+    group = fields.get("patient_group")
+    def equal(a, b):
+        return isinstance(a, str) and isinstance(b, str) and norm_ws(a).casefold() == norm_ws(b).casefold()
+    def absent(*keys):
+        return all(fields.get(k) in (None, "") for k in keys)
+    if method and not absent("procedure", "drug", "dose", "dose_unit", "treatment_duration"):
+        return "contradicted"
+    if method and not absent("comparison", "p_value", "confidence_interval", "sample_size"):
+        return "uncertain"
+    # A baseline exclusion is scoped to the population, not the detection verb.
+    loop = re.fullmatch(
+        r"In (?P<group>patients presenting with ischemic stroke without diagnosed AF), "
+        r"an (?P<method>implantable loop recorder)(?P<aside> \(ie, subcutaneous telemetry device\))? "
+        r"can evaluate patients for (?P<diagnosis>intermittent AF)\.", q, re.I)
+    if method and loop:
+        if not absent("clinical_outcome", "numeric_value", "value_unit", "effect_measure"):
+            return "uncertain"
+        if not (equal(method, loop['method']) or equal(method, loop['method'] + (loop['aside'] or ''))):
+            return "contradicted"
+        return ("supported_local" if equal(group, loop['group']) and equal(fields.get('diagnosis'), loop['diagnosis'])
+                else "uncertain")
+    if method and value:
+        if not absent("diagnosis"):
+            return "uncertain"  # performance does not establish a detected disease
+        number = r"\d+(?:\.\d+)?"
+        hcr = re.fullmatch(
+            r"In the ROC analysis, the cut-off value of the (?P<method>[\w -]+) in "
+            r"(?P<group>the group with an ischemic event) was found to be "
+            rf"(?P<sensitivity>{number})% sensitivity and (?P<specificity>{number})% specificity\.", q, re.I)
+        auc = re.fullmatch(
+            r"ROC analysis showed moderate discriminative ability for (?P<first>[\w -]+) "
+            rf"\[area under the curve \(AUC\)=(?P<a>{number})\] and (?P<second>[\w -]+) "
+            rf"\(AUC=(?P<b>{number})\), while Neu% had limited predictive value\.", q, re.I)
+        if hcr:
+            if not equal(method, hcr['method']) or not equal(group, hcr['group']):
+                return "uncertain"
+            if not isinstance(metric, str) or metric.casefold() not in ('sensitivity', 'specificity'):
+                return "uncertain"
+            if not absent('effect_measure') or fields.get('value_unit') not in (None, '', '%'):
+                return "uncertain"
+            expected = hcr[metric.casefold()] + '%'
+            actual = value + ('%' if fields.get('value_unit') == '%' and not value.endswith('%') else '')
+            return "supported_local" if actual == expected else "contradicted"
+        if auc:
+            if not absent('patient_group', 'value_unit') or metric not in ('AUC', 'area under the curve', 'area under the curve (AUC)'):
+                return "uncertain"
+            if fields.get('effect_measure') not in (None, '', 'AUC'):
+                return "uncertain"
+            pairs = [(auc['first'], auc['a']), (auc['second'], auc['b'])]
+            matches = [v for m, v in pairs if equal(method, m)]
+            if len(matches) != 1:
+                return "uncertain"
+            return "supported_local" if value == matches[0] else "contradicted"
+    if procedure and not method:
+        # Recruitment/selection is not an observed intervention-outcome relation.
+        if not metric and re.match(r"In this (?:retrospective|prospective) (?:case-control|cohort) study,", q, re.I):
+            return "uncertain"
+        treatment = re.fullmatch(
+            r"The evidence unequivocally supports the fact that "
+            r"(?P<procedure>revascularization of the culprit lesion) in "
+            r"(?P<group>acute coronary syndromes) leads to (?P<outcome>improved survival rates)\.", q, re.I)
+        if treatment:
+            if not absent('diagnosis', 'dose', 'dose_unit', 'treatment_duration', 'comparison',
+                          'numeric_value', 'value_unit', 'p_value', 'confidence_interval', 'sample_size', 'effect_measure'):
+                return "uncertain"
+            if fields.get('procedure') and fields.get('drug'):
+                return "contradicted"
+            # A shortened name is anchored to the whole quoted culprit-lesion claim;
+            # this grants no support for an unqualified population or other benefit.
+            if not (equal(procedure, treatment['procedure']) or equal(procedure, 'revascularization')):
+                return "contradicted"
+            return ("supported_local" if equal(group, treatment['group']) and equal(metric, treatment['outcome'])
+                    else "uncertain")
+    return None
+
+
 def assess_diagnostic_relationship(fields, evidence):
     """Accept only explicit, local method-diagnosis relationships."""
+    method = fields.get("diagnostic_method")
+    if isinstance(method, str) and re.search(r"\b(?:ROC analysis|regression analysis|statistical analysis)\b", method, re.I):
+        return "uncertain"  # independent/direct-writer boundary, not a diagnostic instrument
+    pilot = _pilot_relationship(fields, evidence)
+    if pilot is not None:
+        return pilot
     diagnosis, method = fields.get("diagnosis"), fields.get("diagnostic_method")
     if not isinstance(diagnosis, str) or not diagnosis.strip():
         return "uncertain"
@@ -480,6 +584,9 @@ def assess_clinical_relationships(fields, evidence, source_text=None, source_typ
             return typed
     if fields.get("diagnostic_method") is not None:
         return assess_diagnostic_relationship(fields, evidence)
+    pilot = _pilot_relationship(fields, evidence)
+    if pilot is not None:
+        return pilot
     names = ("drug", "dose", "patient_group", "clinical_outcome", "numeric_value")
     if any(fields.get(k) is not None and not isinstance(fields[k], str)
            for k in (*names, "dose_unit")):
@@ -632,7 +739,10 @@ def validate_relationship_row(row, ctx):
                 return result
         stored_result = payload.get("clinical_result")
         if isinstance(stored_result, dict) and stored_result.get("original_text"):
-            return "uncertain"
+            if (stored_result.get("schema_version") != "clinical-result-v1"
+                or stored_result["original_text"] != extracted.get("clinical_outcome")
+                or _pilot_relationship(extracted, row.get("kanit_cumle")) != "supported_local"):
+                return "uncertain"
         return "supported_local"
     if note:
         if isinstance(payload, dict) and "extracted_fields" in payload:
