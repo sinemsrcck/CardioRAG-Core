@@ -261,6 +261,7 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 | `clinical_draft.py` | `data/clinical/referans_taslak.json`'ı denetleyip yalnızca CSV üretir; veritabanına yazmaz. |
 | `clinical_pipeline.py` | Klinik çıkarım toplu işinin mantığı: aday hazırlama (güvenli alıntı parçaları), LLM çağrısı, bulgu bazında doğrulama, `klinik_bulgular` satırı. IO yapmaz. |
 | `run_clinical_batch.py` | Toplu iş CLI'si: ilerleme, devam etme, önbellek, kilit, loglar (bkz. [Klinik çıkarım toplu işi](#klinik-çıkarım-toplu-işi)). |
+| `data_quality.py` | `klinik_bulgular` için tekrar / sayısal / kaynak / tutarlılık işaretleri; `kalite_isaretleri`'ne yazar, bulgulara dokunmaz (bkz. [Veri kalitesi](#veri-kalitesi)). |
 
 ## Testler (`evaluation/`)
 
@@ -276,6 +277,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_rag_kayit` | `save_rag_result`'ı gerçek `answer_question` (`use_llm=False`) çıktısıyla dener; reranker yer tutucuyla değiştirilir, model indirmez. Bütün yazımlar geri alınır. |
 | `test_klinik_bulgular` | Referans taslağı `save_clinical_findings` ile yazar, bozuk satırların reddini, VIEW sayılarını ve hoca tablolarını kontrol eder. Bütün yazımlar geri alınır. |
 | `test_clinical_pipeline` | Klinik çıkarım toplu işi, sahte LLM ile: aday ayırma, bulgu bazında red, `procedure` senaryoları, otomatik doğrulama izi, `alan_cok_uzun`, `<think>`/HTTP 400 ve `--max-tokens-param` davranışı, devam etme, kilit, `--no-save`, `--mock`, `--from-cache` (iki "bilgisayarda" aynı satırlar), `--dry-run`. Bütün yazımlar geri alınır; sonda sayılar karşılaştırılır. |
+| `test_data_quality` | Veri kalitesi: normalizasyon, her kontrol için pozitif/negatif örnek, determinizm (ters ekleme sırası → aynı `grup_id`), sürüm hash'i, `satir_hash` çakışması, JSONL ve `--referans` modlarının tabloya yazmaması. Kalite tabloları yoksa transaction dışında kurar; sahte satırlar geri alınır. |
 
 **MySQL gerektirmeyenler:**
 
@@ -371,6 +373,38 @@ Reddedilen bulgular şimdilik yalnızca `rejected.jsonl`'dadır (veritabanına a
 1. Zip'i `data/review/clinical_batch/responses/` olacak şekilde açın.
 2. Kontrol: `python -m src.run_clinical_batch --from-cache --dry-run` (`onbellekte_yok` 0'a yakın olmalı; yüksekse PDF'ler veya kod sürümü farklıdır).
 3. Kayıt: `python -m src.run_clinical_batch --from-cache`
+
+## Veri kalitesi
+
+`klinik_bulgular`'daki satırlarda tekrarları, şüpheli sayıları, eksik kaynakları ve tutarsızlıkları bulur ve **işaretler**. Hiçbir bulgu silinmez veya değiştirilmez, `review_status`'a dokunulmaz; `klinik_bulgular`'a yalnızca `SELECT` atılır. LLM kullanılmaz.
+
+**Kurulum — her veritabanında bir kez:**
+
+```powershell
+python -m src.data_quality --kur
+```
+
+`sql/kalite_core.sql`'i çalıştırır (tekrar çalıştırılabilir): `kalite_isaretleri`, `kalite_calistirmalari` tabloları ve `v_kalite_ozet` (işaret + bulgu + PDF adı, en son kontrol sürümü), `v_kalite_bulgu` (bulgu başına hata/uyarı/bilgi sayıları) VIEW'ları. `init_schema`'dan bağımsızdır.
+
+```powershell
+python -m src.data_quality --dry-run                                   # rapor; tabloya yazmaz
+python -m src.data_quality                                             # kalite_isaretleri'ni yeniler (rag satırları)
+python -m src.data_quality --hepsi --makale DOI-10.1001/jama.2024.22451
+python -m src.data_quality --jsonl data/review/clinical_batch/runs/<run_id>/would_save.jsonl
+python -m src.data_quality --batch-dir data/review/clinical_batch      # + satir_hash çakışmaları
+python -m src.data_quality --referans --dry-run                        # referans taslak (doğrulanmamış)
+```
+
+- **İşaretler türetilmiş veridir.** Kimlik `satir_hash`'tir (veritabanı `id`'si makineden makineye değişir); `grup_id` üyelerin `satir_hash`'lerinden türetilir. Aynı `kontrol_surumu` ile yeniden çalıştırınca o sürümün kapsamdaki işaretleri silinip tek transaction'da yeniden yazılır; sonuç deterministiktir. `kontrol_surumu = kalite-v1-<hash>`: kontrol listesi, müdahale eşanlamlıları, birim yazımları ve eşikler değişince kendiliğinden değişir; kontrol mantığı (ayrıştırma, kural koşulları) değişince `src/data_quality.py`'deki `RULES_REVISION` elle artırılır. Bulgu silinirse işaretleri de silinir (`ON DELETE CASCADE`).
+- **Kategoriler ve seviyeler** (`hata` / `uyari` / `bilgi`):
+  - `tekrar`: aynı makale + müdahale + doz + değer/birim + hasta grubu + sonuç (normalize; temsilci `bilgi`, diğerleri `uyari`), metin–tablo ve farklı sayfa kopyaları, yalnızca müdahale adı tekrarları, benzer hasta grubu/sonuç (`tekrar_benzer`: Jaccard ≥ 0.8; `--embedding` ile yerel minilm cosine ≥ 0.92 — ikisi de yalnızca `bilgi`), `satir_hash` çakışması.
+  - `sayisal`: yüzde > 100, p 0–1 dışında, "p<001" biçimi, GA alt > üst, değer GA dışında, OR/RR/HR/IRR ≤ 0, AUC 0–1 dışında, negatif değer, birimsiz değer (`etki_turu` boşsa `bilgi`), birimsiz doz, ayrıştırılamayan / binlik-ondalık belirsiz sayı.
+  - `kaynak`: boş kaynak alanı, `chunk_id` yok, belge/chunk yok, chunk eski sürümde, chunk başka belgede, kanıt chunk'ta değil, sayfa uyuşmuyor, makale–belge uyuşmuyor, `validate_row` artık geçmiyor.
+  - `tutarsizlik`: aynı makale/müdahale/hasta grubu için farklı doz, aynı hasta grubu için farklı `hasta_sayisi`, aynı sonuç için farklı değer, `mudahale_turu` ile `taslak_notu`'daki alan kaynağı uyuşmuyor, okunamayan `taslak_notu`, dil uyuşmazlığı.
+- **Normalizasyon:** NFKC + küçük harf (Türkçe İ/ı korunur), boşluk/noktalama/tire, markdown kalıntıları; birim yazımları (`µg`/`ug` → `mcg`, `/d`/`daily` → `/day`, `percent` → `%`); ondalık virgül; müdahale eşanlamlıları yalnızca kesin eşdeğerler (PCI, CABG, DOAC/NOAC, LAAO, VKA, beta-blocker yazımları, aspirin/acetylsalicylic acid, ACE inhibitor).
+- **Girdiler:** varsayılan veritabanı (`cikarma_yontemi = 'rag'`; `--hepsi` ile hepsi). `--jsonl` toplu işin önizlemesini **tabloya yazmadan** inceler (`--jsonl-ile-db` kayıtlı satırlarla birlikte; `--offline` veritabanısız, kaynak kontrolü yok). `--referans` yalnızca `--dry-run` ile çalışır; satırlar `validate_row`'a sokulmadan okunur ve bütün çıktılar "**referans_taslak: doğrulanmamış veri**" etiketini taşır.
+- **`satir_hash` çakışması:** `satir_hash` `taslak_notu`'nu kapsamadığı için aynı adaydan farklı İngilizce sonuçlu iki bulgu tek satıra iner. `--batch-dir`, toplu işin `would_save.jsonl` kayıtlarında aynı hash'e sahip farklı bulguları sayar, kayıtlı satırı `hash_cakismasi_kayip_bulgu` ile işaretler ve `state.jsonl`'daki `zaten_var` ipucunu özete yazar.
+- **Çıktılar** (`data/review/kalite/<zaman>-<mod>/`, git'e girmez): `isaretler.csv` (insan incelemesi için), `isaretler.json`, `gruplar.csv`, `ozet.json` (kategori × seviye sayıları, tekrar grubu, çakışma).
 
 ## Bilinen sınırlar
 
