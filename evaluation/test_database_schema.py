@@ -23,13 +23,16 @@ from src.database import (
 )
 
 
-# Hocaya ait satır sayıları: değişmemeli. makaleler için yalnızca
-# document_id IS NULL satırlar sayılır (bizim makalelerimiz hariç).
+# Hoca tablolarındaki satır sayıları: şema kurulumu bunları değiştirmemeli.
+# makaleler için yalnızca document_id IS NULL satırlar sayılır (bizim
+# makalelerimiz hariç). Hocanın eski verisi temizlendi (README, kurulum
+# adım 6): makaleler/tani_tedavi/sonuclar/semptom_iliskileri'de hocanın
+# satırı yok; icd10_who ve tkd_kurallari referans olarak duruyor.
 EXPECTED_PROTECTED_ROWS = {
-    "makaleler": 5,
-    "tani_tedavi": 392,
-    "sonuclar": 632,
-    "semptom_iliskileri": 18,
+    "makaleler": 0,
+    "tani_tedavi": 0,
+    "sonuclar": 0,
+    "semptom_iliskileri": 0,
     "icd10_who": 43,
     "tkd_kurallari": 15,
 }

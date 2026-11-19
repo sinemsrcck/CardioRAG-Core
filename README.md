@@ -57,7 +57,7 @@ LLM çıkarımı (satırlar, kanıt cümlesi chunk'tan aynen)
  → save_clinical_findings
       geçenler     → klinik_bulgular (review_status = 'pending')
       geçemeyenler → halusinasyon_degerlendirme (query_id verilirse)  src/database.py
- → VIEW'lar: v_tani_tedavi, v_sonuclar (hocanın biçiminde, hocanın satırlarıyla birlikte)
+ → VIEW'lar: v_tani_tedavi, v_sonuclar (hocanın sütun biçiminde; yalnızca kaynak='cardiorag' satırları)
 ```
 
 ## Kurulum
@@ -79,7 +79,7 @@ SOURCE C:/dosyanin/yolu/kardiyo_tam_metin.sql;
 SHOW TABLES;
 ```
 
-`SHOW TABLES` en az şu 6 tabloyu göstermeli: `icd10_who`, `makaleler`, `semptom_iliskileri`, `sonuclar`, `tani_tedavi`, `tkd_kurallari`.
+`SHOW TABLES` en az şu 6 tabloyu göstermeli: `icd10_who`, `makaleler`, `semptom_iliskileri`, `sonuclar`, `tani_tedavi`, `tkd_kurallari`. Bu tablolardaki hocanın eski satırları 6. adımda temizlenecek.
 
 ### 2. PDF'ler
 
@@ -117,20 +117,61 @@ python -m src.load_translations
 - `src.article_metadata --write --tam-metin temiz`: 6 makaleyi `makaleler` tablosuna yeni satır olarak ekler (başlık, dergi, yıl, DOI, abstract, temizlenmiş tam metin). Önce `--dry-run` ile yazmadan görülebilir.
 - `src.load_translations`: Türkçe özeti olmayan 4 makalenin LLM çevirilerini `data/clinical/abstract_translations.json`'dan `makaleler.ozet_tr`'ye yükler. Çeviride `abstract_en`'de olmayan bir sayı varsa o kayıt yazılmaz; PDF'ten gelen orijinal Türkçe özetin üzerine asla yazılmaz. Önce `--dry-run` ile görülebilir; tekrar çalıştırmak bir şey değiştirmez. Bu adım `article_metadata`'dan sonra çalıştırılır; `article_metadata`'yı daha sonra yeniden çalıştırmak çevirileri silmez.
 
+### 6. Hocanın eski verisini temizleme
+
+Bu adım, 5. adımdaki komutların hepsi çalıştıktan sonra yapılır.
+
+Hocanın SQL dosyası tablo yapıları ile `icd10_who` ve `tkd_kurallari` referans verisi için gereklidir; ama içindeki eski makale ve bulgu satırları kullanılmaz (6 PDF baştan indexlenir). Bu yüzden eski satırlar silinir. Hiçbir tablo DROP edilmez; `icd10_who` ve `tkd_kurallari` olduğu gibi kalır.
+
+Önce yedek alınması önerilir (`backups/` git'e girmez; PowerShell'de `>` dosyayı UTF-16 yazacağı için `--result-file` kullanılır):
+
+```powershell
+& "C:\Program Files\MySQL\MySQL Server 8.4\bin\mysqldump.exe" -u root -p --single-transaction --routines --result-file=backups/kardiyo_tam_metin_temizlik_oncesi.sql kardiyo_tam_metin
+```
+
+Sonra MySQL istemcisinde, tek transaction içinde:
+
+```sql
+USE kardiyo_tam_metin;
+SET SQL_SAFE_UPDATES = 0;
+START TRANSACTION;
+
+DELETE FROM sonuclar;
+DELETE FROM semptom_iliskileri;
+DELETE FROM tani_tedavi;
+DELETE FROM makaleler WHERE document_id IS NULL;
+
+-- Kontrol: ilk dört 0, icd10_who 43, tkd_kurallari 15 olmalı.
+SELECT
+  (SELECT COUNT(*) FROM makaleler WHERE document_id IS NULL) AS makaleler_hoca,
+  (SELECT COUNT(*) FROM tani_tedavi)        AS tani_tedavi,
+  (SELECT COUNT(*) FROM sonuclar)           AS sonuclar,
+  (SELECT COUNT(*) FROM semptom_iliskileri) AS semptom_iliskileri,
+  (SELECT COUNT(*) FROM icd10_who)          AS icd10_who,
+  (SELECT COUNT(*) FROM tkd_kurallari)      AS tkd_kurallari;
+
+COMMIT;   -- sayılar yanlışsa COMMIT yerine: ROLLBACK;
+SET SQL_SAFE_UPDATES = 1;
+```
+
+**Bu adımdan sonra hocanın SQL dosyası tekrar yüklenmemelidir**; yüklenirse eski satırlar geri gelir ve testler (`test_database_schema`, `test_ingestion`, `test_makaleler`) başarısız olur.
+
 ## Tablolar
 
-### Hocanın tabloları (dokunulmaz)
+### Hocanın tabloları
 
-| Tablo | İçerik |
-|---|---|
-| `makaleler` | Makale künyesi, özet ve tam metin. Hocanın 5 satırı (`document_id` NULL) değiştirilmez. |
-| `tani_tedavi` | Tanı – tedavi / tanı testi çiftleri, doz, uygulama yolu, kanıt cümlesi ve sayfası. |
-| `sonuclar` | Sonuç ölçütleri: etki türü, değer, %95 GA, p, yön, kanıt. |
-| `semptom_iliskileri` | Semptom – tanı ilişkileri ve kanıt. |
-| `icd10_who` | ICD-10 kod sözlüğü (İngilizce ve Türkçe adlar). |
-| `tkd_kurallari` | Türk Kardiyoloji Derneği terim kuralları. |
+Tablo yapıları hocanın SQL dosyasından gelir. Eski satırlar kurulum adım 6'da temizlendi; kod bu tablolara satır eklemez veya silmez (yalnızca `makaleler`'e bizim 6 makalemiz eklenir) ve testler bu sayıların işlemlerle değişmediğini kontrol eder.
 
-`makaleler`'e yalnızca 5 boş sütun eklendi: `document_id`, `doi`, `abstract_en`, `ozet_tr_kaynak`, `ozet_tr_model`. Bizim 6 makalemiz bu tabloda `document_id` **dolu** satırlardır; hocanın satırlarında `document_id` NULL'dur ve yeni sütunlar boştur.
+| Tablo | İçerik | Durum |
+|---|---|---|
+| `makaleler` | Makale künyesi, özet ve tam metin. | Hocanın satırı yok (`document_id` NULL = 0); yalnızca bizim 6 makalemiz. |
+| `tani_tedavi` | Tanı – tedavi / tanı testi çiftleri, doz, uygulama yolu, kanıt cümlesi ve sayfası. | Boş (0 satır); yalnızca yapı ve `v_tani_tedavi` için sütun biçimi. |
+| `sonuclar` | Sonuç ölçütleri: etki türü, değer, %95 GA, p, yön, kanıt. | Boş (0 satır); yalnızca yapı ve `v_sonuclar` için sütun biçimi. |
+| `semptom_iliskileri` | Semptom – tanı ilişkileri ve kanıt. | Boş (0 satır). |
+| `icd10_who` | ICD-10 kod sözlüğü (İngilizce ve Türkçe adlar). | 43 satır; referans (`validate_row` ICD-10 kontrolü). |
+| `tkd_kurallari` | Türk Kardiyoloji Derneği terim kuralları. | 15 satır; referans. |
+
+`makaleler`'e yalnızca 5 sütun eklendi: `document_id`, `doi`, `abstract_en`, `ozet_tr_kaynak`, `ozet_tr_model`. Bizim 6 makalemiz bu tabloda `document_id` **dolu** satırlardır; `document_id` NULL satır (hocanın eski verisi) artık yoktur.
 
 `ozet_tr_kaynak`, `ozet_tr`'nin nereden geldiğini gösterir:
 
@@ -138,7 +179,7 @@ python -m src.load_translations
 |---|---|---|---|
 | `orijinal` | PDF'te yazarların kendi Türkçe özeti | NULL | 2 TK makalesi (`src.article_metadata`) |
 | `llm_ceviri` | `abstract_en`'in LLM çevirisi; sayılar kontrol edildi, insan onaylı değil | çeviriyi yapan model (`gpt-6-luna`) | AF, OHCA, troponin, KAH (`src.load_translations`) |
-| NULL | Türkçe özet yok | NULL | hocanın satırları |
+| NULL | Türkçe özet yok | NULL | — (şu an böyle satır yok) |
 
 ### Bizim tablolarımız (`sql/schema_core.sql`)
 
@@ -157,8 +198,8 @@ python -m src.load_translations
 
 | VIEW | İçerik |
 |---|---|
-| `v_tani_tedavi` | `tani_tedavi` (hoca) + `klinik_bulgular` (bizim), hocanın sütun adlarıyla; ek sütunlar `kaynak` (`hoca` / `cardiorag`), `review_status`, `cikarma_yontemi`. |
-| `v_sonuclar` | `sonuclar` (hoca) + `klinik_bulgular`'daki sonuç ölçütü olan satırlar; aynı ek sütunlar. |
+| `v_tani_tedavi` | `tani_tedavi` (hoca) + `klinik_bulgular` (bizim), hocanın sütun adlarıyla; ek sütunlar `kaynak` (`hoca` / `cardiorag`), `review_status`, `cikarma_yontemi`. `tani_tedavi` boş olduğundan şu an yalnızca `kaynak = 'cardiorag'` satırları vardır. |
+| `v_sonuclar` | `sonuclar` (hoca) + `klinik_bulgular`'daki sonuç ölçütü olan satırlar; aynı ek sütunlar. `sonuclar` boş olduğundan şu an yalnızca `kaynak = 'cardiorag'` satırları vardır. |
 
 ## Önemli fonksiyonlar
 
@@ -223,13 +264,13 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 
 Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılır.
 
-**MySQL gerektirenler** (`.env` ve kurulum adım 5 tamamlanmış olmalı):
+**MySQL gerektirenler** (`.env` ve kurulum adım 5 ile 6 tamamlanmış olmalı):
 
 | Test | Ne yapar |
 |---|---|
-| `test_database_schema` | `init_schema`'yı iki kez çalıştırır; tabloları, sütunları, VIEW'ları ve hoca tablolarının satır sayılarını kontrol eder. |
-| `test_ingestion` | `src.ingest`'i iki kez çalıştırır (satır sayısı artmamalı); chunk, embedding ve `load_chunks_for_rag` çıktısını doğrular. Birkaç dakika sürer. |
-| `test_makaleler` | Hocanın 5 satırının değişmediğini (hash), bizim 6 satırı, `ozet_tr_kaynak` dağılımını (`orijinal` yalnızca TK, 4 `llm_ceviri` + model), ikinci yazımda çoğalma olmadığını ve çevirilerin silinmediğini kontrol eder. Not: bizim 6 satırı aynı değerlerle yeniden yazar. |
+| `test_database_schema` | `init_schema`'yı iki kez çalıştırır; tabloları, sütunları, VIEW'ları ve hoca tablolarının satır sayılarının işlemden önce ve sonra aynı ve temizlik sonrası değerlerde olduğunu kontrol eder (`makaleler` `document_id` NULL, `tani_tedavi`, `sonuclar`, `semptom_iliskileri` = 0; `icd10_who` = 43; `tkd_kurallari` = 15). |
+| `test_ingestion` | `src.ingest`'i iki kez çalıştırır (satır sayısı artmamalı); chunk, embedding ve `load_chunks_for_rag` çıktısını doğrular; hoca tablolarının satır sayılarını aynı değerlerle kontrol eder. Birkaç dakika sürer. |
+| `test_makaleler` | Hocanın satırı (`document_id` NULL) olmadığını ve işlemlerden önce/sonra parmak izinin aynı kaldığını, bizim 6 satırı, `ozet_tr_kaynak` dağılımını (`orijinal` yalnızca TK, 4 `llm_ceviri` + model), ikinci yazımda çoğalma olmadığını ve çevirilerin silinmediğini kontrol eder. Not: bizim 6 satırı aynı değerlerle yeniden yazar. |
 | `test_rag_kayit` | `save_rag_result`'ı gerçek `answer_question` (`use_llm=False`) çıktısıyla dener; reranker yer tutucuyla değiştirilir, model indirmez. Bütün yazımlar geri alınır. |
 | `test_klinik_bulgular` | Referans taslağı `save_clinical_findings` ile yazar, bozuk satırların reddini, VIEW sayılarını ve hoca tablolarını kontrol eder. Bütün yazımlar geri alınır. |
 

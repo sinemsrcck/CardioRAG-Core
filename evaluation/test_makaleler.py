@@ -10,18 +10,15 @@ makaleler tablosuna eklenen PDF makaleleri testi.
     python -m src.load_translations
 Bu test yazımı bir kez daha çalıştırır (aynı değerlerle upsert) ve satır
 sayısının artmadığını, LLM çevirilerinin silinmediğini ve hocanın
-satırlarının değişmediğini doğrular.
+satırlarının (document_id IS NULL) oluşmadığını/değişmediğini doğrular.
 """
 
-import hashlib
-import json
 import sys
 
 from src.article_metadata import (
     INTERPRETIVE_COLUMNS,
     MANAGED_COLUMNS,
     OZET_TR_COLUMNS,
-    _as_text,
     build_all,
     columns_to_write,
     professor_rows_fingerprint,
@@ -37,14 +34,10 @@ from src.load_translations import (
 )
 
 
-# Hocanın 5 satırının parmak izi (bütün sütunlar, makale_id sırasıyla, SHA-256).
-# ozet_tr_kaynak/ozet_tr_model sütunları eklenince SELECT * değiştiği için
-# yenilendi; veri aynı: bu iki sütun hariç alınan iz, ilk --write'tan ÖNCE
-# alınmış izle (PROFESSOR_BASELINE_OLD_COLUMNS) birebir aynı.
-PROFESSOR_BASELINE = (5, "76302767d206ab75ca9eb84f0b13399e61848f64014de7e9a4725ef7d85f57d2")
-PROFESSOR_BASELINE_OLD_COLUMNS = (
-    5, "433d90bef85bc651fc975ad6234b36c4214e0e35f7cf98722f3289526f946ad2")
-NEW_OZET_COLUMNS = ("ozet_tr_kaynak", "ozet_tr_model")
+# Hocanın eski 5 satırı (document_id IS NULL) temizlendi (README, kurulum
+# adım 6); bu tabloda hocanın satırı olmamalı. Sabit bir hash tutulmaz:
+# professor_rows_fingerprint işlemlerden önce ve sonra alınıp karşılaştırılır.
+EXPECTED_PROFESSOR_ROWS = 0
 
 EXPECTED_OUR_ROWS = 6
 EXPECTED_LLM_ROWS = 4
@@ -74,19 +67,6 @@ def our_rows(cursor):
     return rows
 
 
-def professor_rows_old_columns(cursor):
-    """Hocanın satırları: yeni ozet sütunları hariç parmak izi + yeni sütunlar NULL mu."""
-    cursor.execute("SELECT * FROM makaleler WHERE document_id IS NULL ORDER BY makale_id")
-    columns = [d[0] for d in cursor.description]
-    rows = [dict(zip(columns, (_as_text(v) for v in row))) for row in cursor.fetchall()]
-    payload = [{c: (None if v is None else str(v)) for c, v in row.items()
-                if c not in NEW_OZET_COLUMNS} for row in rows]
-    digest = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    new_all_null = all(row[c] is None for row in rows for c in NEW_OZET_COLUMNS)
-    return (len(rows), digest), new_all_null
-
-
 def ozet_snapshot(rows):
     return {r["document_id"]: tuple(r[c] for c in OZET_TR_COLUMNS) for r in rows}
 
@@ -103,14 +83,9 @@ def main():
     conn.autocommit = True
     cursor = conn.cursor()
 
-    # 1) Hocanın satırları ilk yazımdan önceki haliyle birebir aynı.
-    check("hocanın satırları (önce)", PROFESSOR_BASELINE[1][:16] + "…",
-          professor_rows_fingerprint(cursor)[1][:16] + "…",
-          professor_rows_fingerprint(cursor) == PROFESSOR_BASELINE)
-    old_print, new_all_null = professor_rows_old_columns(cursor)
-    check("hocanın satırları (yeni sütunlar hariç) = ilk iz", PROFESSOR_BASELINE_OLD_COLUMNS[1][:16] + "…",
-          old_print[1][:16] + "…", old_print == PROFESSOR_BASELINE_OLD_COLUMNS)
-    check("hocanın satırlarında ozet_tr_kaynak/model NULL", True, new_all_null)
+    # 1) Hocanın satırı (document_id IS NULL) yok; parmak izi sonra karşılaştırılır.
+    professor_before = professor_rows_fingerprint(cursor)
+    check("hocanın satırları (önce): satır", EXPECTED_PROFESSOR_ROWS, professor_before[0])
 
     # 2) Bizim satırlarımız.
     rows = our_rows(cursor)
@@ -187,9 +162,10 @@ def main():
           "aynı" if ozet_snapshot(after_rows) == ozet_snapshot(rows) else "farklı")
     check("2. yazım sonrası llm_ceviri satır", EXPECTED_LLM_ROWS,
           sum(r["ozet_tr_kaynak"] == "llm_ceviri" for r in after_rows))
-    check("hocanın satırları (sonra)", PROFESSOR_BASELINE[1][:16] + "…",
-          professor_rows_fingerprint(cursor)[1][:16] + "…",
-          professor_rows_fingerprint(cursor) == PROFESSOR_BASELINE)
+    professor_after = professor_rows_fingerprint(cursor)
+    check("hocanın satırları (sonra): satır", EXPECTED_PROFESSOR_ROWS, professor_after[0])
+    check("hocanın satırları: parmak izi önce = sonra", professor_before[1][:16] + "…",
+          professor_after[1][:16] + "…", professor_after == professor_before)
 
     # 5) Senaryo (transaction + ROLLBACK, veritabanı değişmez): çeviriler --init'ten
     #    önce yüklenmiş, ozet_tr dolu ama ozet_tr_kaynak/model NULL. Metni JSON'la
@@ -234,8 +210,10 @@ def main():
         replans = build_plan(scur, load_entries(DEFAULT_FILE))
         check("senaryo: tekrar planla -> zaten_ayni", len(same_ids),
               sum(p["durum"] == "zaten_ayni" for p in replans))
+        scenario_fp_after = professor_rows_fingerprint(scur)
         check("senaryo: hocanın satırları (transaction içinde)", True,
-              professor_rows_fingerprint(scur) == scenario_fp == PROFESSOR_BASELINE)
+              scenario_fp_after == scenario_fp == professor_before
+              and scenario_fp_after[0] == EXPECTED_PROFESSOR_ROWS)
     finally:
         scenario.rollback()
         scur.close()
