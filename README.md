@@ -263,7 +263,8 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 | `run_clinical_batch.py` | Toplu iş CLI'si: ilerleme, devam etme, önbellek, kilit, loglar (bkz. [Klinik çıkarım toplu işi](#klinik-çıkarım-toplu-işi)). |
 | `data_quality.py` | `klinik_bulgular` için tekrar / sayısal / kaynak / tutarlılık işaretleri; `kalite_isaretleri`'ne yazar, bulgulara dokunmaz (bkz. [Veri kalitesi](#veri-kalitesi)). |
 | `gold_set.py` | Gold set: alan listesi, deterministik katmanlı örneklem, etiketleme xlsx'i üretme/okuma, insan etiketlerinin doğrulanması. |
-| `evaluate_extraction.py` | Gold set'e karşı alan bazında P/R/F1 (ham ve doğrulanmış seviye, birebir/gevşek), rapor ve CLI (bkz. [Çıkarım değerlendirmesi](#çıkarım-değerlendirmesi)). |
+| `evaluate_extraction.py` | Gold set'e karşı alan bazında P/R/F1 (ham ve doğrulanmış seviye, birebir/gevşek; `insan_dogrulanmis` ve `llm_etiketli` ayrı kümeler), rapor ve CLI (bkz. [Çıkarım değerlendirmesi](#çıkarım-değerlendirmesi)). |
+| `sunum.py` | Sunum VIEW'ları, `cikarim_reddedilenler` / `hata_onlem` tabloları, `kaynak_bul` procedure'ü ve red kayıt yazıcısı (`python -m src.sunum --kur`; bkz. [Hocaya gösterim](#hocaya-gösterim)). |
 
 ## Testler (`evaluation/`)
 
@@ -280,7 +281,8 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_klinik_bulgular` | Referans taslağı `save_clinical_findings` ile yazar, bozuk satırların reddini, VIEW sayılarını ve hoca tablolarını kontrol eder. Bütün yazımlar geri alınır. |
 | `test_clinical_pipeline` | Klinik çıkarım toplu işi, sahte LLM ile: aday ayırma, bulgu bazında red, `procedure` senaryoları, otomatik doğrulama izi, `alan_cok_uzun`, `<think>`/HTTP 400 ve `--max-tokens-param` davranışı, devam etme, kilit, `--no-save`, `--mock`, `--from-cache` (iki "bilgisayarda" aynı satırlar), `--dry-run`. Bütün yazımlar geri alınır; sonda sayılar karşılaştırılır. |
 | `test_data_quality` | Veri kalitesi: normalizasyon, her kontrol için pozitif/negatif örnek, determinizm (ters ekleme sırası → aynı `grup_id`), sürüm hash'i, `satir_hash` çakışması, JSONL ve `--referans` modlarının tabloya yazmaması. Kalite tabloları yoksa transaction dışında kurar; sahte satırlar geri alınır. |
-| `test_evaluate_extraction` | Çıkarım değerlendirmesi: elle hesaplanmış örnekle birebir TP/FP/FN/P/R/F1, birebir/gevşek mod, eşleme, "bulgu yok", yalnız `dogrulandi` adaylar, yanıtsız aday, örneklem determinizmi, xlsx üret-oku turu (Türkçe karakter), ham vs doğrulanmış, `--mock` raporu. Veritabanına yazmaz. |
+| `test_evaluate_extraction` | Çıkarım değerlendirmesi: elle hesaplanmış örnekle birebir TP/FP/FN/P/R/F1, birebir/gevşek mod, eşleme, "bulgu yok", yalnız `dogrulandi` adaylar, yanıtsız aday, örneklem determinizmi, xlsx üret-oku turu (Türkçe karakter), ham vs doğrulanmış, `--mock` raporu, `llm_etiketli` / `dogrulandi` ayrımı. Veritabanına yazmaz. |
+| `test_sunum` | Değer alanları (p, GA, örneklem, etki ölçütü, ICD) pozitif/negatif ve gerçek adaylarla `validate_row`; tablo bulgusunda değer alanlarının yazılmaması; `--json-mode`; reddedilenler tablosuna deterministik ve tekrar etmeyen yazım; VIEW'lar ve `kaynak_bul` (harf duyarsız, joker ve SQL injection kapalı); `--mock` / `--no-save` kalıcı yazmaz. Sunum şeması yoksa transaction dışında kurar; yazımlar geri alınır. |
 
 **MySQL gerektirmeyenler:**
 
@@ -321,7 +323,9 @@ python -m evaluation.chunk_remap_report
 `src.clinical_candidates`'in 660 adayını LLM ile işler; `validate_row`'dan geçen bulgular `klinik_bulgular`'a **`review_status = 'pending'`** ile yazılır. İnsan onayı üretilmez; otomatik atanan değerler (`mudahale_turu`, dil, `chunk_id` seçimi, tablo alıntısının genişletilmesi) `taslak_notu.otomatik_alanlar`'da işaretlenir.
 
 - **Yanıt şeması:** `clinical_extraction.FIELDS` + `procedure` (adı açıkça geçen girişimsel/cerrahi/cihaz işlemi: catheter ablation, PCI, CABG, stent, cardioversion, LAAO…). Bir bulguda `drug`, `procedure`, `diagnostic_method`'dan **tam olarak biri** dolu olmalıdır: hiçbiri yoksa `mudahale_alani_yok`, birden fazlaysa `birden_fazla_mudahale` ile reddedilip loglanır. `procedure` → `mudahale_<dil>`, `mudahale_turu = 'tedavi'`; `diagnostic_method` → `'tanı testi'`; `drug` → `'tedavi'`. Her dolu alan (procedure dahil) alıntıda birebir geçmelidir; `procedure` ayrıldıktan sonra bulgu mevcut `_validate_response`'tan aynen geçer.
-- **Sürüm:** `pipeline_version` = `clinical-pipeline-v1-<prompt+şema hash'i>`. Prompt veya şema değişince kendiliğinden değişir; önceki sürümün `state.jsonl` kayıtları ve `responses/<eski sürüm>/` önbelleği kullanılmaz (adaylar yeniden işlenir, eski satırlar silinmez). `procedure` eklenmesiyle sürüm değişti; önceki sürümle alınmış yanıtlar yeni sürümde geçersizdir.
+- **Değer alanları:** `p_value` → `p`, `confidence_interval` → `ci95` (alıntıdaki metin aynen); `sample_size` → `hasta_sayisi` (deterministik tamsayı: "n = 372", "372 patients" → 372; "1,234 patients" gibi binlik ayırıcılı değer `validate_row`'un sayı kontrolüyle çakıştığı için **yazılmaz**, ham değer ve sayı `taslak_notu.deger_alanlari`'nda); `effect_measure` → `etki_turu` (sabit eşleme `etki-esleme-v1`: odds ratio → OR, risk ratio → RR, hazard ratio → HR, incidence rate ratio → IRR, AUC / C-statistic → "AUC / C-istatistigi"; eşleşmezse boş, ham metin notta). `icd10`: tanı adı `icd10_who`'daki İngilizce veya Türkçe adla normalize **birebir** eşitse kod; birden fazla kod eşleşirse boş; fuzzy yok. Hepsi alıntıda birebir olmalıdır. `yon` ve `outcome_type` çıkarımla doldurulmaz (yalnız CCT öneri tablosunda `outcome_type = 'öneri'`, otomatik işaretli).
+- **Tablo bulgularında değer alanları sütunlara yazılmaz:** tipli tablo kuralı bu alanların hangi sütundan geldiğini doğrulayamaz. Değerler `taslak_notu.tablo_yazilmayan_alanlar`'a "tablo: yeni alanlar sütun kaynağı doğrulanamadığı için yazılmadı" notuyla konur, `otomatik_alanlar`'da işaretlenir ve `summary.json`'da `tablo_yeni_alan_yazilmadi` olarak sayılır; bulgunun geri kalanı tipli tablo kuralından geçerse normal kaydedilir.
+- **Sürüm:** `pipeline_version` = `clinical-pipeline-v1-<prompt+şema hash'i>`. Prompt veya şema değişince kendiliğinden değişir; önceki sürümün `state.jsonl` kayıtları ve `responses/<eski sürüm>/` önbelleği kullanılmaz (adaylar yeniden işlenir, eski satırlar silinmez). Değer alanlarının eklenmesiyle sürüm yine değişti (şu an `clinical-pipeline-v1-a8c57cae5612`); önceki sürümle alınmış yanıtlar geçersizdir.
 - **Otomatik doğrulama izi:** kaydedilecek her satırın `taslak_notu.otomatik_dogrulama` alanında geçtiği kontrollerin listesi (alıntı ve alanlar birebir, güvenli parça içinde, `validate_source`, `validate_row`: ilişki / değer kümeleri / ICD / kanıt sayfada / sayılar kanıtta, sütun sınırı), kontrol sürümleri ve `"insan_onayi": "yok"` bulunur. Zaman damgası içermez; aynı önbellekle her bilgisayarda aynıdır. Otomatik kontroller klinik doğruluğu kanıtlamaz.
 
 ```powershell
@@ -332,7 +336,7 @@ python -m src.run_clinical_batch                        # gerçek LLM; kayıt (k
 python -m src.run_clinical_batch --from-cache           # LLM yok; önbellekteki yanıtlardan kayıt
 ```
 
-- **LLM'e gitmeden ayrılanlar** (sebebiyle `excluded.jsonl`'a yazılır): başlık satırları (24), sayfa aşan cümleler (18), karmaşık tablolar (16) ve doğrulanabilir parçasında kalıp kalmayanlar (`guvenli_parca_yok`). Kalan 601 aday LLM'e gider (aday başına bir çağrı).
+- **LLM'e gitmeden ayrılanlar** (sebebiyle `excluded.jsonl`'a ve `cikarim_reddedilenler`'e yazılır): makale metaverisi (7; `clinical_candidates.mark_article_metadata`, makale başlığı `makaleler.baslik`'tan iletilir), başlık satırları (22), sayfa aşan cümleler (18), karmaşık tablolar (16) ve doğrulanabilir parçasında kalıp kalmayanlar (`guvenli_parca_yok`, 1). Kalan 596 aday LLM'e gider (aday başına bir çağrı).
 - **Güvenli alıntı parçaları:** `validate_row` kanıtı markdown'u temizlenmiş sayfada, `validate_source` ham chunk'ta arar. LLM'e, aday cümlesinin ikisinde de birebir geçen parçaları (`allowed_quote_spans`) verilir; alıntı tek bir parçanın içinde olmalıdır. Alıntı birden fazla chunk'ta geçiyorsa en küçük `chunk_index`'li chunk seçilir.
 - **Hata yönetimi:** bir bulgunun reddi yalnızca o bulguyu, bozuk yanıt veya API hatası yalnızca o adayı etkiler (geçici hatalar 3 kez yeniden denenir). İş yalnızca ayar hatalarında, HTTP 400/422'de (olası sebepler: `enable_thinking`, `json_object` desteği veya `max_completion_tokens` parametresi; mesaj hangi seçenekle deneneceğini söyler) ve üst üste 5 aday hatasında durur; aynı komut kaldığı yerden devam eder. Sütun sınırını aşan satır `alan_cok_uzun` ile reddedilir.
 
@@ -348,6 +352,7 @@ python -m src.run_clinical_batch --from-cache           # LLM yok; önbellekteki
 | `--force` | İlk çalıştırma kuralını aş |
 | `--think` / `--no-think` | Qwen3 thinking (varsayılan `--no-think`: `enable_thinking=false` gönderilir; `<think>` blokları her durumda ayıklanır) |
 | `--max-tokens-param {max_completion_tokens,max_tokens}` | Token sınırı parametresinin adı (varsayılan `max_completion_tokens`; eski sunucular `max_tokens` ister) |
+| `--json-mode {json_object,none}` | `none`: `response_format` gönderilmez (bazı sunucularda uzun klinik cümlelerde HTTP 500 görüldü); yanıt yine aynı JSON kurallarıyla ayrıştırılıp doğrulanır. Sürüme ve önbellek anahtarına girmez; önbellek dosyasına ve `summary.json`'a yazılır |
 | `--model`, `--timeout`, `--max-retries`, `--max-consecutive-errors` | Model adı (varsayılan `.env` `LLM_MODEL`) ve sınırlar |
 | `--unlock` | Kalmış kilit dosyasını siler |
 
@@ -361,21 +366,23 @@ python -m src.run_clinical_batch --from-cache           # LLM yok; önbellekteki
 - `run.lock`: PID, makine ve zaman; sahibi çalışmayan kilit otomatik temizlenir.
 - `--mock` çıktıları `mock/` alt klasörüne gider; gerçek `state.jsonl` ve önbelleğe dokunmaz.
 
-Reddedilen bulgular şimdilik yalnızca `rejected.jsonl`'dadır (veritabanına alınmaz). `LLM_API_KEY` dolu olmalıdır; yerel sunucu anahtarsız çalışıyorsa herhangi bir değer (ör. `local`) yazılabilir.
+**Reddedilenler veritabanında:** gerçek LLM ve `--from-cache` koşuları, LLM öncesi ayrılan adayları (`on_eleme`) ve doğrulamadan geçemeyen bulguları (`yanit_dogrulama`, `satir_olusturma`, `validate_row`, `save`) `cikarim_reddedilenler` tablosuna da yazar (`rejected.jsonl` aynen kalır). Aday redleri kayıtla aynı transaction'da yazılır; `satir_hash` çalıştırma kimliği ve zamandan bağımsızdır, `UNIQUE` + `INSERT IGNORE` ile aynı red ikinci kez yazılmaz. `--mock`'ta yazım geri alınır; `--no-save` ve `--dry-run` yazmaz. Bozuk JSON / kapanmamış `<think>` gibi iletim hataları yalnızca `errors.jsonl`'dadır. Tablo yoksa iş LLM çağrısından önce durur: **önce bir kez `python -m src.sunum --kur`**. `LLM_API_KEY` dolu olmalıdır; yerel sunucu anahtarsız çalışıyorsa herhangi bir değer (ör. `local`) yazılabilir.
 
 **LLM'i çalıştıran kişi için:**
 
 1. Kurulumu yapın (adım 1–6; aynı 6 PDF, aynı kod sürümü) ve `.env`'de `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`'i doldurun.
-2. Deneme: `python -m src.run_clinical_batch --limit 20 --no-save`
-3. `data/review/clinical_batch/runs/<run_id>/` altındaki `would_save.jsonl` ve `rejected.jsonl`'a bakın; sorun yoksa devam edin.
-4. Tam koşu: `python -m src.run_clinical_batch --no-save` (kesilirse aynı komut kaldığı yerden devam eder; kendi veritabanınıza da yazmak isterseniz `--no-save` olmadan çalıştırın).
-5. `data/review/clinical_batch/responses/` klasörünü zip'leyip gönderin.
+2. Kendi veritabanınıza da yazacaksanız (`--no-save` olmadan) bir kez: `python -m src.sunum --kur` (yalnız `--no-save` ile çalışacaksanız gerekmez).
+3. Deneme: `python -m src.run_clinical_batch --limit 20 --no-save` (sunucu uzun cümlelerde HTTP 500 verirse `--json-mode none` ile deneyin).
+4. `data/review/clinical_batch/runs/<run_id>/` altındaki `would_save.jsonl` ve `rejected.jsonl`'a bakın; sorun yoksa devam edin.
+5. Tam koşu: `python -m src.run_clinical_batch --no-save` (kesilirse aynı komut kaldığı yerden devam eder; kendi veritabanınıza da yazmak isterseniz `--no-save` olmadan çalıştırın).
+6. `data/review/clinical_batch/responses/` klasörünü zip'leyip gönderin.
 
 **Önbellekten yükleyen kişi için:**
 
-1. Zip'i `data/review/clinical_batch/responses/` olacak şekilde açın.
-2. Kontrol: `python -m src.run_clinical_batch --from-cache --dry-run` (`onbellekte_yok` 0'a yakın olmalı; yüksekse PDF'ler veya kod sürümü farklıdır).
-3. Kayıt: `python -m src.run_clinical_batch --from-cache`
+1. Bu veritabanında bir kez: `python -m src.sunum --kur` (reddedilenler tablosu ve sunum VIEW'ları; yoksa kayıt adımı açık bir mesajla durur).
+2. Zip'i `data/review/clinical_batch/responses/` olacak şekilde açın.
+3. Kontrol: `python -m src.run_clinical_batch --from-cache --dry-run` (`onbellekte_yok` 0'a yakın olmalı; yüksekse PDF'ler veya kod sürümü farklıdır).
+4. Kayıt: `python -m src.run_clinical_batch --from-cache`
 
 ## Veri kalitesi
 
@@ -422,6 +429,8 @@ python -m src.evaluate_extraction --degerlendir --mock                 # sahte L
 ```
 
 - **Gold set yalnızca insan tarafından doğrulanır.** Kod hiçbir satırı `dogrulandi` yapmaz; üretilen xlsx'te her satır `taslak` başlar, referans taslaktan gelen değerler sarı ve "referans_taslak (doğrulanmadı)" işaretlidir. Yalnızca `durum = dogrulandi` ve hatasız adaylar metriğe girer. `data/clinical/gold_set.json` git'e girer; xlsx ve raporlar `data/review/` altındadır (git'e girmez).
+- **`llm_etiketli` durumu:** yapay zekânın (PDF'e bakarak) doldurduğu, insan doğrulaması olmayan adaylar. Değerlendirmede iki ayrı küme raporlanır ve asla karıştırılmaz: **`insan_dogrulanmis`** (yalnız `dogrulandi`) ve **`llm_etiketli`**. İkincisi her yerde "*yapay zekâ etiketli, insan doğrulaması yok; sonuç sistem-etiketleyici uyumudur, gerçek doğruluk değildir*" uyarısıyla basılır; ayrı bir hash'i vardır ve insan `gold_hash`'ini etkilemez. `dogrulandi` yalnızca elle kontrol eden insan tarafından yazılır.
+- `p`, `ci95`, `hasta_sayisi` ve `etki_turu` artık sistem tarafından çıkarıldığı için değerlendirilir; yalnız `icd10` (tanıdan türetilir, gold'da sütunu yok) "değerlendirilemez".
 - **Birim = aday cümlesi.** Bir adayın bütün bulguları etiketlenir; bulgusu yoksa `bulgu_yok = EVET`. Değerler aday cümlesinden **birebir** kopyalanır (cümlede geçmeyen değer uyarı verir); bir bulgu = tek müdahale. Referansın cümlede birebir geçmeyen önerileri `taslak_referans` sütunundadır. Var olan xlsx'in üzerine yazılmaz; `gold_set.json` varsa yeni dosya ondaki etiket ve durumlarla doldurulur.
 - **Örneklem** (`--n 60 --seed 42`): LLM'e giden adaylardan ~2/3 referans taslakla eşleşenlerden, ~1/3 diğerlerinden; her havuzda (dosya, `kaynak_turu`) katmanlarına orantılı, her katmandan en az 1; katman içinde `sha256(seed|aday_id)` sırası (deterministik).
 - **Alan listesi** tek yerde: `src/gold_set.py` `GOLD_FIELDS`. Sistemin henüz çıkarmadığı alanlar (`p`, `ci95`, `hasta_sayisi`, `etki_turu`, `icd10`) etiketlenir ama "değerlendirilemez" raporlanır ve ortalamalara girmez; çıkarıma eklenince yalnızca o satırdaki eşleme doldurulur.
@@ -430,6 +439,60 @@ python -m src.evaluate_extraction --degerlendir --mock                 # sahte L
 - **Sayım** (alan f): eşlenmiş çiftte ikisi dolu ve eşit → TP; ikisi dolu ve farklı → FP + FN; yalnız sistem dolu → FP; yalnız gold dolu → FN; eşlenmemiş sistem bulgusunun dolu alanları FP, eşlenmemiş gold bulgusununkiler FN. P = TP/(TP+FP), R = TP/(TP+FN), F1 = 2PR/(P+R); 0/0 → tanımsız. Micro = aktif alanların toplamı; macro = tanımlı F1'lerin ortalaması; ayrıca bulgu ve aday ("bulgu yok" isabeti) düzeyi. **Birebir** (ana) ve **gevşek** (içerme veya token Jaccard ≥ 0.5) mod; micro F1 için seed'li bootstrap %95 aralığı (`--bootstrap 1000`, 0 = kapalı).
 - **Yanıtı olmayan gold adayları** (önbellekte yok / LLM'e gitmeyen) raporda listelenir: ana metrik yanıtı olan adaylar üzerindendir, "konservatif" satırda boş çıktı (FN) sayılırlar.
 - **Rapor** (`data/review/degerlendirme/<zaman>-<kaynak>/`): `metrics.json` (sürümler: `pipeline_version`, model, `gold_hash`, alan listesi ve normalizasyon sürümü), `alanlar.csv`, `kirilim.csv` (makale ve `kaynak_turu`), `hatalar.csv` (FP/FN/yanlış değer örnekleri).
+
+## Hocaya gösterim
+
+**Kurulum (her veritabanında bir kez; tekrar çalıştırılabilir):**
+
+```powershell
+python -m src.sunum --kur
+```
+
+Kurar: `cikarim_reddedilenler`, `hata_onlem` (hata türü → halüsinasyon türü → önlem eşlemesi, `onlem-v1`), kalite tabloları, `v_bulgu_notu`, `v_cardiorag_bulgular`, `v_bulgu_kaynak`, `v_halusinasyon_onlemleri` VIEW'ları ve `kaynak_bul(arama)` procedure'ü. `klinik_bulgular`'ın yapısına, `v_tani_tedavi` / `v_sonuclar`'a ve `halusinasyon_degerlendirme`'ye dokunmaz. Tablolar model koşusu (`python -m src.run_clinical_batch` veya `--from-cache`) ve kalite koşusundan (`python -m src.data_quality`) sonra dolar. Bütün satırlar `review_status = 'pending'`; İngilizce sonuçlar çevrilmemiştir (`sonuc_kaynagi` sütunu belirtir).
+
+MySQL Workbench'te:
+
+```sql
+USE kardiyo_tam_metin;
+
+-- 1) Bütün bulgular, kaynağıyla (PDF, başlık, sayfa, DOI)
+SELECT bulgu_id, filename, makale_basligi, sayfa, kanit_turu, COALESCE(mudahale_tr, mudahale_en) AS mudahale,
+       mudahale_turu, tani, icd10, hasta_grubu, hasta_sayisi, doz, sonuc, sonuc_kaynagi, etki_turu, deger, unit,
+       ci95, p, review_status, doi_link
+FROM v_cardiorag_bulgular ORDER BY filename, sayfa;
+
+-- 2) Tanı testleri
+SELECT filename, sayfa, COALESCE(mudahale_tr, mudahale_en) AS tani_yontemi, tani, icd10, hasta_grubu, deger, unit, kanit_cumle
+FROM v_cardiorag_bulgular WHERE mudahale_turu = 'tanı testi' ORDER BY filename, sayfa;
+
+-- 3) Tedaviler (ilaç ve girişimsel işlem)
+SELECT filename, sayfa, COALESCE(mudahale_tr, mudahale_en) AS tedavi, doz, sure, hasta_grubu, comparator, sonuc, kanit_cumle
+FROM v_cardiorag_bulgular WHERE mudahale_turu IN ('tedavi', 'arka plan tedavisi') ORDER BY filename, sayfa;
+
+-- 4) Sonuçlar (değer, %95 GA, p, örneklem)
+SELECT filename, sayfa, COALESCE(mudahale_tr, mudahale_en) AS mudahale, sonuc, sonuc_kaynagi, etki_turu, deger, unit,
+       ci95, p, hasta_sayisi
+FROM v_cardiorag_bulgular WHERE sonuc IS NOT NULL OR deger IS NOT NULL OR p IS NOT NULL ORDER BY filename, sayfa;
+
+-- 5) Halüsinasyon önlemleri: hangi hata kaç kez yakalandı, hangi önlemle (hepsi kayda girmedi)
+SELECT halusinasyon_turu, uygulanan_onlem, hata_turu, alt_tur, asama, yakalanan, sonuc, ornek_dosya, ornek_sayfa, ornek_cumle
+FROM v_halusinasyon_onlemleri ORDER BY yakalanan DESC;
+
+SELECT asama, COUNT(*) AS kayda_girmeyen FROM cikarim_reddedilenler GROUP BY asama ORDER BY kayda_girmeyen DESC;
+
+-- 6) Kaynak bulma: müdahale / tanı / hasta grubu / sonuç / kanıt cümlesinde arar (büyük/küçük harf duyarsız)
+CALL kaynak_bul('apixaban');
+
+-- Tek bir bulgunun izi: PDF, sayfa, chunk, kanıt ve aday cümlesi, geçtiği otomatik kontroller, sürüm, model
+SELECT * FROM v_bulgu_kaynak WHERE bulgu_id = 1;
+
+-- 7) Kalite işaretleri (önce: python -m src.data_quality)
+SELECT * FROM v_kalite_bulgu ORDER BY hata_sayisi DESC, uyari_sayisi DESC;
+SELECT kategori, seviye, kontrol_kodu, COUNT(*) AS sayi FROM v_kalite_ozet
+GROUP BY kategori, seviye, kontrol_kodu ORDER BY sayi DESC;
+```
+
+`kaynak_bul` arama metnini yalnızca değer olarak kullanır (dinamik SQL yok); `%`, `_` ve `\` joker değil, düz karakterdir.
 
 ## Bilinen sınırlar
 
@@ -442,7 +505,9 @@ python -m src.evaluate_extraction --degerlendir --mock                 # sahte L
 - **`data/clinical/referans_taslak.json` doğrulanmamıştır.** Aday cümlelerden hazırlanmış bir karşılaştırma referansıdır (`meta.durum = "dogrulanmamis_referans"`); insan kontrolünden geçmemiştir ve `klinik_bulgular`'a doğrudan girmez.
 - **Klinik çıkarımda `satir_hash` `taslak_notu`'nu kapsamıyor.** Aynı kanıttan, SQL sütunları aynı ama yalnızca `taslak_notu`'ndaki alanlarda (ör. İngilizce sonuç ölçütü) farklı iki bulgu tek satıra iner; ikincisi `zaten_var` sayılır.
 - **İngilizce sonuç ölçütleri VIEW'larda görünmez.** `clinical_outcome` yalnızca Türkçe kaynakta `sonuc_olcutu_tr`'ye yazılır; İngilizce olanlar `taslak_notu.extracted_fields`'tadır, `v_tani_tedavi` / `v_sonuclar` bunları göstermez.
-- **Tablo satırlarından klinik bulgu şu an kaydedilemiyor.** `validate_row`'un ilişki kontrolü tablo satırında ilacı/müdahaleyi "drug / intervention / treatment" başlıklı bir sütunda arıyor; 31 basit tablonun hiçbirinde böyle bir sütun yok. Sahte LLM ile 31 tablo adayından çıkan 23 bulgunun hepsi `clinical_relationship_uncertain` ile reddedildi (`test_clinical_pipeline` her koşuda raporlar).
+- **Tablo bulguları yalnızca tipli tablo ailelerinin kabul ettiği biçimde kaydedilebiliyor.** 31 basit tablo satırından: `ischemic_group_variables` (13 satır; tanı yöntemi + grup başlığı + o sütunun değeri) 3 satır `validate_row`'dan geçebiliyor; `study_summary` (13 satır) tablosunda "Intervention" sütunu olmadığı için kural hiçbir müdahaleyi kabul etmiyor; `cct_recommendations` (5 satır) endikasyon metinleri "X can be detected with Y" kalıbında değil. `test_clinical_pipeline` her koşuda aile bazında raporlar.
+- **Tablo bulgularında p / GA / n / etki ölçütü sütunlara yazılmaz** (sütun kaynağı doğrulanamaz); değerler `taslak_notu`'nda kalır.
+- **Binlik ayırıcılı örneklem büyüklüğü ("1,234 patients") `hasta_sayisi`'na yazılmaz:** `validate_row` kanıtta "1,234"ü tek sayı görür, 1234 yazılırsa satırın tamamı reddedilirdi. Ham değer ve ayrıştırılan sayı `taslak_notu.deger_alanlari`'ndadır.
 
 ## Güvenlik
 

@@ -14,6 +14,7 @@ B) MySQL gerektirenler (.env + kurulum): aday hazırlama, senaryolar, devam etme
 
 import dataclasses
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -489,7 +490,7 @@ def db_counts():
     try:
         cursor = conn.cursor()
         out = {}
-        for table in ("klinik_bulgular", "halusinasyon_degerlendirme", *PROTECTED):
+        for table in ("klinik_bulgular", "halusinasyon_degerlendirme", "cikarim_reddedilenler", *PROTECTED):
             cursor.execute(f"SELECT COUNT(*) FROM {table}")
             out[table] = cursor.fetchone()[0]
         return out
@@ -595,7 +596,80 @@ def scenario_responder(picked, prepared):
     return respond
 
 
+def _clean_cell(text):
+    return norm_ws(re.sub(r"<[^>]+>", " ", text or "").replace("*", ""))
+
+
+def family_findings(item):
+    """Tipli tablo kurallarının kabul ettiği biçimde bulgu denemeleri (Sinem'in aile tanımlarına göre)."""
+    from src.clinical_validation import clinical_table_type
+
+    cand = item["candidate"]
+    ctx = cand["table_context"]
+    row, columns, cells = cand["cumle"], ctx["columns"], [c.strip() for c in ctx["row_cells"]]
+    family = clinical_table_type(columns)
+    blank = dict.fromkeys(FIELDS)
+    tries = []
+    if family == "ischemic_group_variables":
+        # diagnostic_method = ilk hücre; patient_group = grup sütun başlığı; numeric_value = o sütunun hücresi
+        for j in (1, 2):
+            group = re.sub(r"\s*\(n=\d+\)$", "", _clean_cell(columns[j]))
+            tries.append({**blank, "diagnostic_method": cells[0], "patient_group": group,
+                          "numeric_value": cells[j], "evidence_quote": row})
+    elif family == "study_summary":
+        headers = [_clean_cell(c).casefold() for c in columns]
+        for j, h in enumerate(headers):
+            if h in ("intervention", "treatment"):
+                tries.append({**blank, "drug": cells[j], "evidence_quote": row})
+    elif family == "cct_recommendations":
+        match = re.match(r"^(.+?) (?:can be|may be|is|was) (?:detected|diagnosed|identified) "
+                         r"(?:with|using|by|through) (?:a |an |the )?(.+?)\.?$", _clean_cell(cells[2]))
+        if match:
+            tries.append({**blank, "diagnosis": match.group(1), "diagnostic_method": match.group(2),
+                          "evidence_quote": row})
+    else:
+        tries += [f for f in (drug_finding(row),) if f]
+        tries += [{**blank, "drug": c, "evidence_quote": row} for c in cells if c]
+    return family, tries
+
+
+def table_family_report(to_send, sources):
+    from collections import Counter, defaultdict
+
+    stats = defaultdict(Counter)
+    errors = defaultdict(Counter)
+    for item in [i for i in to_send if i["candidate"]["kaynak_turu"] == "tablo"]:
+        family, tries = family_findings(item)
+        stats[family]["satir"] += 1
+        stats[family]["deneme"] += len(tries)
+        ok_any = False
+        for finding in tries:
+            rows, rejections, _ = process_response(findings_json(finding), item, sources, model="m")
+            good_rows, bad_rows = preview_rows(rows, item, sources)
+            for record in rejections + bad_rows:
+                errors[family][record["hata_turu"] + (" / " + record["aciklama"].split(":")[0]
+                                                      if record["hata_turu"] == "deger_kumesi_disi" else "")] += 1
+            ok_any = ok_any or bool(good_rows)
+        stats[family]["gecen_satir"] += ok_any
+        stats[family]["denemesiz"] += not tries
+    for family in sorted(stats):
+        s = stats[family]
+        TABLE_REPORT.append(f"{family}: {s['satir']} satır, {s['deneme']} deneme, validate_row'dan geçen satır "
+                            f"{s['gecen_satir']}, kurala uygun biçim kurulamayan {s['denemesiz']}; "
+                            f"red dağılımı {dict(errors[family])}")
+    return sum(s["gecen_satir"] for s in stats.values()), sum(s["satir"] for s in stats.values())
+
+
 def test_database(tmp):
+    from src.database import get_connection
+    from src.sunum import ensure_schema as ensure_sunum, schema_ready as sunum_ready
+
+    conn = get_connection()
+    try:
+        if not sunum_ready(conn):
+            ensure_sunum(conn)  # DDL: transaction dışında (kalıcı şema eklemesi, onaylı)
+    finally:
+        conn.close()
     before = db_counts()
     check("başlangıç: hoca tabloları", list(PROTECTED.values()), [before[t] for t in PROTECTED])
 
@@ -605,9 +679,14 @@ def test_database(tmp):
     for record in excluded:
         reasons[record["sebep"]] = reasons.get(record["sebep"], 0) + 1
     check("hazırlık: 660 = gönderilecek + ayrılan", 660, len(to_send) + len(excluded), total == 660)
-    check("ayrılan: başlık", 24, reasons.get("baslik"))
+    # PR #19 sonrası: 2 başlık satırı artık "metaveri" (mark_article_metadata). Makale başlığı
+    # (makaleler.baslik) iletildiğinde sayılar değişmiyor: başlıklar sayfa 1'de birebir blok olarak
+    # geçmiyor ya da zaten özet sınırından önceki konum kuralıyla yakalanıyor.
+    check("ayrılan: başlık", 22, reasons.get("baslik"))
+    check("ayrılan: metaveri", 7, reasons.get("metaveri"))
     check("ayrılan: sayfa aşan", 18, reasons.get("sayfa_asan"))
     check("ayrılan: karmaşık tablo", 16, reasons.get("tablo_karmasik"))
+    check("ayrılan: toplam / LLM'e giden", (64, 596), (len(excluded), len(to_send)))
     check("ayrılan: guvenli_parca_yok (bilgi)", "-", reasons.get("guvenli_parca_yok", 0), True)
     check("her ayrılanın sebebi ve aday_id'si var", True, all(r["sebep"] and r["aday_id"] for r in excluded))
 
@@ -660,10 +739,20 @@ def test_database(tmp):
     check("çok chunk: en küçük chunk_index seçildi", True,
           bool(multi) and multi["chunk_id"] == smallest and len(holders) >= 2
           and "otomatik_ilk" in json.loads(multi["taslak_notu"])["otomatik_alanlar"]["chunk_id"])
-    table_rows = [r.get("satir") for r in rejected + would if key_of[r["aday_id"]] == "tablo" and r.get("satir")]
-    check("tablo: alıntı tam satıra genişletildi (işaretli)", True,
-          bool(table_rows) and all(r["kanit_cumle"] == picked["tablo"]["candidate"]["cumle"]
-                                   and json.loads(r["taslak_notu"])["kanit_genisletildi"] for r in table_rows))
+    # PR #19 tipli tablo kuralı (_validate_response table_source) alıntının TAM tablo satırı olmasını
+    # şart koşar: kısmi alıntı yanit_dogrulama'da reddedilir ve genişletme adımına hiç ulaşmaz.
+    # Kural gevşetilmez; genişletme aşağıda build_row düzeyinde ayrı bir birim testle doğrulanır.
+    check("tablo: kısmi alıntı tipli tablo kuralında reddedilir (genişletmeye ulaşmaz)", True,
+          any(r.get("asama") == "yanit_dogrulama" for r in rejected if key_of[r["aday_id"]] == "tablo")
+          and not any(key_of[w["aday_id"]] == "tablo" for w in would))
+    from src.clinical_pipeline import build_row
+    table_item = picked["tablo"]
+    cell = next(c.strip() for c in table_item["candidate"]["cumle"].strip("|").split("|") if c.strip())
+    unit_row, problem = build_row({**dict.fromkeys(FIELDS), "drug": cell, "evidence_quote": cell},
+                                  table_item, sources, model="m")
+    check("build_row birim testi: tablo alıntısı tam satıra genişletilir ve işaretlenir", (None, True, True),
+          (problem, unit_row["kanit_cumle"] == table_item["candidate"]["cumle"] if unit_row else None,
+           json.loads(unit_row["taslak_notu"])["kanit_genisletildi"] if unit_row else None))
     check("summary.json hata_turu sayıları", True,
           json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["reddedilen_hata_turu"].get(
               "mudahale_alani_yok", 0) >= 1)
@@ -682,7 +771,8 @@ def test_database(tmp):
 
     # Otomatik doğrulama izi: her kaydedilecek satırda; deterministik; insan onayı yok.
     trails = [json.loads(w["satir"]["taslak_notu"]).get("otomatik_dogrulama") for w in would]
-    required = {"alanlar_alintida_birebir (procedure dahil)", "guvenli_parca_icinde",
+    required = {"alanlar_alintida_birebir (procedure, p_value, confidence_interval, sample_size, effect_measure dahil)",
+                "guvenli_parca_icinde",
                 "validate_source: guncel_chunk_alintiyi_iceriyor", "validate_row: kanit_sayfada_birebir",
                 "validate_row: sayilar_kanitta", "validate_row: deger_kumeleri",
                 "validate_row: iliski_kontrolu (supported_local)", "sutun_siniri"}
@@ -710,29 +800,10 @@ def test_database(tmp):
     check("sütun sınırı aşımı -> alan_cok_uzun", (0, "alan_cok_uzun"),
           (len(passed), failed[0]["hata_turu"] if failed else None))
 
-    # Tablo: en az bir simple tablo satırı validate_row'dan geçebiliyor mu? (rapor; testi kırmaz)
-    tables = [i for i in to_send if i["candidate"]["kaynak_turu"] == "tablo"]
-    passing_tables, error_dist = [], {}
-    for item in tables:
-        row_text = item["candidate"]["cumle"]
-        cells = [c.strip() for c in row_text.strip("|").split("|") if c.strip()]
-        tries = [f for f in (drug_finding(row_text), procedure_finding([row_text])) if f]
-        tries += [{**dict.fromkeys(FIELDS), "drug": cell, "evidence_quote": row_text} for cell in cells]
-        ok_any = False
-        for finding in tries:
-            rows, rejections, _ = process_response(findings_json(finding), item, sources, model="m")
-            good_rows, bad_rows = preview_rows(rows, item, sources)
-            for record in rejections + bad_rows:
-                label = record["hata_turu"] + (" / " + record["aciklama"].split(":")[0]
-                                               if record["hata_turu"] == "deger_kumesi_disi" else "")
-                error_dist[label] = error_dist.get(label, 0) + 1
-            ok_any = ok_any or bool(good_rows)
-        if ok_any:
-            passing_tables.append(item["candidate"]["aday_id"])
-    TABLE_REPORT.extend([f"simple tablo adayı: {len(tables)}; en az bir denemesi validate_row'dan geçen: "
-                         f"{len(passing_tables)}", f"geçmeyen denemelerin hata_turu dağılımı: {error_dist}"])
-    check("tablo: validate_row'dan geçebilen satır (bilgi, testi kırmaz)", "≥1 beklenir",
-          f"{len(passing_tables)}/{len(tables)}", True)
+    # Tablo raporu (bilgi; testi kırmaz): her tipli tablo ailesi için kuralın kabul ettiği biçimle dene.
+    passing_tables, total_tables = table_family_report(to_send, sources)
+    check("tablo: validate_row'dan geçebilen satır (bilgi, testi kırmaz)", "aile bazında rapor",
+          f"{passing_tables}/{total_tables}", True)
 
     # --- B2: ilk çalıştırma kuralı ve API anahtarı ---
     fresh = Path(tmp) / "b2"
@@ -890,8 +961,6 @@ def main():
     print("Tablo raporu (bilgi):")
     for line in TABLE_REPORT:
         print(f"  {line}")
-    if TABLE_REPORT and TABLE_REPORT[0].endswith(": 0"):
-        print("  UYARI: hiçbir simple tablo satırı validate_row'dan geçemiyor (test kırmızı yapılmadı).")
     print()
     if failed:
         print(f"BAŞARISIZ: {len(failed)}/{len(results)} kontrol geçmedi.")

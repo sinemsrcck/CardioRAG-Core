@@ -38,6 +38,7 @@ from src.gold_set import (
     FIELD_LIST_VERSION,
     GOLD_FIELDS,
     GOLD_FILE,
+    LLM_LABEL_WARNING,
     build_gold,
     build_workbook,
     draw_sample,
@@ -84,6 +85,14 @@ def ham_to_gold(finding):
         elif field.ad == "doz":
             dose, unit = _first(finding, ("dose",)), _first(finding, ("dose_unit",))
             out[field.ad] = f"{dose} {unit}" if dose and unit else dose
+        elif field.ad == "hasta_sayisi":  # ham seviye: aynı deterministik kalıp, binlik ayırıcı dahil
+            from src.clinical_pipeline import SAMPLE_SIZE_PATTERN
+            raw = _first(finding, field.ham)
+            match = SAMPLE_SIZE_PATTERN.match(raw) if raw else None
+            out[field.ad] = str(int(match.group("num").replace(",", ""))) if match else None
+        elif field.ad == "etki_turu":
+            from src.clinical_pipeline import map_effect_measure
+            out[field.ad] = map_effect_measure(_first(finding, field.ham))
         else:
             out[field.ad] = _first(finding, field.ham)
     return out
@@ -275,7 +284,8 @@ def load_context():
     from src.run_clinical_batch import prepare
 
     sources, to_send, _excluded, _ = prepare()
-    candidates = collect_candidates(sources.articles)
+    candidates = collect_candidates(sources.articles,
+                                    article_metadata=getattr(sources, "article_metadata", None) or None)
     return sources, {i["candidate"]["aday_id"]: i for i in to_send}, {c["aday_id"]: c for c in candidates}
 
 
@@ -356,9 +366,13 @@ def load_db_rows(version):
 # Değerlendirme
 # ---------------------------------------------------------------------------
 
-def evaluate(gold, outputs, *, bootstrap_iterations=1000, seed=DEFAULT_SEED, candidates_by_id=None):
-    """Gold + sistem çıktısı -> metrik sözlüğü (ana, konservatif, kırılımlar, hatalar)."""
-    entries = evaluable_entries(gold) if gold else []
+def evaluate(gold, outputs, *, bootstrap_iterations=1000, seed=DEFAULT_SEED, candidates_by_id=None,
+             durum="dogrulandi"):
+    """Gold + sistem çıktısı -> metrik sözlüğü (ana, konservatif, kırılımlar, hatalar).
+
+    durum: 'dogrulandi' (insan) veya 'llm_etiketli' (yapay zekâ). Tek çağrıda yalnız bir küme.
+    """
+    entries = evaluable_entries(gold, durum) if gold else []
     excluded = []
     usable = []
     for e in entries:
@@ -371,7 +385,7 @@ def evaluate(gold, outputs, *, bootstrap_iterations=1000, seed=DEFAULT_SEED, can
     answered = [e for e in usable if outputs.get(e["aday_id"], {}).get("durum") in ("yanit", "yanit_gecersiz")]
     missing = [e["aday_id"] for e in usable if e not in answered]
 
-    result = {"degerlendirilen_aday": len(usable), "sistem_durumu": dict(sorted(status.items())),
+    result = {"kume": durum, "degerlendirilen_aday": len(usable), "sistem_durumu": dict(sorted(status.items())),
               "yanitsiz_adaylar": missing, "disarida_kalan": excluded, "seviyeler": {}, "hatalar": []}
     for level in LEVELS:
         if any(outputs.get(e["aday_id"], {}).get(level) is None for e in answered) and answered:
@@ -382,7 +396,8 @@ def evaluate(gold, outputs, *, bootstrap_iterations=1000, seed=DEFAULT_SEED, can
             def run(group):
                 res = []
                 for e in group:
-                    ctx = {"seviye": level, "aday_id": e["aday_id"], "dosya": e["dosya"], "sayfa": e["sayfa"],
+                    ctx = {"kume": durum, "seviye": level, "aday_id": e["aday_id"], "dosya": e["dosya"],
+                           "sayfa": e["sayfa"],
                            "kaynak_turu": e["kaynak_turu"], "cumle": (e.get("cumle") or "")[:200]}
                     system = outputs.get(e["aday_id"], {}).get(level) or []
                     r = compare_candidate(e["bulgular"], system, mode, ctx)
@@ -428,65 +443,69 @@ def _fmt(value):
     return "-" if value is None else f"{value:.3f}"
 
 
+KUMELER = (("insan_dogrulanmis", "degerlendirme"), ("llm_etiketli", "llm_etiketli"))
+
+
+def _kume_result(metrics, key):
+    block = metrics.get(key) or {}
+    return block.get("degerlendirme", block) if key == "llm_etiketli" else block
+
+
 def write_report(report_dir, metrics):
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
-    errors = metrics["degerlendirme"].pop("hatalar", [])
+    errors = []
+    for _, key in KUMELER:
+        result = _kume_result(metrics, key)
+        errors += result.pop("hatalar", []) if result else []
     (report_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2, default=str),
                                              encoding="utf-8")
     with (report_dir / "alanlar.csv").open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.writer(file, delimiter=";")
-        writer.writerow(["seviye", "mod", "kume", "alan", "tp", "fp", "fn", "precision", "recall", "f1", "not"])
-        for level, block in metrics["degerlendirme"]["seviyeler"].items():
-            if "durum" in block:
-                writer.writerow([level, "", "", "", "", "", "", "", "", "", block["durum"]])
-                continue
-            for mode, data in block.items():
-                for kume in ("ana", "konservatif"):
-                    agg = data[kume]
-                    for name, v in agg["alanlar"].items():
-                        writer.writerow([level, mode, kume, name, v["tp"], v["fp"], v["fn"], _fmt(v["precision"]),
-                                         _fmt(v["recall"]), _fmt(v["f1"]), ""])
-                    m = agg["micro"]
-                    writer.writerow([level, mode, kume, "MICRO", m["tp"], m["fp"], m["fn"], _fmt(m["precision"]),
-                                     _fmt(m["recall"]), _fmt(m["f1"]), ""])
-                    writer.writerow([level, mode, kume, "MACRO", "", "", "", "", "", _fmt(agg["macro"]["f1"]), ""])
+        writer.writerow(["gold_kumesi", "seviye", "mod", "kume", "alan", "tp", "fp", "fn", "precision", "recall",
+                         "f1", "not"])
+        for gold_kume, key in KUMELER:
+            warning = metrics["llm_etiketli"]["uyari"] if key == "llm_etiketli" else ""
+            for level, block in _kume_result(metrics, key).get("seviyeler", {}).items():
+                if "durum" in block:
+                    writer.writerow([gold_kume, level, "", "", "", "", "", "", "", "", "", block["durum"]])
+                    continue
+                for mode, data in block.items():
+                    for kume in ("ana", "konservatif"):
+                        agg = data[kume]
+                        for name, v in agg["alanlar"].items():
+                            writer.writerow([gold_kume, level, mode, kume, name, v["tp"], v["fp"], v["fn"],
+                                             _fmt(v["precision"]), _fmt(v["recall"]), _fmt(v["f1"]), warning])
+                        m = agg["micro"]
+                        writer.writerow([gold_kume, level, mode, kume, "MICRO", m["tp"], m["fp"], m["fn"],
+                                         _fmt(m["precision"]), _fmt(m["recall"]), _fmt(m["f1"]), warning])
+                        writer.writerow([gold_kume, level, mode, kume, "MACRO", "", "", "", "", "",
+                                         _fmt(agg["macro"]["f1"]), warning])
         for name in metrics["degerlendirilemez_alanlar"]:
-            writer.writerow(["", "", "", name, "", "", "", "", "", "", "değerlendirilemez (sistem çıkarmıyor)"])
+            writer.writerow(["", "", "", "", name, "", "", "", "", "", "", "değerlendirilemez (sistem çıkarmıyor)"])
     with (report_dir / "kirilim.csv").open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.writer(file, delimiter=";")
-        writer.writerow(["seviye", "mod", "kirilim", "deger", "aday", "tp", "fp", "fn", "precision", "recall", "f1"])
-        for level, block in metrics["degerlendirme"]["seviyeler"].items():
-            for mode, data in ({} if "durum" in block else block).items():
-                for key, groups in data["kirilim"].items():
-                    for name, agg in groups.items():
-                        m = agg["micro"]
-                        writer.writerow([level, mode, key, name, agg["aday_sayisi"], m["tp"], m["fp"], m["fn"],
-                                         _fmt(m["precision"]), _fmt(m["recall"]), _fmt(m["f1"])])
+        writer.writerow(["gold_kumesi", "seviye", "mod", "kirilim", "deger", "aday", "tp", "fp", "fn", "precision",
+                         "recall", "f1"])
+        for gold_kume, key in KUMELER:
+            for level, block in _kume_result(metrics, key).get("seviyeler", {}).items():
+                for mode, data in ({} if "durum" in block else block).items():
+                    for kir, groups in data["kirilim"].items():
+                        for name, agg in groups.items():
+                            m = agg["micro"]
+                            writer.writerow([gold_kume, level, mode, kir, name, agg["aday_sayisi"], m["tp"], m["fp"],
+                                             m["fn"], _fmt(m["precision"]), _fmt(m["recall"]), _fmt(m["f1"])])
     with (report_dir / "hatalar.csv").open("w", encoding="utf-8-sig", newline="") as file:
-        columns = ["seviye", "mod", "aday_id", "dosya", "sayfa", "kaynak_turu", "alan", "tur", "gold", "sistem", "cumle"]
+        columns = ["kume", "seviye", "mod", "aday_id", "dosya", "sayfa", "kaynak_turu", "alan", "tur", "gold",
+                   "sistem", "cumle"]
         writer = csv.DictWriter(file, fieldnames=columns, delimiter=";", extrasaction="ignore")
         writer.writeheader()
-        for e in sorted(errors, key=lambda h: (h["seviye"], h["aday_id"], h["alan"], h["tur"])):
+        for e in sorted(errors, key=lambda h: (h.get("kume", ""), h["seviye"], h["aday_id"], h["alan"], h["tur"])):
             writer.writerow(e)
     return report_dir
 
 
-def print_summary(metrics, out=print):
-    if metrics.get("etiket"):
-        out(f"*** {metrics['etiket']} ***")
-    s = metrics["surumler"]
-    out(f"pipeline_version: {s['pipeline_version']}   model: {s['model']}   gold_hash: {s['gold_hash']}")
-    d = metrics["degerlendirme"]
-    out(f"Gold: {metrics['gold_ozeti']}   değerlendirilen aday: {d['degerlendirilen_aday']}   "
-        f"sistem durumu: {d['sistem_durumu']}")
-    where = ("değerlendirilen adaylarda" if d["degerlendirilen_aday"]
-             else "gold yok; --gold-olustur ile aynı örneklemin adaylarında")
-    out(f"Sistem çıktısı ({where}): {metrics['sistem_ciktisi']}")
-    if d["yanitsiz_adaylar"]:
-        out(f"Yanıtı olmayan gold adayı: {len(d['yanitsiz_adaylar'])} (ana metrikte yok; konservatif satırda FN)")
-    if not d["degerlendirilen_aday"]:
-        out("Değerlendirilebilir (dogrulandi, hatasız) gold adayı yok: metrik hesaplanmadı.")
+def _print_levels(d, out):
     for level, block in (d["seviyeler"] if d["degerlendirilen_aday"] else {}).items():
         if "durum" in block:
             out(f"[{level}] {block['durum']}")
@@ -500,7 +519,31 @@ def print_summary(metrics, out=print):
             + f"   macro F1 {_fmt(main['macro']['f1'])}   bulgu F1 {_fmt(main['bulgu']['f1'])}   "
             f"gevşek micro F1 {_fmt(block['gevsek']['ana']['micro']['f1'])}   "
             f"konservatif micro F1 {_fmt(block['birebir']['konservatif']['micro']['f1'])}")
-    out(f"Değerlendirilemez alanlar (sistem çıkarmıyor): {', '.join(metrics['degerlendirilemez_alanlar'])}")
+
+
+def print_summary(metrics, out=print):
+    if metrics.get("etiket"):
+        out(f"*** {metrics['etiket']} ***")
+    s = metrics["surumler"]
+    out(f"pipeline_version: {s['pipeline_version']}   model: {s['model']}   gold_hash: {s['gold_hash']}")
+    out(f"Gold: {metrics['gold_ozeti']}")
+    d = metrics["degerlendirme"]
+    any_gold = d["degerlendirilen_aday"] or metrics["llm_etiketli"]["degerlendirme"]["degerlendirilen_aday"]
+    where = "gold adaylarında" if any_gold else "gold yok; --gold-olustur ile aynı örneklemin adaylarında"
+    out(f"Sistem çıktısı ({where}): {metrics['sistem_ciktisi']}")
+    out(f"== İnsan doğrulanmış (durum=dogrulandi): {d['degerlendirilen_aday']} aday   sistem durumu: "
+        f"{d['sistem_durumu']}")
+    if d["yanitsiz_adaylar"]:
+        out(f"   Yanıtı olmayan gold adayı: {len(d['yanitsiz_adaylar'])} (ana metrikte yok; konservatif satırda FN)")
+    if not d["degerlendirilen_aday"]:
+        out("   Değerlendirilebilir (dogrulandi, hatasız) gold adayı yok: metrik hesaplanmadı.")
+    _print_levels(d, out)
+    llm = metrics["llm_etiketli"]["degerlendirme"]
+    out(f"== Yapay zekâ etiketli (durum=llm_etiketli): {llm['degerlendirilen_aday']} aday")
+    out(f"   UYARI: {metrics['llm_etiketli']['uyari']}")
+    if llm["degerlendirilen_aday"]:
+        _print_levels(llm, out)
+    out(f"Değerlendirilemez alanlar (sistem çıkarmıyor): {', '.join(metrics['degerlendirilemez_alanlar']) or '-'}")
     out(f"Rapor: {metrics.get('rapor_dir')}")
 
 
@@ -549,7 +592,7 @@ def run_evaluation(*, gold_path=GOLD_FILE, source="cache", batch_dir=DEFAULT_BAT
 
     gold = load_gold(gold_path)
     ctx = ctx or load_context()
-    entries = evaluable_entries(gold) if gold else []
+    entries = (evaluable_entries(gold, "dogrulandi") + evaluable_entries(gold, "llm_etiketli")) if gold else []
     ids = [e["aday_id"] for e in entries]
     if not ids:  # gold yoksa sistem istatistiği --gold-olustur ile AYNI örneklem üzerinden (metrik yok)
         from src.data_quality import load_reference_rows
@@ -557,7 +600,11 @@ def run_evaluation(*, gold_path=GOLD_FILE, source="cache", batch_dir=DEFAULT_BAT
         ids = [c["aday_id"] for c in draw_sample([i["candidate"] for i in ctx[1].values()], reference_ids, n, seed)]
     outputs, info = system_outputs(ids, ctx, source=source, batch_dir=batch_dir, model=model,
                                    pipeline_version=pipeline_version, warn=lambda m: out(f"UYARI: {m}"))
-    result = evaluate(gold, outputs, bootstrap_iterations=bootstrap_iterations, seed=seed, candidates_by_id=ctx[2])
+    # İki küme AYRI değerlendirilir; hiçbir aşamada birleştirilmez.
+    result = evaluate(gold, outputs, bootstrap_iterations=bootstrap_iterations, seed=seed, candidates_by_id=ctx[2],
+                      durum="dogrulandi")
+    llm_result = evaluate(gold, outputs, bootstrap_iterations=bootstrap_iterations, seed=seed,
+                          candidates_by_id=ctx[2], durum="llm_etiketli")
     status = Counter(a["durum"] for a in (gold or {}).get("adaylar", []))
     metrics = {
         "etiket": MOCK_LABEL if source == "mock" else None,
@@ -574,7 +621,9 @@ def run_evaluation(*, gold_path=GOLD_FILE, source="cache", batch_dir=DEFAULT_BAT
         "tanimlar": {"esleme": "aynı aday içinde normalize müdahale; en çok çift, sonra en çok alan uyuşması",
                      "gevsek": f"biri diğerini içeriyor veya token Jaccard ≥ {LOOSE_JACCARD}",
                      "ana": "yanıtı olan adaylar", "konservatif": "yanıtı olmayanlar boş çıktı sayılır"},
-        "degerlendirme": result,
+        "degerlendirme": result,  # insan_dogrulanmis (yalnız durum=dogrulandi)
+        "llm_etiketli": {"uyari": LLM_LABEL_WARNING, "gold_hash": (gold or {}).get("meta", {}).get("llm_etiketli_hash"),
+                         "degerlendirme": llm_result},
     }
     folder = Path(report_dir) / (datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{source}")
     metrics["rapor_dir"] = str(folder)

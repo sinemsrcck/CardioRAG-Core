@@ -67,6 +67,7 @@ class Options:
     timeout: float = 60.0
     max_tokens: int = 2400
     max_tokens_param: str = "max_completion_tokens"
+    json_mode: str = "json_object"     # sürüm/önbellek anahtarına girmez; önbelleğe ve özete yazılır
     max_retries: int = 3
     max_consecutive_errors: int = 5
     base_dir: Path = DEFAULT_BASE_DIR
@@ -223,11 +224,11 @@ def read_cache(base, version, model, aday_id, warn):
     return data
 
 
-def write_cache(base, version, model, aday_id, raw_text, finish_reason, think):
+def write_cache(base, version, model, aday_id, raw_text, finish_reason, think, json_mode="json_object"):
     path = cache_path(base, version, model, aday_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"aday_id": aday_id, "pipeline_version": version, "model": model,
-            "prompt_sha": PROMPT_SHA, "think": think, "finish_reason": finish_reason,
+            "prompt_sha": PROMPT_SHA, "think": think, "json_mode": json_mode, "finish_reason": finish_reason,
             "raw_text": raw_text, "created_at": _now()}
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -263,9 +264,20 @@ def prepare(sources=None):
             sources = load_sources(conn)
         finally:
             conn.close()
-    candidates = collect_candidates(sources.articles)
+    # Makale başlığı Sinem'in metaveri sınıflandırmasına iletilir (mark_article_metadata).
+    candidates = collect_candidates(sources.articles,
+                                    article_metadata=getattr(sources, "article_metadata", None) or None)
     to_send, excluded = prepare_candidates(candidates, sources)
     return sources, to_send, excluded, len(candidates)
+
+
+def _in_scope(record, opts):
+    """--makale / --aday filtresi (ayrılan kayıtlar için; _select ile aynı kural)."""
+    if opts.makale and not any((record.get("makale_id") or "").casefold() == m.casefold()
+                               or (record.get("dosya") or "").casefold().startswith(m.casefold())
+                               for m in opts.makale):
+        return False
+    return not opts.aday or record.get("aday_id") in set(opts.aday)
 
 
 def _select(to_send, opts):
@@ -343,7 +355,7 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
         "run_id": run_id, "baslangic": _now(), "pipeline_version": opts.pipeline_version,
         "prompt_sha": PROMPT_SHA, "mod": ("dry-run" if opts.dry_run else "mock" if opts.mock
                                           else "from-cache" if opts.from_cache else "llm"),
-        "no_save": opts.no_save, "think": opts.think, "notlar": [], "durum": "basladi",
+        "no_save": opts.no_save, "think": opts.think, "json_mode": opts.json_mode, "notlar": [], "durum": "basladi",
     }
     lock_path = Path(opts.base_dir) / "run.lock"
     lock_held = False
@@ -417,6 +429,30 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
                 if opts.mock:
                     write_conn.start_transaction()
         from src.database import save_clinical_findings
+        from src.sunum import schema_ready, write_exclusions, write_rejections
+
+        def commit_own():
+            if own_write_conn and not opts.mock:
+                write_conn.commit()
+
+        def rollback_own():
+            if own_write_conn and not opts.mock:
+                write_conn.rollback()
+
+        if write_conn is not None:
+            if not schema_ready(write_conn):
+                raise BatchStop("sunum_tablolari_yok", (
+                    "cikarim_reddedilenler tablosu yok. Reddedilen bulgular veritabanına yazılabilsin diye "
+                    "bu veritabanında bir kez çalıştırın: python -m src.sunum --kur  "
+                    "(yalnızca LLM yanıtı/önbellek için --no-save kullanılabilir; o modda tablo gerekmez)"))
+            scope = [e for e in excluded if _in_scope(e, opts)]
+            try:
+                counters["red_tablosu_on_eleme"] += write_exclusions(write_conn, scope,
+                                                                     pipeline_version=opts.pipeline_version)
+                commit_own()
+            except Exception:
+                rollback_own()
+                raise
 
         state_log = JsonlWriter(state_path)
         would_save_log = JsonlWriter(run_dir / "would_save.jsonl")
@@ -445,12 +481,15 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
                     response, attempts = call_llm(
                         request_client, model, build_messages(item), max_tokens=opts.max_tokens,
                         no_think=not opts.think, max_retries=opts.max_retries, sleep=sleep,
-                        token_param=opts.max_tokens_param)
+                        token_param=opts.max_tokens_param, json_mode=opts.json_mode)
                     counters["llm_cagrisi"] += attempts
                     raw_text, finish = response_text(response)
-                    write_cache(base, opts.pipeline_version, model, aday_id, raw_text, finish, opts.think)
+                    write_cache(base, opts.pipeline_version, model, aday_id, raw_text, finish, opts.think,
+                                json_mode=opts.json_mode)
 
                 rows, rejections, n_findings = process_response(raw_text, item, sources, model=model)
+                counters["tablo_yeni_alan_yazilmadi"] += sum(
+                    '"tablo_yazilmayan_alanlar"' in (r.get("taslak_notu") or "") for r in rows)
                 passed, failed = preview_rows(rows, item, sources)
                 rejections += failed
                 counters["bulgu"] += n_findings
@@ -466,18 +505,31 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
 
                 if not passed:
                     status = "bulgu_yok" if n_findings == 0 else "reddedildi"
+                    if write_conn is not None and rejections:
+                        try:
+                            counters["red_tablosu_aday"] += write_rejections(
+                                write_conn, candidate, rejections, pipeline_version=opts.pipeline_version, model=model)
+                            commit_own()
+                        except Exception:
+                            rollback_own()
+                            raise
                     record_state(item, status, bulgu=n_findings, reddedilen=len(rejections))
                 elif opts.no_save:
                     record_state(item, "yanit_alindi", bulgu=n_findings, kaydedilebilir=len(passed),
                                  reddedilen=len(rejections))
                 else:
-                    try:
+                    try:  # redler ve kayıt aynı transaction'da: ikisi birlikte commit/rollback
+                        counters["red_tablosu_aday"] += write_rejections(
+                            write_conn, candidate, rejections, pipeline_version=opts.pipeline_version, model=model)
                         result = save_clinical_findings(passed, "rag", connection=write_conn)
-                        if own_write_conn and not opts.mock:
-                            write_conn.commit()
+                        counters["red_tablosu_aday"] += write_rejections(
+                            write_conn, candidate,
+                            [{"asama": "save", "hata_turu": r["hata_turu"], "aciklama": r["aciklama"],
+                              "satir": r["satir"]} for r in result["reddedilen"]],
+                            pipeline_version=opts.pipeline_version, model=model)
+                        commit_own()
                     except Exception:
-                        if own_write_conn and not opts.mock:
-                            write_conn.rollback()
+                        rollback_own()
                         raise
                     for record in result["reddedilen"]:
                         rejected_types[record["hata_turu"]] += 1
@@ -598,6 +650,8 @@ def parse_args(argv=None):
     parser.add_argument("--model", help="model adı (varsayılan .env LLM_MODEL; --from-cache'te önbellekteki tek model)")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--max-tokens", type=int, default=2400)
+    parser.add_argument("--json-mode", choices=("json_object", "none"), default="json_object",
+                        help="none: response_format gönderilmez (yanıt yine aynı JSON kurallarıyla doğrulanır)")
     parser.add_argument("--max-tokens-param", choices=("max_completion_tokens", "max_tokens"),
                         default="max_completion_tokens",
                         help="token sınırı parametresinin adı (eski sunucular max_tokens ister)")
@@ -621,7 +675,7 @@ def main(argv=None):
                    mock=args.mock, from_cache=args.from_cache, no_save=args.no_save,
                    retry_failed=args.retry_failed, reprocess=args.reprocess, force=args.force,
                    think=args.think, model=args.model, timeout=args.timeout, max_tokens=args.max_tokens,
-                   max_tokens_param=args.max_tokens_param,
+                   max_tokens_param=args.max_tokens_param, json_mode=args.json_mode,
                    max_retries=args.max_retries, max_consecutive_errors=args.max_consecutive_errors,
                    base_dir=args.base_dir)
     try:
