@@ -3,7 +3,8 @@ Klinik çıkarım toplu işinin saf mantığı (IO yok; bağlantı/istemci dış
 
 Mevcut modüller değiştirilmeden yalnızca import edilir:
   clinical_candidates  -> adaylar, kalıplar
-  clinical_extraction  -> SYSTEM_PROMPT, RESPONSE_SCHEMA, _validate_response, ...
+  clinical_extraction  -> SYSTEM_PROMPT, FIELDS, _validate_response, ...
+                          (kendi yanıt şemamız: FIELDS + procedure)
   clinical_validation  -> validate_row, prose, norm_ws (kanıt kuralları)
   clinical_review      -> _source_binding (yalnızca tablo bağlamı denetimi;
                           insan onayı ÜRETİLMEZ ve istenmez)
@@ -22,7 +23,6 @@ from src.clinical_candidates import TREATMENT_REGEX, find_patterns
 from src.clinical_extraction import (
     EXTRACTION_SCHEMA_VERSION,
     FIELDS,
-    RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
     _validate_response,
     clinical_result_payload,
@@ -36,24 +36,53 @@ from src.clinical_validation import norm_ws, prose, validate_row
 
 PIPELINE_NAME = "clinical-pipeline-v1"
 USER_MESSAGE_FORMAT = "user-json-v1: candidate_text, allowed_quote_spans, table_context?"
+
+# Kendi yanıt şemamız: mevcut FIELDS + "procedure". clinical_extraction.py
+# değişmez; procedure ayrı denetlenip bulgu mevcut şemayla _validate_response'a verilir.
+PROCEDURE_FIELD = "procedure"
+PIPELINE_FIELDS = (*FIELDS, PROCEDURE_FIELD)
+INTERVENTION_FIELDS = ("drug", "diagnostic_method", PROCEDURE_FIELD)
+PIPELINE_FINDING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **{name: {"type": ["string", "null"]} for name in PIPELINE_FIELDS},
+        "evidence_quote": {"type": "string", "minLength": 1},
+    },
+    "required": [*PIPELINE_FIELDS, "evidence_quote"],
+    "additionalProperties": False,
+}
+PIPELINE_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"findings": {"type": "array", "items": PIPELINE_FINDING_SCHEMA}},
+    "required": ["findings"],
+    "additionalProperties": False,
+}
+
 PROMPT_ADDENDUM = """
 Additional batch rules:
 - allowed_quote_spans lists the parts of candidate_text that can be verified
   against the source document. Each evidence_quote must lie entirely inside ONE
   allowed span; never quote across two spans.
 - For a table row candidate, evidence_quote is the entire data row (candidate_text).
-- A finding must name either a medication (drug) or a diagnostic/detection method
-  (diagnostic_method); findings with neither will not be stored.
+- procedure: an interventional, surgical or device procedure whose name is
+  explicitly stated (e.g. catheter ablation, PCI, CABG, stent implantation,
+  cardioversion, left atrial appendage occlusion). It is not a medication and not
+  a diagnostic test. Never infer it; copy it verbatim from evidence_quote.
+- A finding must name exactly one intervention: a medication (drug), a procedure
+  (procedure) or a diagnostic/detection method (diagnostic_method). Emit a
+  separate finding for each intervention; findings with none or with more than
+  one of these three fields will not be stored.
 - Copy patient_group, comparison, clinical_outcome, numeric_value and value_unit
   verbatim only when explicitly stated in the quote; otherwise use null.
 """
 PIPELINE_PROMPT = SYSTEM_PROMPT + PROMPT_ADDENDUM
-SYSTEM_MESSAGE = PIPELINE_PROMPT + "\nSchema: " + json.dumps(RESPONSE_SCHEMA)
+SYSTEM_MESSAGE = PIPELINE_PROMPT + "\nSchema: " + json.dumps(PIPELINE_RESPONSE_SCHEMA)
 PROMPT_SHA = hashlib.sha256(
-    "\n".join([SYSTEM_MESSAGE, json.dumps(RESPONSE_SCHEMA, sort_keys=True),
+    "\n".join([SYSTEM_MESSAGE, json.dumps(PIPELINE_RESPONSE_SCHEMA, sort_keys=True),
                EXTRACTION_SCHEMA_VERSION, USER_MESSAGE_FORMAT]).encode("utf-8")
 ).hexdigest()[:12]
 PIPELINE_VERSION = f"{PIPELINE_NAME}-{PROMPT_SHA}"
+TOKEN_PARAMS = ("max_completion_tokens", "max_tokens")
 
 MIN_SPAN_CHARS = 20
 NO_THINK_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
@@ -236,20 +265,25 @@ RETRYABLE_NAMES = {"APITimeoutError", "APIConnectionError", "Timeout", "TimeoutE
                    "ConnectTimeout", "ReadTimeout", "ConnectionError"}
 
 
-def server_rejected_message(status, name):
+def server_rejected_message(status, name, token_param="max_completion_tokens"):
+    other = "max_tokens" if token_param == "max_completion_tokens" else "max_completion_tokens"
     return (f"LLM sunucusu isteği reddetti (HTTP {status}, {name}). Olası sebepler: "
-            "enable_thinking parametresi (--think ile deneyin) veya "
-            "response_format=json_object desteği.")
+            "enable_thinking parametresi (--think ile deneyin), "
+            "response_format=json_object desteği veya "
+            f"{token_param} parametresi desteği (--max-tokens-param {other} ile deneyin).")
 
 
-def call_llm(client, model, messages, *, max_tokens, no_think, max_retries, sleep):
+def call_llm(client, model, messages, *, max_tokens, no_think, max_retries, sleep,
+             token_param="max_completion_tokens"):
     """Tek istek; geçici hatalarda artan beklemeyle yeniden dener.
 
     Loglara/istisnalara anahtar, header, yanıt gövdesi veya istisna metni
     taşınmaz: yalnızca istisna tür adı ve HTTP durum kodu.
     """
-    kwargs = dict(model=model, messages=messages, max_completion_tokens=max_tokens,
-                  response_format={"type": "json_object"})
+    if token_param not in TOKEN_PARAMS:
+        raise BatchStop("secenek", f"--max-tokens-param {TOKEN_PARAMS} içinden olmalı.")
+    kwargs = {"model": model, "messages": messages, token_param: max_tokens,
+              "response_format": {"type": "json_object"}}
     if no_think:
         kwargs["extra_body"] = NO_THINK_EXTRA_BODY
     for attempt in range(max_retries + 1):
@@ -260,7 +294,8 @@ def call_llm(client, model, messages, *, max_tokens, no_think, max_retries, slee
             status = getattr(exc, "status_code", None)
             status = status if type(status) is int else None
             if status in (400, 422):
-                raise BatchStop("sunucu_istegi_reddetti", server_rejected_message(status, name)) from None
+                raise BatchStop("sunucu_istegi_reddetti",
+                                server_rejected_message(status, name, token_param)) from None
             if status in (401, 403):
                 raise BatchStop("yetki_hatasi", f"LLM sunucusu kimlik doğrulamayı reddetti "
                                 f"(HTTP {status}, {name}). .env'deki LLM_API_KEY'i kontrol edin.") from None
@@ -328,7 +363,43 @@ def _finding_error_code(message):
         return "bos_bulgu"
     if message.startswith("Missing or unexpected finding fields"):
         return "bulgu_alanlari"
+    if message.startswith("birden_fazla_mudahale"):
+        return "birden_fazla_mudahale"
     return "bulgu_gecersiz"
+
+
+def validate_finding(finding, text):
+    """Bir bulguyu kendi şemamızla + mevcut _validate_response ile denetler.
+
+    1. Alan kümesi tam olarak PIPELINE_FIELDS + evidence_quote.
+    2. procedure doluysa string ve evidence_quote içinde birebir.
+    3. drug / diagnostic_method / procedure'den en fazla biri dolu.
+    4. procedure çıkarılıp bulgu MEVCUT şemayla _validate_response'a verilir:
+       alıntı aday metninde birebir, her dolu alan alıntıda birebir,
+       diagnostic_method ilişki kontrolü. Tek istisna: yalnızca procedure dolu
+       bulgularda _validate_response'un son kuralı ("hiç klinik alan yok")
+       procedure ile sağlanmış sayılır; o kuraldan önceki bütün kontroller
+       yine _validate_response içinde çalışmış olur.
+    Döndürür: procedure dahil normalize bulgu. Hata: ValueError(mesaj).
+    """
+    if not isinstance(finding, dict) or set(finding) != {*PIPELINE_FIELDS, "evidence_quote"}:
+        raise ValueError("Missing or unexpected finding fields")
+    procedure = finding[PROCEDURE_FIELD]
+    quote = finding["evidence_quote"]
+    if procedure is not None and (not isinstance(procedure, str) or not procedure.strip()
+                                  or not isinstance(quote, str) or procedure not in quote):
+        raise ValueError(f"{PROCEDURE_FIELD} must be null or verbatim evidence text")
+    filled = [name for name in INTERVENTION_FIELDS if finding[name] not in (None, "")]
+    if len(filled) > 1:
+        raise ValueError("birden_fazla_mudahale: " + ", ".join(filled))
+    base = {key: value for key, value in finding.items() if key != PROCEDURE_FIELD}
+    try:
+        normalized = _validate_response({"findings": [base]}, text)[0]
+    except ValueError as exc:
+        if not (procedure is not None and str(exc).startswith("Finding has no clinical fields")):
+            raise
+        normalized = base  # önceki bütün kurallar geçti; klinik alan = procedure
+    return {**normalized, PROCEDURE_FIELD: procedure}
 
 
 TR_CHARS = re.compile(r"[çğıöşüÇĞİÖŞÜ]")
@@ -364,9 +435,13 @@ def build_row(finding, item, sources, *, model):
             norm_ws(quote) in norm_ws(span) for span in item["allowed_quote_spans"]):
         return None, ("guvenli_parca_disinda", "alıntı tek bir doğrulanabilir parçanın içinde değil")
 
-    method, drug = finding.get("diagnostic_method"), finding.get("drug")
-    if not method and not drug:
-        return None, ("mudahale_alani_yok", "drug ve diagnostic_method boş; mudahale_turu atanamaz")
+    method, drug, procedure = (finding.get("diagnostic_method"), finding.get("drug"),
+                               finding.get(PROCEDURE_FIELD))
+    filled = [name for name in INTERVENTION_FIELDS if finding.get(name)]
+    if not filled:
+        return None, ("mudahale_alani_yok", "drug, procedure ve diagnostic_method boş; mudahale_turu atanamaz")
+    if len(filled) > 1:  # validate_finding zaten reddeder; ikinci güvence
+        return None, ("birden_fazla_mudahale", ", ".join(filled))
 
     chunk_id, chunk_rule = select_chunk(quote, candidate, sources)
     if chunk_id is None:
@@ -386,7 +461,7 @@ def build_row(finding, item, sources, *, model):
         sure=finding["treatment_duration"], deger=finding["numeric_value"], unit=finding["value_unit"],
     )
     row["tani_" + language] = finding["diagnosis"]
-    row["mudahale_" + language] = method or drug
+    row["mudahale_" + language] = method or drug or procedure
     if language == "tr":
         row["sonuc_olcutu_tr"] = finding["clinical_outcome"]
 
@@ -398,10 +473,10 @@ def build_row(finding, item, sources, *, model):
         "model": model,
         "aday_id": candidate["aday_id"],
         "source_language": language,
-        "extracted_fields": {f: finding.get(f) for f in FIELDS},
+        "extracted_fields": {f: finding.get(f) for f in PIPELINE_FIELDS},
         "clinical_result": clinical_result_payload(finding["clinical_outcome"], language),
         "otomatik_alanlar": {
-            "mudahale_turu": f"otomatik ({'diagnostic_method' if method else 'drug'} alanından)",
+            "mudahale_turu": f"otomatik ({filled[0]} alanından)",
             "source_language": "otomatik (karakter/kelime sezgisi)",
             "chunk_id": f"otomatik ({chunk_rule})",
             **({"kanit_cumle": "otomatik (tam tablo satırına genişletildi)"} if expanded else {}),
@@ -425,7 +500,7 @@ def process_response(raw_text, item, sources, *, model):
         base = {"aday_id": candidate["aday_id"], "dosya": candidate["dosya"],
                 "sayfa": candidate["sayfa"], "bulgu_sirasi": position, "bulgu": finding}
         try:
-            normalized = _validate_response({"findings": [finding]}, candidate["cumle"])[0]
+            normalized = validate_finding(finding, candidate["cumle"])
         except ValueError as exc:
             rejections.append({**base, "asama": "yanit_dogrulama",
                                "hata_turu": _finding_error_code(str(exc)), "aciklama": str(exc)})
@@ -439,17 +514,65 @@ def process_response(raw_text, item, sources, *, model):
     return rows, rejections, len(payload["findings"])
 
 
+def _too_long(row, max_lengths):
+    return [c for c, v in row.items() if isinstance(v, str) and max_lengths.get(c) and len(v) > max_lengths[c]]
+
+
+def validation_trail(row):
+    """Geçilen otomatik kontrollerin deterministik listesi (zaman damgası yok)."""
+    from src.database import CLINICAL_VALIDATION_VERSION
+
+    note = json.loads(row["taslak_notu"])
+    table = row.get("kanit_turu") == "tablo"
+    method = (note.get("extracted_fields") or {}).get("diagnostic_method")
+    checks = [
+        "yanit_semasi (kendi şema: FIELDS + procedure)",
+        "alinti_aday_metninde_birebir",
+        "alanlar_alintida_birebir (procedure dahil)",
+        "tek_mudahale_alani (drug | procedure | diagnostic_method)",
+        "tablo_tam_satir" if table else "guvenli_parca_icinde",
+        *(["diagnostic_relationship: supported_local"] if method else []),
+        "validate_source: makale_belge_eslesmesi",
+        "validate_source: tek_sayfa",
+        "validate_source: guncel_chunk_alintiyi_iceriyor",
+        *(["validate_source: tablo_baglami_chunk_ile_ayni"] if table else []),
+        "validate_row: iliski_kontrolu (supported_local)",
+        "validate_row: deger_kumeleri",
+        "validate_row: icd10 (" + ("icd10_who'da var" if row.get("icd10") else "boş; atanmadı") + ")",
+        "validate_row: kanit_sayfada_birebir",
+        "validate_row: sayilar_kanitta",
+        "sutun_siniri",
+    ]
+    return {
+        "insan_onayi": "yok",
+        "gecen_kontroller": checks,
+        "surumler": {"pipeline_version": PIPELINE_VERSION, "prompt_sha": PROMPT_SHA,
+                     "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
+                     "clinical_validation_version": CLINICAL_VALIDATION_VERSION},
+        "not": "Otomatik kontroller klinik doğruluğu kanıtlamaz; insan incelemesi gerekli.",
+    }
+
+
 def preview_rows(rows, item, sources):
-    """validate_row (validate_source dahil) + sütun sınırı; salt okuma."""
+    """validate_row (validate_source dahil) + sütun sınırı; salt okuma.
+
+    Geçen satırın taslak_notu'na otomatik_dogrulama izi eklenir ve son satır
+    yeniden denetlenir (kaydedilecek satır = denetlenen satır).
+    """
     candidate = item["candidate"]
     passed, rejected = [], []
     for row in rows:
         ok, error_type, detail = validate_row(row, sources.ctx)
+        if ok and _too_long(row, sources.max_lengths):
+            ok, error_type, detail = False, "alan_cok_uzun", f"sütun sınırını aşan alan: {_too_long(row, sources.max_lengths)}"
         if ok:
-            too_long = [c for c, v in row.items() if isinstance(v, str)
-                        and sources.max_lengths.get(c) and len(v) > sources.max_lengths[c]]
-            if too_long:
-                ok, error_type, detail = False, "deger_kumesi_disi", f"sütun sınırını aşan alan: {too_long}"
+            note = json.loads(row["taslak_notu"])
+            note["otomatik_dogrulama"] = validation_trail(row)
+            final = {**row, "taslak_notu": json.dumps(note, ensure_ascii=False, sort_keys=True)}
+            ok, error_type, detail = validate_row(final, sources.ctx)
+            if ok and _too_long(final, sources.max_lengths):
+                ok, error_type, detail = False, "alan_cok_uzun", f"sütun sınırını aşan alan: {_too_long(final, sources.max_lengths)}"
+            row = final
         if ok:
             passed.append(row)
         else:
@@ -464,7 +587,9 @@ def preview_rows(rows, item, sources):
 # ---------------------------------------------------------------------------
 
 class MockLLMClient:
-    """Deterministik sahte istemci: ilk ilaç kalıbını içeren parçayı alıntılar.
+    """Deterministik sahte istemci: ilk ilaç/işlem kalıbını içeren parçayı alıntılar.
+
+    'girişimsel' kalıbına uyan eşleşme procedure alanına, diğerleri drug'a yazılır.
 
     Gerçek istemcinin kullandığı arayüzü taklit eder (api_key, with_options,
     chat.completions.create). Hiçbir ağ çağrısı yapmaz.
@@ -488,10 +613,11 @@ class MockLLMClient:
         findings = []
         spans = [user["candidate_text"]] if "table_context" in user else user["allowed_quote_spans"]
         for span in spans:
-            for regex in TREATMENT_REGEX.values():
+            for category, regex in TREATMENT_REGEX.items():
                 match = regex.search(span)
                 if match:
-                    findings.append({**dict.fromkeys(FIELDS), "drug": match.group(0),
+                    target = PROCEDURE_FIELD if category == "girişimsel" else "drug"
+                    findings.append({**dict.fromkeys(PIPELINE_FIELDS), target: match.group(0),
                                      "evidence_quote": span})
                     break
             if findings:

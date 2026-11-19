@@ -66,6 +66,7 @@ class Options:
     model: str = None
     timeout: float = 60.0
     max_tokens: int = 2400
+    max_tokens_param: str = "max_completion_tokens"
     max_retries: int = 3
     max_consecutive_errors: int = 5
     base_dir: Path = DEFAULT_BASE_DIR
@@ -443,7 +444,8 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
                 else:
                     response, attempts = call_llm(
                         request_client, model, build_messages(item), max_tokens=opts.max_tokens,
-                        no_think=not opts.think, max_retries=opts.max_retries, sleep=sleep)
+                        no_think=not opts.think, max_retries=opts.max_retries, sleep=sleep,
+                        token_param=opts.max_tokens_param)
                     counters["llm_cagrisi"] += attempts
                     raw_text, finish = response_text(response)
                     write_cache(base, opts.pipeline_version, model, aday_id, raw_text, finish, opts.think)
@@ -589,6 +591,9 @@ def parse_args(argv=None):
     parser.add_argument("--model", help="model adı (varsayılan .env LLM_MODEL; --from-cache'te önbellekteki tek model)")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--max-tokens", type=int, default=2400)
+    parser.add_argument("--max-tokens-param", choices=("max_completion_tokens", "max_tokens"),
+                        default="max_completion_tokens",
+                        help="token sınırı parametresinin adı (eski sunucular max_tokens ister)")
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--max-consecutive-errors", type=int, default=5)
     parser.add_argument("--base-dir", type=Path, default=DEFAULT_BASE_DIR)
@@ -609,6 +614,7 @@ def main(argv=None):
                    mock=args.mock, from_cache=args.from_cache, no_save=args.no_save,
                    retry_failed=args.retry_failed, reprocess=args.reprocess, force=args.force,
                    think=args.think, model=args.model, timeout=args.timeout, max_tokens=args.max_tokens,
+                   max_tokens_param=args.max_tokens_param,
                    max_retries=args.max_retries, max_consecutive_errors=args.max_consecutive_errors,
                    base_dir=args.base_dir)
     try:

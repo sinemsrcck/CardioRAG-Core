@@ -12,6 +12,7 @@ B) MySQL gerektirenler (.env + kurulum): aday hazırlama, senaryolar, devam etme
    --mock'un kendi ROLLBACK'i ile geri alınır; sonda sayılar karşılaştırılır.
 """
 
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -21,9 +22,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.clinical_candidates import TREATMENT_REGEX
-from src.clinical_extraction import FIELDS
 from src.clinical_pipeline import (
     NO_THINK_EXTRA_BODY,
+    PIPELINE_FIELDS,
+    PIPELINE_VERSION,
     BatchStop,
     CandidateError,
     MockLLMClient,
@@ -31,6 +33,7 @@ from src.clinical_pipeline import (
     parse_llm_json,
     preview_rows,
     process_response,
+    validate_finding,
 )
 from src.clinical_validation import norm_ws
 from src.run_clinical_batch import (
@@ -39,12 +42,17 @@ from src.run_clinical_batch import (
     acquire_lock,
     cache_path,
     main as cli_main,
+    parse_args,
     prepare,
     read_cache,
     read_state,
     run_batch,
     write_cache,
 )
+
+FIELDS = PIPELINE_FIELDS  # bulgular kendi şemamızla (FIELDS + procedure) üretilir
+PROCEDURE_REGEX = TREATMENT_REGEX["girişimsel"]
+TABLE_REPORT = []
 
 results = []
 
@@ -133,6 +141,62 @@ def test_offline(tmp):
     check("--think: extra_body yok", None, ok.requests[1].get("extra_body"))
     check("response_format=json_object", {"type": "json_object"}, ok.requests[0].get("response_format"))
 
+    # --max-tokens-param: varsayılan max_completion_tokens; max_tokens seçilebilir.
+    call_llm(ok, "m", [{"role": "user", "content": "{}"}] * 2, max_tokens=77, no_think=True,
+             max_retries=0, sleep=quiet, token_param="max_tokens")
+    check("varsayılan token parametresi max_completion_tokens", (10, False),
+          (ok.requests[0].get("max_completion_tokens"), "max_tokens" in ok.requests[0]))
+    check("--max-tokens-param max_tokens", (77, False),
+          (ok.requests[2].get("max_tokens"), "max_completion_tokens" in ok.requests[2]))
+    check("CLI --max-tokens-param", ("max_completion_tokens", "max_tokens"),
+          (parse_args([]).max_tokens_param, parse_args(["--max-tokens-param", "max_tokens"]).max_tokens_param))
+    try:
+        parse_args(["--max-tokens-param", "tokens"])
+        got = "kabul edildi"
+    except SystemExit:
+        got = "reddedildi"
+    check("CLI --max-tokens-param geçersiz değer", "reddedildi", got)
+    bad = ScriptedClient(lambda *_: (_ for _ in ()).throw(http_error(400)))
+    try:
+        call_llm(bad, "m", [{}, {"content": "{}"}], max_tokens=10, no_think=True, max_retries=0, sleep=quiet,
+                 token_param="max_tokens")
+        message = ""
+    except BatchStop as exc:
+        message = exc.message
+    check("max_tokens ile 400 mesajı tersini önerir", True, "--max-tokens-param max_completion_tokens" in message)
+
+    # procedure alanı: kendi şemamız + mevcut _validate_response.
+    text = "Catheter ablation reduced AF burden in patients with heart failure."
+    blank = dict.fromkeys(FIELDS)
+
+    def verdict(finding):
+        try:
+            return validate_finding(finding, text)
+        except ValueError as exc:
+            return str(exc)
+    only = verdict({**blank, "procedure": "Catheter ablation", "evidence_quote": text})
+    check("yalnız procedure: kabul (hiç klinik alan yok kuralına takılmaz)", "Catheter ablation",
+          only.get("procedure") if isinstance(only, dict) else only)
+    check("procedure + drug -> birden_fazla_mudahale", True,
+          str(verdict({**blank, "procedure": "Catheter ablation", "drug": "AF", "evidence_quote": text}))
+          .startswith("birden_fazla_mudahale"))
+    check("procedure + diagnostic_method -> birden_fazla_mudahale", True,
+          str(verdict({**blank, "procedure": "Catheter ablation", "diagnostic_method": "AF",
+                       "diagnosis": "AF", "evidence_quote": text})).startswith("birden_fazla_mudahale"))
+    check("alıntıda olmayan procedure reddedilir", True,
+          "procedure must be null or verbatim" in str(verdict({**blank, "procedure": "PCI", "evidence_quote": text})))
+    check("yalnız procedure: alıntı aday metninde birebir olmalı", True,
+          "evidence_quote is not a verbatim" in str(verdict({**blank, "procedure": "ablation",
+                                                              "evidence_quote": "ablation only"})))
+    check("yalnız procedure: diğer dolu alan da alıntıda birebir olmalı", True,
+          "must be null or verbatim" in str(verdict({**blank, "procedure": "Catheter ablation",
+                                                      "patient_group": "elderly", "evidence_quote": text})))
+    legacy = {k: v for k, v in blank.items() if k != "procedure"}
+    check("procedure alanı eksik bulgu reddedilir", "Missing or unexpected finding fields",
+          verdict({**legacy, "drug": "AF", "evidence_quote": text}))
+    check("hiç alan dolu değil -> reddedilir", "Finding has no clinical fields",
+          verdict({**blank, "evidence_quote": text}))
+
     # HTTP 400/422: iş durur; mesaj iki olasılığı söyler; gövde/anahtar sızmaz.
     for status in (400, 422):
         bad = ScriptedClient(lambda *_a, s=status: (_ for _ in ()).throw(http_error(s)))
@@ -143,9 +207,10 @@ def test_offline(tmp):
             stop = exc
         message = stop.message if stop else ""
         check(f"HTTP {status} -> iş durur", "sunucu_istegi_reddetti", stop.code if stop else None)
-        check(f"HTTP {status} mesajı (kod, tür, iki olasılık)", True,
+        check(f"HTTP {status} mesajı (kod, tür, üç olasılık)", True,
               all(s in message for s in (f"HTTP {status}", "BadRequestError", "enable_thinking", "--think",
-                                         "response_format=json_object")))
+                                         "response_format=json_object", "max_completion_tokens",
+                                         "--max-tokens-param max_tokens")))
         check(f"HTTP {status}: gövde/anahtar mesajda yok", True, "SECRET" not in message and "body" not in message)
         check(f"HTTP {status}: yeniden denenmedi", 1, len(bad.requests))
 
@@ -257,6 +322,14 @@ def read_jsonl(path):
         if path.exists() else []
 
 
+def procedure_finding(spans):
+    for span in spans:
+        match = PROCEDURE_REGEX.search(span)
+        if match:
+            return {**dict.fromkeys(FIELDS), "procedure": match.group(0), "evidence_quote": span}
+    return None
+
+
 def pick_scenarios(prepared):
     sources, to_send, _, _ = prepared
     chunks_for = lambda c: [norm_ws(t) for _, t in sources.ctx.chunks.get((c["document_id"], c["sayfa"]), [])]
@@ -271,6 +344,10 @@ def pick_scenarios(prepared):
         good = next((f for f in (drug_finding(s) for s in spans) if f), None)
         if cand["kaynak_turu"] == "tablo":
             picked.setdefault("tablo", item)
+            continue
+        proc = procedure_finding(spans)
+        if "islem" not in picked and proc and passes(item, proc):
+            picked["islem"] = item
             continue
         if not good or not passes(item, good):
             continue
@@ -310,6 +387,12 @@ def scenario_responder(picked, prepared):
         if key == "markdown":
             whole = drug_finding(item["candidate"]["cumle"])
             return make_response(findings_json({**whole, "evidence_quote": item["candidate"]["cumle"]}, good))
+        if key == "islem":
+            proc = procedure_finding(spans)
+            return make_response(findings_json(
+                proc,                                                  # yalnız procedure: geçerli
+                {**proc, "drug": proc["procedure"]},                    # procedure + drug
+                {**proc, "procedure": proc["procedure"] + " XYZ"}))     # alıntıda yok
         if key == "tablo":
             row = item["candidate"]["cumle"]
             cell = next(c.strip() for c in row.strip("|").split("|") if c.strip())
@@ -335,7 +418,7 @@ def test_database(tmp):
     check("her ayrılanın sebebi ve aday_id'si var", True, all(r["sebep"] and r["aday_id"] for r in excluded))
 
     picked = pick_scenarios(prepared)
-    check("senaryo adayları bulundu", 9, len(picked))
+    check("senaryo adayları bulundu", 10, len(picked))
     ids = [item["candidate"]["aday_id"] for item in picked.values()]
     key_of = {item["candidate"]["aday_id"]: key for key, item in picked.items()}
 
@@ -390,6 +473,72 @@ def test_database(tmp):
     check("summary.json hata_turu sayıları", True,
           json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["reddedilen_hata_turu"].get(
               "mudahale_alani_yok", 0) >= 1)
+
+    # procedure senaryoları (aynı yanıtta üç bulgu).
+    proc_row = next((w["satir"] for w in would if key_of[w["aday_id"]] == "islem"), None)
+    proc_note = json.loads(proc_row["taslak_notu"]) if proc_row else {}
+    expected_proc = procedure_finding(picked["islem"]["allowed_quote_spans"])["procedure"]
+    check("yalnız procedure: validate_row'dan geçti", True, bool(proc_row))
+    check("procedure -> mudahale_<dil>, mudahale_turu='tedavi'", (expected_proc, "tedavi"),
+          (proc_row and (proc_row["mudahale_en"] or proc_row["mudahale_tr"]), proc_row and proc_row["mudahale_turu"]))
+    check("procedure: otomatik_alanlar işareti", "otomatik (procedure alanından)",
+          proc_note.get("otomatik_alanlar", {}).get("mudahale_turu"))
+    check("procedure + drug -> birden_fazla_mudahale (loglandı)", True, ("islem", "birden_fazla_mudahale") in rej)
+    check("alıntıda olmayan procedure -> alan_alintida_yok", True, ("islem", "alan_alintida_yok") in rej)
+
+    # Otomatik doğrulama izi: her kaydedilecek satırda; deterministik; insan onayı yok.
+    trails = [json.loads(w["satir"]["taslak_notu"]).get("otomatik_dogrulama") for w in would]
+    required = {"alanlar_alintida_birebir (procedure dahil)", "guvenli_parca_icinde",
+                "validate_source: guncel_chunk_alintiyi_iceriyor", "validate_row: kanit_sayfada_birebir",
+                "validate_row: sayilar_kanitta", "validate_row: deger_kumeleri",
+                "validate_row: iliski_kontrolu (supported_local)", "sutun_siniri"}
+    check("doğrulama izi: her satırda var, insan_onayi='yok'", True,
+          bool(trails) and all(t and t["insan_onayi"] == "yok" for t in trails))
+    check("doğrulama izi: kontrol listesi", True,
+          all(required <= set(t["gecen_kontroller"]) and any(c.startswith("validate_row: icd10") for c in t["gecen_kontroller"])
+              for t in trails))
+    check("doğrulama izi: sürüm bilgileri", True,
+          all(t["surumler"]["pipeline_version"] == PIPELINE_VERSION and t["surumler"]["extraction_schema_version"]
+              for t in trails))
+    check("doğrulama izi: zaman damgası yok", True,
+          not any(k in json.dumps(trails) for k in ("zaman", "created_at", "tarih", "timestamp", "reviewed_at")))
+    gecerli = picked["gecerli"]
+    gecerli_finding = next(f for f in (drug_finding(s) for s in gecerli["allowed_quote_spans"]) if f)
+    rows_again, _, _ = process_response(findings_json(gecerli_finding), gecerli, sources, model="m")
+    first, _ = preview_rows(rows_again, gecerli, sources)
+    second, _ = preview_rows(rows_again, gecerli, sources)
+    check("doğrulama izi: aynı girdi -> aynı taslak_notu", True,
+          bool(first) and [r["taslak_notu"] for r in first] == [r["taslak_notu"] for r in second])
+
+    # Sütun sınırı -> alan_cok_uzun.
+    small = dataclasses.replace(sources, max_lengths={"kanit_cumle": 5})
+    passed, failed = preview_rows(rows_again, gecerli, small)
+    check("sütun sınırı aşımı -> alan_cok_uzun", (0, "alan_cok_uzun"),
+          (len(passed), failed[0]["hata_turu"] if failed else None))
+
+    # Tablo: en az bir simple tablo satırı validate_row'dan geçebiliyor mu? (rapor; testi kırmaz)
+    tables = [i for i in to_send if i["candidate"]["kaynak_turu"] == "tablo"]
+    passing_tables, error_dist = [], {}
+    for item in tables:
+        row_text = item["candidate"]["cumle"]
+        cells = [c.strip() for c in row_text.strip("|").split("|") if c.strip()]
+        tries = [f for f in (drug_finding(row_text), procedure_finding([row_text])) if f]
+        tries += [{**dict.fromkeys(FIELDS), "drug": cell, "evidence_quote": row_text} for cell in cells]
+        ok_any = False
+        for finding in tries:
+            rows, rejections, _ = process_response(findings_json(finding), item, sources, model="m")
+            good_rows, bad_rows = preview_rows(rows, item, sources)
+            for record in rejections + bad_rows:
+                label = record["hata_turu"] + (" / " + record["aciklama"].split(":")[0]
+                                               if record["hata_turu"] == "deger_kumesi_disi" else "")
+                error_dist[label] = error_dist.get(label, 0) + 1
+            ok_any = ok_any or bool(good_rows)
+        if ok_any:
+            passing_tables.append(item["candidate"]["aday_id"])
+    TABLE_REPORT.extend([f"simple tablo adayı: {len(tables)}; en az bir denemesi validate_row'dan geçen: "
+                         f"{len(passing_tables)}", f"geçmeyen denemelerin hata_turu dağılımı: {error_dist}"])
+    check("tablo: validate_row'dan geçebilen satır (bilgi, testi kırmaz)", "≥1 beklenir",
+          f"{len(passing_tables)}/{len(tables)}", True)
 
     # --- B2: ilk çalıştırma kuralı ve API anahtarı ---
     fresh = Path(tmp) / "b2"
@@ -501,6 +650,11 @@ def test_database(tmp):
     check("--from-cache: iki bilgisayarda aynı satırlar", True, bool(rows_b) and rows_b == rows_c)
     check("--from-cache: taslak_notu'nda run_id yok", True, all("run_id" not in json.loads(r["taslak_notu"])
                                                                  for r in rows_b))
+    check("--from-cache: doğrulama izi iki bilgisayarda aynı", True,
+          all(json.loads(r["taslak_notu"]).get("otomatik_dogrulama", {}).get("insan_onayi") == "yok"
+              for r in rows_b)
+          and [json.loads(r["taslak_notu"])["otomatik_dogrulama"] for r in rows_b]
+          == [json.loads(r["taslak_notu"])["otomatik_dogrulama"] for r in rows_c])
 
     # --- B7: --dry-run ---
     mid = db_counts()
@@ -538,6 +692,12 @@ def main():
     for name, exp, act, passed in results:
         print(f"{name:<{width}}  {exp[:24]:<24}  {act[:40]:<40}  {'OK' if passed else 'HATA'}")
     failed = [r for r in results if not r[3]]
+    print()
+    print("Tablo raporu (bilgi):")
+    for line in TABLE_REPORT:
+        print(f"  {line}")
+    if TABLE_REPORT and TABLE_REPORT[0].endswith(": 0"):
+        print("  UYARI: hiçbir simple tablo satırı validate_row'dan geçemiyor (test kırmızı yapılmadı).")
     print()
     if failed:
         print(f"BAŞARISIZ: {len(failed)}/{len(results)} kontrol geçmedi.")

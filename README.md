@@ -275,7 +275,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_makaleler` | Hocanın satırı (`document_id` NULL) olmadığını ve işlemlerden önce/sonra parmak izinin aynı kaldığını, bizim 6 satırı, `ozet_tr_kaynak` dağılımını (`orijinal` yalnızca TK, 4 `llm_ceviri` + model), ikinci yazımda çoğalma olmadığını ve çevirilerin silinmediğini kontrol eder. Not: bizim 6 satırı aynı değerlerle yeniden yazar. |
 | `test_rag_kayit` | `save_rag_result`'ı gerçek `answer_question` (`use_llm=False`) çıktısıyla dener; reranker yer tutucuyla değiştirilir, model indirmez. Bütün yazımlar geri alınır. |
 | `test_klinik_bulgular` | Referans taslağı `save_clinical_findings` ile yazar, bozuk satırların reddini, VIEW sayılarını ve hoca tablolarını kontrol eder. Bütün yazımlar geri alınır. |
-| `test_clinical_pipeline` | Klinik çıkarım toplu işi, sahte LLM ile: aday ayırma, bulgu bazında red, `<think>`/HTTP 400 davranışı, devam etme, kilit, `--no-save`, `--mock`, `--from-cache` (iki "bilgisayarda" aynı satırlar), `--dry-run`. Bütün yazımlar geri alınır; sonda sayılar karşılaştırılır. |
+| `test_clinical_pipeline` | Klinik çıkarım toplu işi, sahte LLM ile: aday ayırma, bulgu bazında red, `procedure` senaryoları, otomatik doğrulama izi, `alan_cok_uzun`, `<think>`/HTTP 400 ve `--max-tokens-param` davranışı, devam etme, kilit, `--no-save`, `--mock`, `--from-cache` (iki "bilgisayarda" aynı satırlar), `--dry-run`. Bütün yazımlar geri alınır; sonda sayılar karşılaştırılır. |
 
 **MySQL gerektirmeyenler:**
 
@@ -315,6 +315,10 @@ python -m evaluation.chunk_remap_report
 
 `src.clinical_candidates`'in 660 adayını LLM ile işler; `validate_row`'dan geçen bulgular `klinik_bulgular`'a **`review_status = 'pending'`** ile yazılır. İnsan onayı üretilmez; otomatik atanan değerler (`mudahale_turu`, dil, `chunk_id` seçimi, tablo alıntısının genişletilmesi) `taslak_notu.otomatik_alanlar`'da işaretlenir.
 
+- **Yanıt şeması:** `clinical_extraction.FIELDS` + `procedure` (adı açıkça geçen girişimsel/cerrahi/cihaz işlemi: catheter ablation, PCI, CABG, stent, cardioversion, LAAO…). Bir bulguda `drug`, `procedure`, `diagnostic_method`'dan **tam olarak biri** dolu olmalıdır: hiçbiri yoksa `mudahale_alani_yok`, birden fazlaysa `birden_fazla_mudahale` ile reddedilip loglanır. `procedure` → `mudahale_<dil>`, `mudahale_turu = 'tedavi'`; `diagnostic_method` → `'tanı testi'`; `drug` → `'tedavi'`. Her dolu alan (procedure dahil) alıntıda birebir geçmelidir; `procedure` ayrıldıktan sonra bulgu mevcut `_validate_response`'tan aynen geçer.
+- **Sürüm:** `pipeline_version` = `clinical-pipeline-v1-<prompt+şema hash'i>`. Prompt veya şema değişince kendiliğinden değişir; önceki sürümün `state.jsonl` kayıtları ve `responses/<eski sürüm>/` önbelleği kullanılmaz (adaylar yeniden işlenir, eski satırlar silinmez). `procedure` eklenmesiyle sürüm değişti; önceki sürümle alınmış yanıtlar yeni sürümde geçersizdir.
+- **Otomatik doğrulama izi:** kaydedilecek her satırın `taslak_notu.otomatik_dogrulama` alanında geçtiği kontrollerin listesi (alıntı ve alanlar birebir, güvenli parça içinde, `validate_source`, `validate_row`: ilişki / değer kümeleri / ICD / kanıt sayfada / sayılar kanıtta, sütun sınırı), kontrol sürümleri ve `"insan_onayi": "yok"` bulunur. Zaman damgası içermez; aynı önbellekle her bilgisayarda aynıdır. Otomatik kontroller klinik doğruluğu kanıtlamaz.
+
 ```powershell
 python -m src.run_clinical_batch --dry-run              # hazırlık raporu; LLM ve yazım yok
 python -m src.run_clinical_batch --mock --limit 20      # sahte LLM; yazımlar sonunda geri alınır
@@ -325,7 +329,7 @@ python -m src.run_clinical_batch --from-cache           # LLM yok; önbellekteki
 
 - **LLM'e gitmeden ayrılanlar** (sebebiyle `excluded.jsonl`'a yazılır): başlık satırları (24), sayfa aşan cümleler (18), karmaşık tablolar (16) ve doğrulanabilir parçasında kalıp kalmayanlar (`guvenli_parca_yok`). Kalan 601 aday LLM'e gider (aday başına bir çağrı).
 - **Güvenli alıntı parçaları:** `validate_row` kanıtı markdown'u temizlenmiş sayfada, `validate_source` ham chunk'ta arar. LLM'e, aday cümlesinin ikisinde de birebir geçen parçaları (`allowed_quote_spans`) verilir; alıntı tek bir parçanın içinde olmalıdır. Alıntı birden fazla chunk'ta geçiyorsa en küçük `chunk_index`'li chunk seçilir.
-- **Hata yönetimi:** bir bulgunun reddi yalnızca o bulguyu, bozuk yanıt veya API hatası yalnızca o adayı etkiler (geçici hatalar 3 kez yeniden denenir). İş yalnızca ayar hatalarında, HTTP 400/422'de (`enable_thinking` veya `json_object` desteği) ve üst üste 5 aday hatasında durur; aynı komut kaldığı yerden devam eder.
+- **Hata yönetimi:** bir bulgunun reddi yalnızca o bulguyu, bozuk yanıt veya API hatası yalnızca o adayı etkiler (geçici hatalar 3 kez yeniden denenir). İş yalnızca ayar hatalarında, HTTP 400/422'de (olası sebepler: `enable_thinking`, `json_object` desteği veya `max_completion_tokens` parametresi; mesaj hangi seçenekle deneneceğini söyler) ve üst üste 5 aday hatasında durur; aynı komut kaldığı yerden devam eder. Sütun sınırını aşan satır `alan_cok_uzun` ile reddedilir.
 
 | Seçenek | Anlamı |
 |---|---|
@@ -338,6 +342,7 @@ python -m src.run_clinical_batch --from-cache           # LLM yok; önbellekteki
 | `--retry-failed` / `--reprocess` | `hata` durumundakileri yeniden dene / bu sürümle işlenmişleri yeniden işle |
 | `--force` | İlk çalıştırma kuralını aş |
 | `--think` / `--no-think` | Qwen3 thinking (varsayılan `--no-think`: `enable_thinking=false` gönderilir; `<think>` blokları her durumda ayıklanır) |
+| `--max-tokens-param {max_completion_tokens,max_tokens}` | Token sınırı parametresinin adı (varsayılan `max_completion_tokens`; eski sunucular `max_tokens` ister) |
 | `--model`, `--timeout`, `--max-retries`, `--max-consecutive-errors` | Model adı (varsayılan `.env` `LLM_MODEL`) ve sınırlar |
 | `--unlock` | Kalmış kilit dosyasını siler |
 
@@ -378,6 +383,7 @@ Reddedilen bulgular şimdilik yalnızca `rejected.jsonl`'dadır (veritabanına a
 - **`data/clinical/referans_taslak.json` doğrulanmamıştır.** Aday cümlelerden hazırlanmış bir karşılaştırma referansıdır (`meta.durum = "dogrulanmamis_referans"`); insan kontrolünden geçmemiştir ve `klinik_bulgular`'a doğrudan girmez.
 - **Klinik çıkarımda `satir_hash` `taslak_notu`'nu kapsamıyor.** Aynı kanıttan, SQL sütunları aynı ama yalnızca `taslak_notu`'ndaki alanlarda (ör. İngilizce sonuç ölçütü) farklı iki bulgu tek satıra iner; ikincisi `zaten_var` sayılır.
 - **İngilizce sonuç ölçütleri VIEW'larda görünmez.** `clinical_outcome` yalnızca Türkçe kaynakta `sonuc_olcutu_tr`'ye yazılır; İngilizce olanlar `taslak_notu.extracted_fields`'tadır, `v_tani_tedavi` / `v_sonuclar` bunları göstermez.
+- **Tablo satırlarından klinik bulgu şu an kaydedilemiyor.** `validate_row`'un ilişki kontrolü tablo satırında ilacı/müdahaleyi "drug / intervention / treatment" başlıklı bir sütunda arıyor; 31 basit tablonun hiçbirinde böyle bir sütun yok. Sahte LLM ile 31 tablo adayından çıkan 23 bulgunun hepsi `clinical_relationship_uncertain` ile reddedildi (`test_clinical_pipeline` her koşuda raporlar).
 
 ## Güvenlik
 
