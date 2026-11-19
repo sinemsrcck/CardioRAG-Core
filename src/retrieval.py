@@ -5,6 +5,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 from src.embeddings import embed_query
+from src.query_normalization import retrieval_queries
 
 
 def tokenize(text):
@@ -115,7 +116,7 @@ def bm25_search(question, chunks, top_k=20):
 
 
 
-def rrf_fusion(semantic_hits, bm25_hits, k=60, top_k=10):
+def rrf_fusion(semantic_hits, bm25_hits, k=60, top_k=10, additional_rankings=()):
     """Semantic Search ve BM25 sonuçlarını RRF ile birleştirir."""
     scores = {}
     merged = {}
@@ -123,7 +124,7 @@ def rrf_fusion(semantic_hits, bm25_hits, k=60, top_k=10):
     for score_type, hits in (
         ("semantic_score", semantic_hits),
         ("bm25_score", bm25_hits),
-    ):
+    ) + tuple(additional_rankings):
         for rank, hit in enumerate(hits, start=1):
             chunk_id = hit["chunk_id"]
 
@@ -163,14 +164,13 @@ def hybrid_search(
     top_k=10,
     candidate_k=20,
 ):
-    semantic_hits = semantic_search(
-        question, chunks, model_name, candidate_k
-    )
-
-    bm25_hits = bm25_search(
-        question, chunks, candidate_k
-    )
-
+    queries = retrieval_queries(question, model_name)
+    semantic_hits = semantic_search(queries[0], chunks, model_name, candidate_k)
+    bm25_hits = bm25_search(queries[0], chunks, candidate_k)
+    additional = []
+    for query in queries[1:]:
+        additional.extend((("semantic_score", semantic_search(query, chunks, model_name, candidate_k)),
+                           ("bm25_score", bm25_search(query, chunks, candidate_k))))
     return rrf_fusion(
-        semantic_hits, bm25_hits, top_k=top_k
+        semantic_hits, bm25_hits, top_k=top_k, additional_rankings=additional
     )

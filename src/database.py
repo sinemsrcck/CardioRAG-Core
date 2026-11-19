@@ -975,15 +975,16 @@ def _validate_rag_sources(conn, result, source_rows):
         cursor.close()
 
 
-def archive_rag_result(result, path):
-    """Explicit opt-in UTF-8 archive of public result fields; never overwrite."""
+def public_rag_payload(result):
+    """JSON-safe redacted result, including optional restricted audit fields."""
     _rag_identity_and_latency(result)
     _rag_source_rows(result)
     allowed = {"query_id", "question", "answer", "status", "sources", "citation_check",
-        "cited_sources", "unused_sources", "claim_verification", "generation_error",
+        "cited_sources", "unused_sources", "claim_verification", "claims_verified", "claims_verification_scope", "generation_error",
         "retrieved_count", "selected_count", "response_time_seconds", "embedding_model",
         "reranker_model", "rerank_method", "max_chunks_per_document", "selection_policy",
-        "llm_enabled", "llm_model", "evidence_check", "debug", "top_rerank_score"}
+        "llm_enabled", "llm_model", "evidence_check", "debug", "top_rerank_score",
+        "audit", "run_provenance"}
     secrets = [v for k, v in os.environ.items() if len(v) >= 4 and
                any(w in k.upper() for w in ("KEY", "TOKEN", "PASSWORD", "SECRET"))]
     def clean(value):
@@ -1002,6 +1003,22 @@ def archive_rag_result(result, path):
             return value
         raise ValueError("Non-JSON object in result")
     payload = clean({k: v for k, v in result.items() if k in allowed})
+    for source in payload.get("sources", []):
+        if source.get("source_text") is not None:
+            digest = hashlib.sha256(source["source_text"].encode("utf-8")).hexdigest()
+            if digest != source.get("text_sha256"):
+                raise ValueError("Source redaction would break archive text/hash integrity")
+    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, indent=2)
+    return json.loads(serialized)
+
+
+def archive_rag_result(result, path):
+    """Explicit opt-in UTF-8 archive; audit may contain rejected model text.
+
+    This artifact is for restricted inspection, never a user-answer endpoint.
+    Existing files are never overwritten.
+    """
+    payload = public_rag_payload(result)
     serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, indent=2)
     with Path(path).open("x", encoding="utf-8") as handle:
         handle.write(serialized + "\n")
@@ -1042,8 +1059,13 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
     evidence = result.get("evidence_check") or {}
     query_id, latency_ms = _rag_identity_and_latency(result)
     llm_enabled = result.get("llm_enabled", True)
-    if result.get("status") is not None and result["status"] != "generated":
+    if result.get("status") is not None and result["status"] not in ("generated", "citation_validation_failed", "claim_validation_failed"):
         llm_enabled = False
+    citation_payload = result.get("citation_check")
+    if citation_payload is not None and result.get("claim_verification") is not None:
+        # Keep syntax and scoped claim checks distinct inside the existing JSON column.
+        citation_payload = {**citation_payload, "claim_verification": result["claim_verification"],
+                            "generation_status": result.get("status")}
     query_row = {
         "query_id": query_id,
         "question": question,
@@ -1056,8 +1078,8 @@ def save_rag_result(result, question, llm_model=None, embedding_model=None,
         "guard_reason": evidence.get("reason"),
         "latency_ms": latency_ms,
         "rerank_method": result.get("rerank_method"),
-        "citation_check": (json.dumps(result["citation_check"], ensure_ascii=False, allow_nan=False)
-                           if result.get("citation_check") is not None else None),
+        "citation_check": (json.dumps(citation_payload, ensure_ascii=False, allow_nan=False)
+                           if citation_payload is not None else None),
     }
     if not query_row["embedding_model"]:
         # rag_sorgulari.embedding_model NOT NULL

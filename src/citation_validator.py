@@ -19,7 +19,7 @@ def extract_citations(answer):
 
 
 def validate_citations(answer, sources):
-    """Atıf numaralarını ve atıfsız paragrafları kontrol eder."""
+    """Conservative sentence/list citation syntax, never scientific entailment."""
     valid_numbers = {
         source["number"] for source in sources
     }
@@ -45,11 +45,30 @@ def validate_citations(answer, sources):
 
     invalid = sorted(cited_numbers - valid_numbers)
 
+    # A citation on one sentence does not cover another sentence in its paragraph.
+    # A citation immediately following sentence punctuation attaches to that sentence.
+    units = []
+    for paragraph in paragraphs:
+        for block in re.split(r"\n(?=\s*(?:[-*•]|\d+[.)])\s+)", paragraph):
+            for part in re.split(r"(?<=[.!?])\s+", block):
+                prefix = re.match(r"^(\s*(?:\[[\d,\s]+\]\s*)+)(.*)$", part, re.S)
+                if prefix and units:
+                    units[-1] += " " + prefix[1].strip()
+                    part = prefix[2]
+                if part.strip() and not re.fullmatch(r"[\s.!?]+", part):
+                    units.append(part.strip())
+    uncited_units = [i for i, unit in enumerate(units, 1) if not extract_citations(unit)]
+    missing_sources = sorted({source["number"] for source in sources
+        if any(source.get(key) in (None, "") for key in
+               ("filename", "document_id", "chunk_id", "page_number"))})
+
     return {
         "valid": (
             bool(cited_numbers)
             and not invalid
             and not paragraphs_without_citations
+            and not uncited_units
+            and not missing_sources
         ),
         "used_citations": sorted(cited_numbers),
         "invalid_citations": invalid,
@@ -57,6 +76,8 @@ def validate_citations(answer, sources):
             valid_numbers - cited_numbers
         ),
         "paragraphs_without_citations": paragraphs_without_citations,
+        "units_without_citations": uncited_units,
+        "missing_source_references": missing_sources,
         "unique_document_count": len(unique_documents),
     }
 

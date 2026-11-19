@@ -11,6 +11,7 @@ TEST_CHUNKS = [
         "chunk_id": 1,
         "document_id": 101,
         "filename": "cardiology_test.pdf",
+        "processing_version": "mock-active-v1",
         "page_number": 2,
         "text": (
             "Atrial fibrillation is associated with an increased "
@@ -23,6 +24,7 @@ TEST_CHUNKS = [
         "chunk_id": 2,
         "document_id": 102,
         "filename": "heart_failure_test.pdf",
+        "processing_version": "mock-active-v1",
         "page_number": 3,
         "text": (
             "Heart failure is a clinical syndrome characterized "
@@ -112,7 +114,7 @@ class ProductionGateTests(unittest.TestCase):
     def setUp(self):
         self.search = patch("src.rag.hybrid_search", side_effect=fake_hybrid_search).start()
         self.rank = patch("src.rag.rerank", side_effect=fake_rerank).start()
-        self.generate = patch("src.rag.generate_answer", return_value="Supported answer [1].").start()
+        self.generate = patch("src.rag.generate_answer", return_value="Atrial fibrillation is associated with an increased risk of ischemic stroke [1].").start()
         self.client = patch("src.rag.get_llm_client", side_effect=AssertionError("API forbidden")).start()
         self.addCleanup(patch.stopall)
 
@@ -715,7 +717,7 @@ class DemoEvidenceSelectionTests(unittest.TestCase):
         hit={**TEST_CHUNKS[0],"text":text,"rerank_score":100.0}
         with patch("src.rag.hybrid_search",return_value=[hit]), \
              patch("src.rag.rerank",return_value=[hit]), \
-             patch("src.rag.generate_answer",return_value="Supported answer [1].") as generate:
+             patch("src.rag.generate_answer",return_value=text.strip()+" [1]") as generate:
             result=answer_question(question,[hit],use_llm=True)
         return result,generate
 
@@ -818,7 +820,7 @@ class SafeRAGGenerationTests(unittest.TestCase):
         self.client=Mock()
         self.client.with_options.return_value=self.client
         self.client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(
-            finish_reason="stop",message=SimpleNamespace(content="Anticoagulation may reduce stroke risk [1]."))])
+            finish_reason="stop",message=SimpleNamespace(content="Anticoagulation may reduce stroke risk in appropriately selected patients [1]."))])
         self.factory=self.enterContext(patch("src.rag.get_llm_client",return_value=self.client))
         self.enterContext(patch("src.rag.hybrid_search",side_effect=fake_hybrid_search))
         self.enterContext(patch("src.rag.rerank",side_effect=fake_rerank))
@@ -905,8 +907,9 @@ class SafeRAGGenerationTests(unittest.TestCase):
         self.assertEqual(len(result["sources"]),2)
         self.assertEqual([s["chunk_id"] for s in result["cited_sources"]],[1])
         self.assertEqual([s["chunk_id"] for s in result["unused_sources"]],[2])
-        self.assertEqual(result["claim_verification"]["status"],"not_performed")
-        self.assertIsNone(result["claim_verification"]["all_claims_supported"])
+        self.assertEqual(result["claim_verification"]["status"],"passed")
+        self.assertTrue(result["claim_verification"]["all_claims_supported"])
+        self.assertFalse(result["claim_verification"]["scientific_verification"])
         self.assertFalse(result["citation_check"]["claims_verified"])
 
     def test_even_syntactically_valid_citation_does_not_verify_invented_claim(self):
@@ -915,7 +918,9 @@ class SafeRAGGenerationTests(unittest.TestCase):
         self.assertTrue(result["citation_check"]["valid"])
         self.assertEqual(result["citation_check"]["scope"],"citation_syntax_only")
         self.assertFalse(result["citation_check"]["claims_verified"])
-        self.assertIsNone(result["claim_verification"]["all_claims_supported"])
+        self.assertFalse(result["claim_verification"]["all_claims_supported"])
+        self.assertEqual(result["status"], "claim_validation_failed")
+        self.assertIsNone(result["answer"])
 
     def test_unknown_citation_cannot_invent_a_cited_source(self):
         self.client.chat.completions.create.return_value.choices[0].message.content="Claim [99]."
@@ -960,6 +965,160 @@ class SafeRAGGenerationTests(unittest.TestCase):
         self.assertEqual(len(attempts),1)
         self.assertEqual(result["generation_error"]["code"],"llm_timeout")
         self.assertEqual(result["status"],"generation_failed")
+
+
+
+
+class CitationSafetyAndTraceTests(unittest.TestCase):
+    setUp = SafeRAGGenerationTests.setUp
+    run_rag = SafeRAGGenerationTests.run_rag
+
+    def test_valid_answer_preserves_complete_source_trace(self):
+        import hashlib
+        result = self.run_rag()
+        self.assertEqual(result["status"], "generated")
+        source = result["sources"][0]
+        for key in ("filename", "document_id", "chunk_id", "page_number", "source_text",
+                    "evidence_text", "text_sha256", "processing_version"):
+            self.assertIsNotNone(source[key])
+        self.assertEqual(source["source_text"], TEST_CHUNKS[0]["text"])
+        self.assertEqual(source["text_sha256"], hashlib.sha256(source["source_text"].encode()).hexdigest())
+        self.assertEqual(source["processing_version"], "mock-active-v1")
+        self.assertFalse(result["citation_check"]["claims_verified"])
+
+    def test_invalid_number_hides_model_answer_without_retry(self):
+        self.client.chat.completions.create.return_value.choices[0].message.content = "INVALID_REPLY [99]."
+        result = self.run_rag()
+        self.assertEqual(result["status"], "citation_validation_failed")
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["cited_sources"], [])
+        self.assertNotIn("INVALID_REPLY", repr(result))
+        self.client.chat.completions.create.assert_called_once()
+        self.assertIsNotNone(result["llm_model"])
+
+    def test_uncited_sentence_in_same_paragraph_is_rejected(self):
+        self.client.chat.completions.create.return_value.choices[0].message.content = (
+            "AF is associated with stroke [1]. This treatment eliminates mortality.")
+        result = self.run_rag()
+        self.assertEqual(result["status"], "citation_validation_failed")
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["citation_check"]["units_without_citations"], [2])
+
+    def test_citation_after_period_cannot_cover_next_sentence(self):
+        from src.citation_validator import validate_citations
+        _, sources = build_context(TEST_CHUNKS[:1])
+        result = validate_citations("First claim. [1] Second claim.", sources)
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["units_without_citations"], [2])
+
+    def test_uncited_list_item_is_rejected(self):
+        self.client.chat.completions.create.return_value.choices[0].message.content = (
+            "- AF is associated with stroke [1]\n- Treatment eliminates mortality")
+        result = self.run_rag()
+        self.assertEqual(result["status"], "citation_validation_failed")
+        self.assertIsNone(result["answer"])
+
+    def test_missing_referenced_source_is_rejected(self):
+        from src.citation_validator import validate_citations
+        self.assertFalse(validate_citations("Claim [1].", [])["valid"])
+        malformed = [{"number": 1, "filename": "a.pdf", "document_id": "a", "page_number": 1}]
+        check = validate_citations("Claim [1].", malformed)
+        self.assertFalse(check["valid"])
+        self.assertEqual(check["missing_source_references"], [1])
+
+    def test_missing_metadata_abstains_before_llm(self):
+        chunks = [dict(TEST_CHUNKS[0], processing_version=None)]
+        result = self.run_rag(chunks)
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.assertEqual(result["evidence_check"]["reason"], "missing_source_metadata")
+        self.factory.assert_not_called()
+
+    def test_missing_pdf_filename_cannot_be_replaced_with_a_fake_reference(self):
+        result = self.run_rag([dict(TEST_CHUNKS[0], filename=None)])
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.factory.assert_not_called()
+
+    def test_missing_source_identity_after_generation_hides_answer(self):
+        def corrupt_reference(question, context, sources):
+            sources[0].pop("chunk_id")
+            return "Claim [1]."
+        with patch("src.rag.generate_answer", side_effect=corrupt_reference):
+            result = self.run_rag()
+        self.assertEqual(result["status"], "citation_validation_failed")
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["citation_check"]["missing_source_references"], [1])
+
+    def test_sentence_punctuation_before_citation_is_supported(self):
+        from src.citation_validator import validate_citations
+        _, sources = build_context(TEST_CHUNKS[:1])
+        self.assertTrue(validate_citations("First claim. [1] Second claim. [1]", sources)["valid"])
+
+    def test_decimal_in_cited_sentence_does_not_create_uncited_units(self):
+        from src.citation_validator import validate_citations
+        _, sources = build_context(TEST_CHUNKS[:1])
+        self.assertTrue(validate_citations("The AUC was 0.712 [1].", sources)["valid"])
+
+    def test_hash_mismatch_abstains_before_llm(self):
+        chunks = [dict(TEST_CHUNKS[0], text_sha256="0" * 64)]
+        result = self.run_rag(chunks)
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.factory.assert_not_called()
+
+    def test_retrieval_only_preserves_trace_without_llm_or_claim_verifier(self):
+        with patch("src.citation_validator.verify_claim", side_effect=AssertionError("No verifier")), \
+             patch("src.database.get_connection", side_effect=AssertionError("No SQL")):
+            result = answer_question("Atriyal fibrilasyonun inme riski nedir?", TEST_CHUNKS, use_llm=False)
+        self.assertEqual(result["status"], "retrieval_only")
+        self.assertIsNone(result["answer"])
+        self.assertIsNone(result["citation_check"])
+        self.assertEqual(result["sources"][0]["source_text"], TEST_CHUNKS[0]["text"])
+        self.factory.assert_not_called()
+
+    def test_empty_sources_keep_insufficient_evidence(self):
+        result = self.run_rag([])
+        self.assertEqual(result["status"], "insufficient_evidence")
+        self.factory.assert_not_called()
+
+    def test_archive_round_trip_retains_evidence_hash_version_and_rejection(self):
+        import json, tempfile
+        from pathlib import Path
+        from src.database import archive_rag_result
+        result = self.run_rag()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.json"
+            archive_rag_result(result, path)
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(loaded["sources"], result["sources"])
+            self.assertEqual(loaded["cited_sources"], result["cited_sources"])
+            self.client.chat.completions.create.return_value.choices[0].message.content = "INVALID_REPLY [99]."
+            rejected = self.run_rag()
+            rejected_path = Path(directory) / "rejected.json"
+            archive_rag_result(rejected, rejected_path)
+            text = rejected_path.read_text(encoding="utf-8")
+            self.assertNotIn("INVALID_REPLY", text)
+            self.assertEqual(json.loads(text)["status"], "citation_validation_failed")
+
+    def test_archive_redaction_never_silently_breaks_source_hash(self):
+        import tempfile
+        from pathlib import Path
+        from src.database import archive_rag_result
+        result = self.run_rag([dict(TEST_CHUNKS[0], text=TEST_CHUNKS[0]["text"] + " mock-private-secret")])
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LLM_API_KEY": "mock-private-secret"}):
+            path = Path(directory) / "result.json"
+            with self.assertRaisesRegex(ValueError, "integrity"):
+                archive_rag_result(result, path)
+            self.assertFalse(path.exists())
+
+    def test_citation_failure_can_be_adapted_without_exposing_answer(self):
+        from src.clinical_extraction import prepare_rag_save_kwargs
+        chunks = [dict(TEST_CHUNKS[0], chunk_id="mock-chunk")]
+        self.client.chat.completions.create.return_value.choices[0].message.content = "Claim [99]."
+        result = self.run_rag(chunks)
+        result["reranker_model"] = "minilm"
+        prepared = prepare_rag_save_kwargs(result)["result"]
+        self.assertIsNone(prepared["answer"])
+        self.assertTrue(prepared["llm_enabled"])
+        self.assertEqual(prepared["llm_model"], result["llm_model"])
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import os
 import time
 import uuid
+import hashlib
 
 from dotenv import load_dotenv
 from openai import OpenAI, APITimeoutError
@@ -9,7 +10,9 @@ from src.retrieval import hybrid_search
 from src.reranker import rerank, rerank_hybrid
 from src.source_diversity import select_diverse_sources
 from src.citation_validator import validate_citations
+from src.claim_validator import validate_claims, SCOPE as CLAIM_VALIDATION_SCOPE
 from src.evidence_guard import check_evidence
+from src.query_normalization import retrieval_queries, reranking_query, policy as query_policy
 
 load_dotenv()
 
@@ -52,18 +55,24 @@ def build_context(chunks, max_chars=14000):
     used_chars = 0
 
     for chunk in chunks:
-        text = chunk.get("text", "").strip()
+        source_text = chunk.get("text", "")
+        if not isinstance(source_text, str):
+            continue
+        text = source_text.strip()
         if not text:
             continue
+        text_sha256 = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        if chunk.get("text_sha256") not in (None, text_sha256):
+            continue  # Never send text that differs from its declared source hash.
 
-        filename = chunk.get("filename", "Bilinmeyen PDF")
+        filename = chunk.get("filename")
         page_number = chunk.get("page_number", "?")
 
         source_number = len(sources) + 1
 
         section = (
             f"[{source_number}]\n"
-            f"Dosya: {filename}\n"
+            f"Dosya: {filename or 'Bilinmeyen PDF'}\n"
             f"Sayfa: {page_number}\n"
             f"Chunk ID: {chunk.get('chunk_id')}\n"
             f"Metin:\n{text}"
@@ -79,6 +88,10 @@ def build_context(chunks, max_chars=14000):
             "document_id": chunk.get("document_id"),
             "filename": filename,
             "page_number": page_number,
+            "source_text": source_text,
+            "evidence_text": text,
+            "text_sha256": text_sha256,
+            "processing_version": chunk.get("processing_version"),
             "semantic_score": chunk.get("semantic_score"),
             "bm25_score": chunk.get("bm25_score"),
             "rrf_score": chunk.get("rrf_score"),
@@ -190,6 +203,7 @@ def answer_question(
     use_llm=True,
     max_chunks_per_document=2,
     min_relevance_score=None,
+    retain_audit=False,
 ):
     """Kaynak seçimi, yanıt üretimi ve atıf kontrolü."""
     start_time = time.perf_counter()
@@ -260,8 +274,15 @@ def answer_question(
                 "reason": "no_usable_context",
                 "chunks": [],
             }
+        elif use_llm and any(not source.get("processing_version") or
+                type(source.get("page_number")) is not int or source["page_number"] < 1 or
+                any(source.get(key) in (None, "", "?") for key in
+                    ("filename", "document_id", "chunk_id", "page_number"))
+                for source in sources):
+            evidence_check = {"sufficient": False, "reason": "missing_source_metadata", "chunks": []}
 
     generation_error = None
+    generated_answer = None
     if not evidence_check["sufficient"]:
         context, sources = "", []
         status = "insufficient_evidence"
@@ -274,6 +295,7 @@ def answer_question(
     else:
         try:
             answer = generate_answer(question, context, sources)
+            generated_answer = answer
             status = "generated"
         except RAGGenerationError as exc:
             status, answer = "generation_failed", None
@@ -289,21 +311,38 @@ def answer_question(
     )
     if citation_check is not None:
         citation_check = {**citation_check, "scope": "citation_syntax_only", "claims_verified": False}
-    cited_numbers = set(citation_check["used_citations"]) if citation_check else set()
+    if status == "generated" and (citation_check is None or not citation_check["valid"]):
+        status, answer = "citation_validation_failed", None
+    claim_verification = {"status": "not_performed", "scope": CLAIM_VALIDATION_SCOPE,
+        "claims_verified": False, "all_claims_supported": None,
+        "scientific_verification": False, "expert_approved": False, "claims": []}
+    if status == "generated":
+        try:
+            claim_verification = validate_claims(answer, sources, question=question)
+        except Exception:
+            claim_verification = {**claim_verification, "status": "failed",
+                "all_claims_supported": False, "error": "claim_validator_error"}
+        if not claim_verification["claims_verified"]:
+            status, answer = "claim_validation_failed", None
+    cited_numbers = set(citation_check["used_citations"]) if citation_check and status == "generated" else set()
     # Citation use is declared by the answer, not proof of factual entailment.
-    cited_sources = [source for source in sources if source["number"] in cited_numbers]
+    cited_sources = [source for source in sources if source["number"] in cited_numbers] if status == "generated" else []
 
     elapsed = time.perf_counter() - start_time
 
     return {
         "question": question,
+        **({"audit": {"generated_answer": generated_answer,
+                       "scope": "restricted_audit_not_user_answer"}} if retain_audit else {}),
         "answer": answer,
         "status": status,
         "sources": sources,
         "citation_check": citation_check,
         "cited_sources": cited_sources,
         "unused_sources": [source for source in sources if source["number"] not in cited_numbers],
-        "claim_verification": {"status": "not_performed", "all_claims_supported": None},
+        "claim_verification": claim_verification,
+        "claims_verified": claim_verification["claims_verified"],
+        "claims_verification_scope": CLAIM_VALIDATION_SCOPE,
         "generation_error": generation_error,
         "retrieved_count": len(retrieved),
         "selected_count": len(sources),
@@ -315,13 +354,17 @@ def answer_question(
         "max_chunks_per_document": max_chunks_per_document,
         "selection_policy": "eligible_top_k_no_backfill",
         "llm_enabled": use_llm,
-        "llm_model": DEFAULT_LLM if status == "generated" else None,
+        "llm_model": DEFAULT_LLM if status in ("generated", "citation_validation_failed", "claim_validation_failed") else None,
         "evidence_check": {
             "sufficient": evidence_check["sufficient"],
             "reason": evidence_check["reason"],
             "scope": "demo_facets_v1_not_clinical_verification",
         },
         "debug": {
+            "query_normalization": {"retrieval_policy": query_policy(embedding_model),
+                "retrieval_queries": retrieval_queries(question, embedding_model),
+                "reranker_policy": query_policy(reranker_model),
+                "reranker_query": reranking_query(question, reranker_model)},
             "eligible_chunk_ids": eligible_ids,
             "retrieved_hits": [
                 {

@@ -485,11 +485,12 @@ class RAGSaveAdapterTests(unittest.TestCase):
         for use_llm, sufficient in ((True, True), (False, True), (True, False)):
             hit = {"chunk_id": "new:chunk", "document_id": "doc", "filename": "paper.pdf",
                    "page_number": 1, "text": text if sufficient else "short",
+                   "processing_version": "mock-active-v1",
                    "rrf_score": 0.03, "rerank_score": -2.0}
             with patch("src.rag.hybrid_search", return_value=[hit]), \
                  patch("src.rag.rerank", return_value=[hit]), \
                  patch("src.rag.DEFAULT_LLM", "mock-actual-model"), \
-                 patch("src.rag.generate_answer", return_value="Study result [1].") as generate:
+                 patch("src.rag.generate_answer", return_value="Patients with atrial fibrillation received treatment in this study [1].") as generate:
                 # Adapter contract fixture uses a supported topic; an unspecified
                 # "Study result?" must now abstain under the strict demo gate.
                 result = answer_question("atrial fibrillation", [hit], use_llm=use_llm)
