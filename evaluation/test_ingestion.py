@@ -43,12 +43,14 @@ CURRENT_CHUNKS_SQL = (
     "ON b.document_id = c.document_id AND b.processing_version = c.processing_version"
 )
 
-# Hocaya ait satır sayıları (makaleler: yalnızca document_id IS NULL).
+# Hoca tablolarındaki satır sayıları (makaleler: yalnızca document_id IS NULL).
+# Hocanın eski verisi temizlendi (README, kurulum adım 2); ingest bu sayıları
+# değiştirmemeli.
 EXPECTED_PROTECTED_ROWS = {
-    "makaleler": 5,
-    "tani_tedavi": 392,
-    "sonuclar": 632,
-    "semptom_iliskileri": 18,
+    "makaleler": 0,
+    "tani_tedavi": 0,
+    "sonuclar": 0,
+    "semptom_iliskileri": 0,
     "icd10_who": 43,
     "tkd_kurallari": 15,
 }
