@@ -262,43 +262,113 @@ def validate_source(row, conn_or_cache):
 
 
 def assess_diagnostic_relationship(fields, evidence):
-    """Explicit detection statements only; not diagnostic accuracy or benefit.
-
-    This intentionally small English grammar handles named methods and simple
-    coordinated alternatives. Co-occurrence, ambiguous clauses and richer
-    diagnostic studies remain review-only. No clinical truth is inferred.
-    """
+    """Accept only explicit, local method-diagnosis relationships."""
     diagnosis, method = fields.get("diagnosis"), fields.get("diagnostic_method")
-    if not isinstance(diagnosis, str) or not diagnosis.strip() or not isinstance(method, str) or not method.strip():
+    if not isinstance(diagnosis, str) or not diagnosis.strip():
         return "uncertain"
-    diagnosis, method, quote = norm_ws(diagnosis), norm_ws(method), norm_ws(evidence)
+    if not isinstance(method, str) or not method.strip():
+        return "uncertain"
+
+    diagnosis, method = norm_ws(diagnosis), norm_ws(method)
+    quote = norm_ws(evidence) if isinstance(evidence, str) else ""
+
     if method.casefold() in ("clinical encounters", "clinical encounter"):
         return "uncertain"
-    if any(fields.get(k) not in (None, "") for k in ("drug", "dose", "dose_unit", "treatment_duration")):
-        return "contradicted"
+
     if any(fields.get(k) not in (None, "") for k in (
-        "patient_group", "comparison", "clinical_outcome", "numeric_value", "value_unit"
+        "drug", "dose", "dose_unit", "treatment_duration"
+    )):
+        return "contradicted"
+
+    if any(fields.get(k) not in (None, "") for k in (
+        "patient_group", "comparison", "clinical_outcome",
+        "numeric_value", "value_unit"
     )):
         return "uncertain"
-    if not all(re.search(r"(?<!\w)" + re.escape(v) + r"(?!\w)", quote) for v in (diagnosis, method)):
-        return "contradicted"
-    if re.search(r",|\b(?:and|or)\b", method):
-        return "uncertain"  # one method per finding
-    for sentence in re.split(r"(?<=[.!?])\s+|;|\b(?:whereas|while|but|and)\b", quote):
-        sentence = sentence.strip()
-        head = re.match(re.escape(diagnosis) +
-            r"\s+(?:can be|may be|is|was)\s+(?:detected|diagnosed|identified)\b(.*)", sentence)
-        if head:
-            tail = re.sub(r"^\s*(?:incidentally\s*)?(?:during clinical encounters\s*)?,?\s*", "", head[1])
-            parts = re.split(r",\s*(?:or\s+)?|\s+or\s+", tail.rstrip(".!?"))
-            if any(re.fullmatch(r"(?:with|using|through|by)\s+(?:(?:a|an|the)\s+)?" + re.escape(method),
-                                part.strip()) for part in parts):
-                return "supported_local"
-        if re.fullmatch(re.escape(method) + r"\s+(?:detects|can detect|is used to detect|was used to diagnose)\s+"
-                        + re.escape(diagnosis) + r"[.!?]?", sentence):
-            return "supported_local"
-    return "uncertain"
 
+    if re.search(r"[,;/+&]|\b(?:and|or)\b", method, re.I):
+        return "uncertain"
+
+    d = re.escape(diagnosis)
+    m = re.escape(method)
+
+    if not all(re.search(r"(?<!\w)" + v + r"(?!\w)", quote, re.I)
+               for v in (d, m)):
+        return "contradicted"
+
+    # Negation or uncertainty must never be treated as positive evidence.
+    blocked = re.compile(
+        r"\b(?:not|never|neither|without|failed to|unable to|"
+        r"cannot|could not|did not|was not|is not|"
+        r"may|might|possibly|potentially|uncertain)\b",
+        re.I
+    )
+
+    patterns = [
+        # Disease was diagnosed/detected using a named method.
+        rf"{d}\s+(?:can be|is|was|were)\s+"
+        rf"(?:diagnosed|detected|identified)\s+"
+        rf"(?:with|using|through|by)\s+(?:(?:a|an|the)\s+)?{m}",
+
+        # Named method detects or diagnoses the disease.
+        rf"{m}\s+(?:detects|detected|identifies|identified|"
+        rf"diagnoses|diagnosed|can detect|can diagnose|"
+        rf"is used to detect|was used to detect|"
+        rf"is used to diagnose|was used to diagnose)\s+{d}",
+
+        # Explicit diagnostic performance relationship.
+        rf"(?:sensitivity|specificity|diagnostic accuracy|"
+        rf"positive predictive value|negative predictive value|"
+        rf"PPV|NPV|AUC)\s+of\s+{m}\s+"
+        rf"(?:for|in)\s+(?:detecting|diagnosing|identifying)\s+{d}",
+    ]
+
+    sentences = re.split(r"(?<=[.!?])\s+|;", quote)
+    # Conflicting or uncertain evidence about this exact pair cannot be
+    # overridden by a positive sentence elsewhere in the same quotation.
+    if any(blocked.search(s) and all(
+            re.search(r"(?<!\w)" + v + r"(?!\w)", s, re.I)
+            for v in (d, m)) for s in sentences):
+        return "uncertain"
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence or blocked.search(sentence):
+            continue
+
+
+        # An explicit disease predicate may govern several alternatives, each
+        # introduced by its own instrument preposition. Parse the WHOLE tail:
+        # never borrow a method from another disease, clause or sentence.
+        head = re.fullmatch(
+            rf"{d}\s+(?:can be|is|was|were)\s+"
+            rf"(?:diagnosed|detected|identified)\s+"
+            rf"(?:incidentally\s+)?(?:during clinical encounters,\s*)?"
+            rf"(?P<methods>.+?)[.!?]?", sentence, re.I)
+        if head:
+            alternatives = re.split(
+                r",\s*(?:(?:or|and)\s+)?|\s+(?:or|and)\s+",
+                head["methods"].rstrip(".!?"))
+            names = []
+            for alternative in alternatives:
+                item = re.fullmatch(
+                    r"(?:with|using|through|by)\s+(?:(?:a|an|the)\s+)?"
+                    r"(?P<name>[\w()/ -]+)", alternative.strip(), re.I)
+                if (not item or re.search(
+                        r"\b(?:for|in|to|whereas|while|but|was|were|is|are|"
+                        r"detected|diagnosed|identified|evaluated|studied)\b",
+                        item["name"], re.I)):
+                    names = []
+                    break
+                names.append(norm_ws(item["name"]).casefold())
+            if method.casefold() in names:
+                return "supported_local"
+
+        for pattern in patterns:
+            if re.fullmatch(pattern + r"[.!?]?", sentence, re.I):
+                return "supported_local"
+
+    return "uncertain"
 
 def clinical_table_type(columns):
     """Closed table families; a label is not itself evidence of a relationship."""
