@@ -1,0 +1,672 @@
+{
+  "dataset_id": "cardiorag-source-grounded-60-v1",
+  "model": "minilm",
+  "llm_used": false,
+  "total_questions": 60,
+  "results": [
+    {
+      "question_id": "RAG60-HB-01",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": false,
+      "source_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p1_c0_t7f51ac80fe25ba10788b508a88b7ff679db411f37c0648355ed9bab4a4ad9e6a",
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p1_c1_t52afd159691e53ab12b14ff2421a04e29fdcd57b855ce1c670236094a729d5e1"
+      ],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-02",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p1_c0_t7f51ac80fe25ba10788b508a88b7ff679db411f37c0648355ed9bab4a4ad9e6a"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-03",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-04",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-05",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p1_c1_t52afd159691e53ab12b14ff2421a04e29fdcd57b855ce1c670236094a729d5e1",
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-06",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-07",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-08",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec"
+      ]
+    },
+    {
+      "question_id": "RAG60-HB-09",
+      "category": "unanswerable_in_sources",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-HB-10",
+      "category": "misleading_or_out_of_scope",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-ELR-01",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c0_t2d8b9b5ee958a5db05f6871b251950871af4f73fcadf3e1759f8dc4774b90b38"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-02",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c0_t2d8b9b5ee958a5db05f6871b251950871af4f73fcadf3e1759f8dc4774b90b38"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-03",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c0_t2d8b9b5ee958a5db05f6871b251950871af4f73fcadf3e1759f8dc4774b90b38"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-04",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c1_t6ec639f00d71a33a22c51a0f632de45db68168d129f1457dea7308754bed073c"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-05",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p6_c0_tb0d6c639fc2dd1c8a9b73272e29896d07af1a10afe95abb3e060a47dd32d2825"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-06",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p6_c3_t1a4bca116acda398b37a0c8d0a6d0a03ed6e2fd1673b3b2dcb2cd9b708925248"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-07",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-08",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9"
+      ]
+    },
+    {
+      "question_id": "RAG60-ELR-09",
+      "category": "unanswerable_in_sources",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-ELR-10",
+      "category": "misleading_or_out_of_scope",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-AF-01",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-02",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-03",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": true,
+      "source_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c1_t9eb7517523cbad95ed9f66f2c88c3f8197dc1a1ea58c2a9334afbd94bf44ce36"
+      ],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c1_t9eb7517523cbad95ed9f66f2c88c3f8197dc1a1ea58c2a9334afbd94bf44ce36"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-04",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-05",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-06",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": true,
+      "source_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-07",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": true,
+      "source_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c1_t9eb7517523cbad95ed9f66f2c88c3f8197dc1a1ea58c2a9334afbd94bf44ce36"
+      ],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-08",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ]
+    },
+    {
+      "question_id": "RAG60-AF-09",
+      "category": "unanswerable_in_sources",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-AF-10",
+      "category": "misleading_or_out_of_scope",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-CAD-01",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p2_c2_tb71307e725dc529af2e27f0e1d4cf9cb159270e78c48751d12071e3d8f80830a",
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c0_t6bdae782578d5064616624d263f832e91757cd06652f498cedd2ee4697797976"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-02",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c2_tb5df68c00941d119c7bf6a9809b53e146e32cb60807cc05493493a2f923b870a"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-03",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c3_tded9bbd5e1edf4abcf5ca0c4293bf0f1a6911ea48a946e5684e8dc77104a2522"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-04",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p1_c2_t51e12a73e770c59cba06a29d7483ba3b5af046927be5e8a20bbe4a5d8576b817"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-05",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c2_tb5df68c00941d119c7bf6a9809b53e146e32cb60807cc05493493a2f923b870a"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-06",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-07",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p2_c2_tb71307e725dc529af2e27f0e1d4cf9cb159270e78c48751d12071e3d8f80830a",
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c1_tc48237717255b8c77d42434f20566535ded131719074a68608b8dd28b1b33f0f"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-08",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c2_tb5df68c00941d119c7bf6a9809b53e146e32cb60807cc05493493a2f923b870a",
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c3_tded9bbd5e1edf4abcf5ca0c4293bf0f1a6911ea48a946e5684e8dc77104a2522"
+      ]
+    },
+    {
+      "question_id": "RAG60-CAD-09",
+      "category": "unanswerable_in_sources",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-CAD-10",
+      "category": "misleading_or_out_of_scope",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-TRP-01",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": false,
+      "source_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c0_tfe4a3aed3cdd7c38a3fa2fc6bd70689eb648e3864bbd34cc96c56339910ef8c1",
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1"
+      ],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-02",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c0_t718e585e042d406df75f086a28a3e86779ecd82623c570035c266d81a9a71cbe"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-03",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": true,
+      "source_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967",
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1"
+      ],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-04",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c0_t718e585e042d406df75f086a28a3e86779ecd82623c570035c266d81a9a71cbe"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-05",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-06",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c3_te06b73cf9f67108e8a5e040d9d88e28a99abb7584054ad354e9887e926a6351d"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-07",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "retrieval_only",
+      "hit_at_5": false,
+      "source_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c0_tfe4a3aed3cdd7c38a3fa2fc6bd70689eb648e3864bbd34cc96c56339910ef8c1",
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c1_tde5e67b20339a78bfe65c22a485c3f321407532e10908b2b085145a066e6d84f"
+      ],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-08",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967"
+      ]
+    },
+    {
+      "question_id": "RAG60-TRP-09",
+      "category": "unanswerable_in_sources",
+      "expected_behavior": "abstain",
+      "status": "retrieval_only",
+      "hit_at_5": null,
+      "source_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c1_t718d318c77800360aa0e3cf3f60d5fa0b09030304b33d3389da1ac39300b7cce",
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1"
+      ],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-TRP-10",
+      "category": "misleading_or_out_of_scope",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-OHCA-01",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-02",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-03",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-04",
+      "category": "direct_information",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-05",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p2_c3_t5ef6ccc8da6a97844ed477c6a1f1c8bd9c91e073b36dde30e30b466f7bd691c9"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-06",
+      "category": "interpretation",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p2_c3_t5ef6ccc8da6a97844ed477c6a1f1c8bd9c91e073b36dde30e30b466f7bd691c9"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-07",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-08",
+      "category": "numeric_statistical",
+      "expected_behavior": "answer",
+      "status": "insufficient_evidence",
+      "hit_at_5": false,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ]
+    },
+    {
+      "question_id": "RAG60-OHCA-09",
+      "category": "unanswerable_in_sources",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    },
+    {
+      "question_id": "RAG60-OHCA-10",
+      "category": "misleading_or_out_of_scope",
+      "expected_behavior": "abstain",
+      "status": "insufficient_evidence",
+      "hit_at_5": null,
+      "source_chunk_ids": [],
+      "expected_chunk_ids": []
+    }
+  ]
+}

@@ -1,0 +1,2091 @@
+{
+  "schema_version": "rag-validation-provisional-v1",
+  "created_at": "2026-11-19T10:58:25.258744+00:00",
+  "label_provenance": "assistant-curated after PDF text/figure and SQL chunk review; independent human review required",
+  "dataset_purpose": "diagnostic pilot, not calibration or held-out production evaluation",
+  "source_manifest": [
+    {
+      "filename": "TK-cardiovascular36-2-1.pdf",
+      "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+      "page_count": 8,
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "chunk_count": 26
+    },
+    {
+      "filename": "TK-cardiovascular37-2-1.pdf",
+      "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+      "page_count": 8,
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "chunk_count": 26
+    },
+    {
+      "filename": "pubM-Atrial Fibrillation.pdf",
+      "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+      "page_count": 28,
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "chunk_count": 51
+    },
+    {
+      "filename": "pubM-Clinical Updates in Coronary Artery Disease A comprehensive review.pdf",
+      "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+      "page_count": 34,
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "chunk_count": 85
+    },
+    {
+      "filename": "who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf",
+      "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+      "page_count": 6,
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "chunk_count": 19
+    },
+    {
+      "filename": "who-Out-of-hospital cardiac arrest in countries of the Gulf Cooperation.pdf",
+      "document_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f",
+      "page_count": 11,
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "chunk_count": 35
+    }
+  ],
+  "sources": {
+    "AF_DETECTION": {
+      "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+      "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+      "page_number": 2,
+      "chunk_index": 0,
+      "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "pubM-Atrial Fibrillation.pdf",
+      "source_text": "asymptomatic. AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. In patients presenting with ischemic stroke without diagnosed AF, an implantable loop recorder (ie, subcutaneous telemetry device) can evaluate patients for intermittent AF. The 2023 American College of Cardiology (ACC)/American Heart Association (AHA)/American College of Clinical Pharmacy (ACCP)/ Heart Rhythm Society (HRS) Guideline writing group proposed 4 stages of AF evolution: stage 1, at risk, defined as patients with AF-associated risk factors (eg, obesity, hypertension); stage 2, preAF, signs of atrial pathology on electrocardiogram or imaging without AF; stage 3, the presence of paroxysmal (recurrent AF episodes lasting ≤7 days) or persistent (continuous AF episode lasting >7 days) AF subtypes; and stage 4, permanent AF. Lifestyle and risk factor modification, including weight loss and exercise, to prevent AF onset, recurrence, and complications are recommended for all stages. In patients with estimated risk of stroke and thromboembolic events of 2% or greater per year, anticoagulation with a vitamin K antagonist or direct oral anticoagulant reduces stroke risk by 60% to 80% compared with placebo. In most patients, a direct oral anticoagulant, such as apixaban, rivaroxaban, or edoxaban, is recommended over warfarin because of lower bleeding risks. Compared with anticoagulation, aspirin is associated with",
+      "evidence_quote": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices."
+    },
+    "CAD_GUIDELINE": {
+      "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+      "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+      "page_number": 8,
+      "chunk_index": 2,
+      "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "pubM-Clinical Updates in Coronary Artery Disease A comprehensive review.pdf",
+      "source_text": "y (ASE)/American College of Chest Physicians (CHEST)/Society for Academy Emergency Medicine (SAEM)/Society of Cardiovascular Computed Tomography (SCCT)/Society for Cardiovascular Magnetic Resonance (SCMR) guideline for the evaluation and diagnosis of chest pain classifies FFR-CT as a class IIa recommendation for intermediate-high risk patients presenting with acute or stable chest pain and exhibiting coronary stenosis of 40% to 90% in a proximal or middle coronary segment on CCTA. FFR-CT can be useful for diagnosis of vessel-specific ischemia and to guide decision-making regarding the use of coronary revascularization (Table 3). \n\n_2.6. CCTA for Planning Percutaneous Coronary Intervention (PCI) and Coronary Artery Bypass Graft (CABG)_ \n\nFurther exploration of CCTA utility has garnered attention for its potential in facilitating the planning of coronary procedures. However, despite its promise, widespread clinical utilization in daily practice remains limited. A notable study demonstrated the feasibility of real-time integration of 3D CCTA and fluoroscopic images in the catheterization laboratory to enhance PCI [59]. Additionally, an intriguing trial randomized 400 patients with chronic total occlusions (CTO) to undergo PCI with or without preprocedural CCTA guidance. The group receiving CCTA guidance exhibited a significantly higher success rate compared to those without (93.5% vs. 84.0%; absolute difference 9.5%; 95% CI, 3.4 to 15.6%; _p_ = 0.003). This improvement was",
+      "evidence_quote": "FFR-CT can be useful for diagnosis of vessel-specific ischemia and to guide decision-making regarding the use of coronary revascularization (Table 3)."
+    },
+    "TK37_ROC": {
+      "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+      "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+      "page_number": 5,
+      "chunk_index": 0,
+      "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "TK-cardiovascular37-2-1.pdf",
+      "source_text": "<!-- Start of picture text -->\nROC curve for Eosinophil/Lymphocyte Ratio ROC curve for Platelet/Lymphocyte Ratio ROC curve for Neutrophil Percentage<br>1.0 1.0 1.0<br>0.8 0.8 0.8<br>0.6 0.6 0.6<br>0.4 0.4 0.4<br>A u C: 0.633 (95% CI: 0.562-0.705, p<0.001) A u C: 0.627 (95% CI: 0.556-0.698, p=0.002) A u C: 0.586 (95% CI: 0.512-0.661, p=0.062)<br>0.2 0.2<br>0.2<br>0.0 0.0 0.2 0.4 0.6 0.8 1.0 0.0 0.00.0 0.2 0.4 0.6 0.8 1.0<br>1-Specificity 0.0 0.2 1-Specificity 0.4 0.6 0.8 1.0 1-Specificity<br>Sensitivity Sensitivity<br>Sensitivity<br><!-- End of picture text -->\n\n**FIGURE 1:** ROC curves for ELR, PLR, and Neu% \n\n**A)** ROC curve for ELR showing an A u C of 0.633 (95% CI: 0.562-0.705, p<0.001), indicating a moderate discriminative ability; **B)** ROC curve for PLR with an A u C of 0.627 (95% CI: 0.556-0.698, p=0.002), suggesting a moderate predictive value; **C)** ROC curve for Neu% demonstrating an A u C of 0.586 (95% CI: 0.512-0.661, p=0.062), indicating a low discriminatory power. ROC: Receiver operating characteristic; ELR: Eosinophil-to-lymphocyte ratio; A u C: Area under the curve; CI: Confidence interval; PLR: Platelet-to-lymphocyte ratio; Neu%: Neutrophil percentage \n\n<!-- Start of picture text -->\nEos/Lymph<br>80.0% Ratio Group<br>ELR<0.112<br>ELR>0.112<br>60.0%<br>40.0%<br>20.0%<br>0.0%<br>Control group Study group<br>Group<br>Percent<br><!-- End of picture text -->\n\n**FIGURE 2:** Distribution of ELR groups in study and control populations This bar chart illustrates",
+      "evidence_quote": "ROC curve for ELR showing an A u C of 0.633 (95% CI: 0.562-0.705, p<0.001), indicating a moderate discriminative ability;"
+    },
+    "TK37_GROUPS": {
+      "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+      "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+      "page_number": 2,
+      "chunk_index": 2,
+      "text_sha256": "2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "TK-cardiovascular37-2-1.pdf",
+      "source_text": "l be an important biomarker in CAS, as in coronary artery disease. There are few articles arguing that ELR may be a biomarker in CAS. This study aims to assess whether ELR serves as a potential biomarker for severe carotid atherosclerosis. To achieve this, we compare ELR levels between patients who have undergone carotid endarterectomy and individuals without carotid atherosclerosis, aiming to determine its clinical utility and role in predicting the progression of critical stenosis. \n\n## MATERIAL AND METHODS \n\n### ST u DY DESIGN AND PATIENT SELECTION \n\nThis study was conducted by analyzing patient data collected at Kastamonu Training and Research Hospital, Department of Cardiovascular Surgery, between January 2020 and December 2024. The study group (Group 1) consisted of 96 patients who underwent carotid endarterectomy due to ≥ 70% CAS. The medical records of these patients were retrospectively reviewed using the hospital database. The control group (Group 2) included 93 patients who underwent carotid Doppler ultrasonography during the same period but were found to have no carotid plaques or increased intimal thickness. \n\nStrict exclusion criteria were applied when selecting the patient and control groups. Patients were excluded if they had an acute or chronic infection, had received glucocorticoid therapy or anti-allergic medication within the past 3 months, had a known hematologic or autoimmune disease, had a diagnosis of asthma, had a history of parasitic disease, were",
+      "evidence_quote": "The study group (Group 1) consisted of 96 patients who underwent carotid endarterectomy due to ≥ 70% CAS."
+    },
+    "TK37_TOTAL": {
+      "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p3_c1_t96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+      "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+      "page_number": 3,
+      "chunk_index": 1,
+      "text_sha256": "96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "TK-cardiovascular37-2-1.pdf",
+      "source_text": "ed variables. The Mann-Whitney U test was \n\nperformed for non-normally distributed data. Categorical variables were compared with the chi-square test or Fisher exact test. \n\nTo test the primary hypothesis of the study, the predictive value of the ELR and PLR for detecting severe CAS was assessed using logistic regression analysis. A receiver operating characteristic (ROC) curve analysis was made for diagnostic performance of ELR, PLR and Neu% as a predictive biomarker for CAS, with the area under the curve (AUC) calculated. A p value of <0.05 was considered statistically significant. \n\n### ETHICAL APPRO v AL \n\nThe study was conducted in accordance with the Declaration of Helsinki and approved by Kastamonu University Clinical Research Ethics Committee (date: December 18, 2024; no: 2024-KAEK-173). \n\n## RES u LTS \n\nIn this study, 189 patients were examined. 96 patients were in the study group and 93 patients were in the control group. The mean age was 71.54 (±7.19) years in this study group; 71.31 (±8.17) years in the control group, with no statistically significant difference between the groups (p=0.637). The comparison of hematological parameters between the groups is presented in Table 1.",
+      "evidence_quote": "In this study, 189 patients were examined. 96 patients were in the study group and 93 patients were in the control group."
+    },
+    "TK36_ROC": {
+      "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+      "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+      "page_number": 5,
+      "chunk_index": 0,
+      "text_sha256": "3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "TK-cardiovascular36-2-1.pdf",
+      "source_text": "(1.88%) and chronic thromboembolic event in 20 patients (5.37%). \n\nIn the ROC analysis, the cut-off value of the HCR value in patients experiencing AF and ischemic events was found to be 2.82, with 79% sensitivity and 81% specificity (AUC=0.821, CI95=0.682–0.889, p<001) (Figure 1). In the ROC analysis, the cut-off value of the HbA1c value in patients experiencing AF and ischemic events was found to be 6.82, with 71% sensitivity and 70% specificity (AUC=0.712, CI95=0.542-0.763, p<001) (Figure 1). In the ROC analysis, the cut-off value of the C peptide value in patients experiencing AF and ischemic events was found to be 2.72, with 70% sensitivity and 68% \n\n**FIGURE 1:** ROC curve analysis of HCR to predict ischemic events due to atrial fibrillation. \n\nHCR: HbA1c/C-peptide ratio. \n\nspecificity (AUC=0.692, CI95=0.512-0.753, p<001) (Figure 1). In multivariate logistic regression analysis, diabetes, CHA2DS2-VASc score, LA size, HCR were determined to be independent potential predictors of experiencing AF and experiencing an ischemic event (Table 2). \n\n# DISC u SSION \n\nAs a result of our study, we found that there is a significant relationship between ischemic events and HCR in AF patients. This study is the first to investigate the relationship between ischemic events and HCR in patients diagnosed with AF. A previous study found a significant positive relationship between HbA1c values and AF duration, indicating that impaired glucose metabolism is associated with increased AF",
+      "evidence_quote": "In the ROC analysis, the cut-off value of the HbA1c value in patients experiencing AF and ischemic events was found to be 6.82, with 71% sensitivity and 70% specificity (AUC=0.712, CI95=0.542-0.763, p<001) (Figure 1)."
+    },
+    "TK36_POPULATION": {
+      "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c",
+      "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+      "page_number": 2,
+      "chunk_index": 2,
+      "text_sha256": "81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "TK-cardiovascular36-2-1.pdf",
+      "source_text": "omarkers into a single fraction may better predict \n\nischemic events in AF patients due to the prothrombogenic effect of HbA1c and the antithrombogenic effect of C-peptide. In this context, in this study, we wanted to demonstrate the accuracy of this assumption in AF patients. \n\n# MATERIAL AND METHODS \n\n## ST u DY DESIGN ST u DY p O pu LATION \n\nThis retrospective study was conducted with data from 1,525 AF patients at a local university hospital cardiology outpatient clinic between April 2020 and April 2024. Our study complies with the principles of the Declaration of Helsinki and was approved by the Tokat Gaziosmanpa ş a University Faculty of Medicine (date: June 6, 2024, no: 83116987-378). \n\nPatients were found from the local hospital database system and added to the study. A total of 300 patients were not included in the study due to lack of data. The study was completed with 1,225 patients. AF patient group; Patients who experienced an ischemic event (n=372) and patients who did not experience an ischemic event (n=853) were classified into two groups, and these classified groups were evaluated based on the HCR score. Documented 12lead electrocardiography revealed AF (absence of distinct repetitive P waves, irregular atrial activity). A period of at least 30 seconds was determined to determine the diagnosis of AF.<sup>2</sup> Ischemic event; In patients with AF, an ischemic event occurring after thrombus formation in any organ or vascular structure was accepted. Acute",
+      "evidence_quote": "The study was completed with 1,225 patients."
+    },
+    "TROP_ROC": {
+      "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+      "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+      "page_number": 4,
+      "chunk_index": 2,
+      "text_sha256": "827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf",
+      "source_text": "e in HS troponin I at the 1st hour with the percentage change at the 3rd hour (diagnostic performance). In patients diagnosed with AMI determination was done as follows: 16 patients (80%) with delta HS troponin I (0-1h) >20% (p <0.001 odds ratio: 7.8 (2.4-25.1)), delta HS troponin I (0-3h) >20% in 17 patients [85%, p <0.001, odds ratio: 9.5 (2.6-34.9)]. \n\nHowever, the highest odds ratio was found as delta HS troponin I (1-3h) >20% (p <0.001 odds ratio: 13.3 (3.6-49.2)). The reason of this might be the variation in the perception of symptoms by persons, which can be very subjective. Therefore, the symptom duration of the patients was not explained in this study. Troponin value starts to increase with the onset of symptoms. However, due to troponin kinetics, when sampling too early or late, the delta value may not be detected.2 \n\nDelta troponin values in the range of 1-3h in the presently reported two case groups corresponded to the rising period in the troponin kinetic curve. \n\nAccording to the cut-off value, the maximum diagnostic accuracy is delta HS between 1-3 hours troponin I >47.2% had a sensitivity (80.0%) and specificity (89.4%) with AUC of 0.838 ± 0.066 (p <0.001). Secondly, delta HS between 0-3 hours troponin I >148.3% with sensitivity of 80.0%, specificity of 85.1%, AUC 0.809 ± 0.074 and p <0.001. Finally, delta HS troponin I >66.7% has a sensitivity of 75.0% and specificity of 79.8% at 0-1-hour interval, AUC 0.755 ± 0.072 (p <0.001). In the study conducted by",
+      "evidence_quote": "According to the cut-off value, the maximum diagnostic accuracy is delta HS between 1-3 hours troponin I >47.2% had a sensitivity (80.0%) and specificity (89.4%) with AUC of 0.838 ± 0.066 (p <0.001)."
+    },
+    "TROP_TABLE": {
+      "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+      "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+      "page_number": 3,
+      "chunk_index": 2,
+      "text_sha256": "9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf",
+      "source_text": "**Table II: Cutoff variables determined according to the delta time at HS troponin I.**\n||**Delta HS Trop I 1h-0h %**|**Delta HS Trop I 3h-0h %**|**Delta HS Trop I 3h-1h %**|\n|---|---|---|---|\n||**( A )**|**( B )**|**( C )**|\n|Cut off|>66.7|>148.3|>47.2|\n|Sensitivity|75.0%|80.0%|80.0%|\n|Specificity|79.8%|85.1%|89.4%|\n|Accuracyrate|78.95%|84.21%|87.72%|\n|AUC±SE.|0.755 ± 0.072|0.809 ± 0.074|0.838 ± 0.066|\n|P|<0.001|<0.001|<0.001|\n|Pairwise comparation for AUC|P (A-B)=0.291|P (A-C)=0.323|P (B-C)=0.613|\n|Odds Ratio (SE.)|11.84 (0.70)|22.86 (0.77)|33.59 (0.81)|\n|_Roc(Receiver Operating Curve) Analysis_|_(Honley&Mc Nell - Youden indexJ) AUC: Ar_|_ea under the ROC curve SE: Standard_|_Error._|",
+      "evidence_quote": "|AUC±SE.|0.755 ± 0.072|0.809 ± 0.074|0.838 ± 0.066|"
+    },
+    "TROP_POPULATION": {
+      "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c3_te06b73cf9f67108e8a5e040d9d88e28a99abb7584054ad354e9887e926a6351d",
+      "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+      "page_number": 2,
+      "chunk_index": 3,
+      "text_sha256": "e06b73cf9f67108e8a5e040d9d88e28a99abb7584054ad354e9887e926a6351d",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf",
+      "source_text": "participate in the study. Some patients were excluded from the study due to the various reasons as follows: Seven patients were on haemodialysis programme due to chronic renal failure; 9 patients left the emergency service at their own request while the treatment was continuing; 22 patients were diagnosed with STEMI at presentation or during follow-up; and 29 patients were considered AMI by the cardiologist with the first troponin result. The first troponin result of 197 patients was <18ng / l (99th URL). The final evaluation was made on 114 patients. \n\nAs a result of follow-up and consultations for 114 patients in the Emergency Department, 80 patients (70.2%) were discharged after their treatment was regulated. Twenty-six patients (22.8%) were hospitalised in coronary intensive care unit due to cardiac pathology, and 8 (7%) patients in other clinics. Twenty of the patients hospitalised in coronary intensive care had (17.5%) AMI, three patients had tachycardia, two patients had congestive heart failure and one patient had pericarditis. \n\nOf the 80 patients included in the study and discharged, 78 were reached by phone 7-11 days after their discharge. After discharge, the ACS and mortality histories of the patients were questioned. No ACS or mortality was detected in the patients reached. Two patients could not be reached due to missing contact information. It was checked through the national death reporting system, and no mortality was detected. There was no statistically",
+      "evidence_quote": "The final evaluation was made on 114 patients."
+    },
+    "TROP_KELLER": {
+      "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c3_t9990850da5eeebe87694f395344a38e0a7bd6b0f76de9f47fbc149941a38eac7",
+      "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+      "page_number": 4,
+      "chunk_index": 3,
+      "text_sha256": "9990850da5eeebe87694f395344a38e0a7bd6b0f76de9f47fbc149941a38eac7",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf",
+      "source_text": ".3% with sensitivity of 80.0%, specificity of 85.1%, AUC 0.809 ± 0.074 and p <0.001. Finally, delta HS troponin I >66.7% has a sensitivity of 75.0% and specificity of 79.8% at 0-1-hour interval, AUC 0.755 ± 0.072 (p <0.001). In the study conducted by Keller _et al_ .11 in patients with HS troponin I level >99th URL at the time of admission; when the third hour cut-off value was >250%, they determined the specificity as 99.6, sensitivity 32.6, and PPV 95.8.11 Although the diagnostic power was greatest at the delta HS troponin I (1-3h) change; the delta HS troponin I (0-1h) change and the delta HS troponin I (0-3h) changes are very close in terms of diagnostic power. For this reason, one should consider acting earlier, rather than waiting 3 hours for the second troponin sample, as stated in the literature in patients with a high probability of ACS clinically.8 At this point, the patient's history, age and risk factors are very important. However, do not forget the other reasons that increase troponin values in low changes or the factors that cause type 2 MI.9 When a statistically neural network study was done, the model established based on >20% change in troponin value could not detect any of the patients with AMI. The second model, built on the basis of cut-off values,",
+      "evidence_quote": "In the study conducted by Keller"
+    },
+    "OHCA_REVIEW": {
+      "chunk_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+      "document_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f",
+      "page_number": 1,
+      "chunk_index": 1,
+      "text_sha256": "6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+      "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1",
+      "filename": "who-Out-of-hospital cardiac arrest in countries of the Gulf Cooperation.pdf",
+      "source_text": "of-hospital cardiac arrest in Gulf Cooperation Council (GCC) countries (Bahrain, Kuwait, Oman, Qatar, Saudi Arabia and United Arab Emirates) and the response to and outcomes of such incidents. \n\n**Methods:** This was a scoping review of published and grey literature on out-of-hospital cardiac arrest in GCC countries from 1990 to June 2019. Studies in English and Arabic were eligible for inclusion. MEDLINE, CINAHL, Web of Science and EMBASE were searched as well as relevant non-indexed journals. Google searches were also done. References of included studies were scanned for relevant articles. Experts on the subject in the region were consulted. \n\n**Results:** Of 647 citations retrieved, 24 studies were included for data extraction and analysis. No literature was identified for Bahrain. People with out-of-hospital cardiac arrest in the region were younger, predominantly male and had more comorbidity than reported in other regions of the world. Use of emergency medical services was low across the GCC countries, as was bystander cardiopulmonary resuscitation, return of spontaneous circulation and survival to discharge. **Conclusions:** A coordinated effort to address out-of-hospital cardiac arrest, including the generation of research, is lacking within and among GCC countries. Establishment of lead agencies responsible for developing and coordinating strategies to address out-of-hospital cardiac arrest, such as community response, public education and reporting databases, is",
+      "evidence_quote": "Of 647 citations retrieved, 24 studies were included for data extraction and analysis."
+    }
+  },
+  "cases": [
+    {
+      "case_id": "AF01",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Physical p2 explicitly lists these detection settings and methods.",
+      "tags": [
+        "detection",
+        "literal"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF02",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Atriyal fibrilasyon hangi yöntemlerle tespit edilebilir?",
+      "answer": "AF klinik karşılaşmalarda tesadüfen, giyilebilir cihazlarla veya implante kardiyak elektronik cihazların sorgulanmasıyla tespit edilebilir. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Faithful Turkish paraphrase of p2; not a claim of diagnostic accuracy or treatment benefit.",
+      "tags": [
+        "detection",
+        "translation"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF03",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Atriyal fibrilasyon hangi yöntemlerle tespit edilebilir?",
+      "answer": "Giyilebilir cihazlarla AF tespitinin duyarlılığı %100 ve özgüllüğü %100 bulunmuştur. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The cited passage provides methods, not sensitivity or specificity.",
+      "tags": [
+        "sensitivity",
+        "specificity",
+        "invented_statistics"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF04",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "Wearable devices can detect AF and prevent all ischemic strokes. [1]",
+      "expected_label": "partially_supported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Detection is supported; stroke-prevention benefit is not established in this detection statement.",
+      "tags": [
+        "partial_support",
+        "clinical_benefit"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF05",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "Wearable devices are superior to all implanted devices for detecting AF. [1]",
+      "expected_label": "uncertain",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The source does not compare superiority; absence of comparison is not proof of the opposite.",
+      "tags": [
+        "comparison",
+        "uncertain"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF06",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. [2]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Citation [2] does not exist in the supplied source list.",
+      "tags": [
+        "wrong_citation",
+        "citation_missing"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF07",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. [2]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "CAD_GUIDELINE",
+          "citation_number": 2,
+          "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+          "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "page_number": 8,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The asserted AF statement cites a CAD guideline chunk instead of AF p2.",
+      "tags": [
+        "wrong_citation",
+        "wrong_document"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "AF08",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. [1,2]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 2,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Both citation numbers refer to the same real supporting passage; duplicate support is not two independent studies.",
+      "tags": [
+        "multiple_citations",
+        "duplicate_document"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC01",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What ROC discrimination was reported for ELR and PLR in critical carotid stenosis?",
+      "answer": "ELR AUC=0.633, 95% CI: 0.562-0.705, p<0.001. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Figure1A on physical p5 reports this exact ELR AUC, CI and ROC p.",
+      "tags": [
+        "auc",
+        "p",
+        "ci",
+        "biomarker"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC02",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Kritik karotis darlığında ELR ve PLR için ROC sonuçları nelerdir?",
+      "answer": "ELR için AUC=0,633, %95 GA: 0,562–0,705 ve p<0,001 olarak bildirilmiştir. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Turkish numeric paraphrase of Figure1A; labels are source-reviewed candidates, not validator-generated.",
+      "tags": [
+        "auc",
+        "p",
+        "ci",
+        "translation"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC03",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What ROC discrimination was reported for ELR and PLR in critical carotid stenosis?",
+      "answer": "PLR AUC=0.627, 95% CI: 0.556-0.698, p=0.002. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Figure1B reports PLR values separately from ELR.",
+      "tags": [
+        "auc",
+        "p",
+        "ci",
+        "biomarker"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC04",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What ROC discrimination was reported for ELR and PLR in critical carotid stenosis?",
+      "answer": "ELR AUC=0.627, 95% CI: 0.556-0.698, p=0.002. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "These numbers belong to PLR, not ELR, in the same chunk.",
+      "tags": [
+        "wrong_biomarker",
+        "auc",
+        "ci",
+        "p"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC05",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Kritik karotis darlığında ELR ve PLR için ROC sonuçları nelerdir?",
+      "answer": "ELR için AUC=0,633 ve %95 GA: 0,556–0,698 bulunmuştur. [1]",
+      "expected_label": "partially_supported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The ELR AUC is correct but the CI is PLR-specific.",
+      "tags": [
+        "partial_support",
+        "wrong_ci"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC06",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What ROC discrimination was reported for ELR and PLR in critical carotid stenosis?",
+      "answer": "ELR AUC=0.633, p=0.010. [1]",
+      "expected_label": "partially_supported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "AUC is correct; p0.010 is a group-comparison p from p3, not the ROC p on cited p5.",
+      "tags": [
+        "partial_support",
+        "wrong_p_context"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC07",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What ROC discrimination was reported for ELR and PLR in critical carotid stenosis?",
+      "answer": "ELR AUC=0.933, p<0.001. [1]",
+      "expected_label": "partially_supported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "ROC p is correct; the AUC was changed from0.633 to0.933.",
+      "tags": [
+        "partial_support",
+        "wrong_auc"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "ROC08",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Kritik karotis darlığında ELR ve PLR için ROC sonuçları nelerdir?",
+      "answer": "ELR kritik karotis darlığının tek başına kesin tanısını koydurur. [1]",
+      "expected_label": "uncertain",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_ROC",
+          "citation_number": 1,
+          "text_sha256": "8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "An AUC estimate does not establish standalone definitive diagnostic utility.",
+      "tags": [
+        "uncertain",
+        "overstatement"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "POP01",
+      "group_id": "tk37_population",
+      "split": "review_only",
+      "language": "en",
+      "question": "How many patients and controls were included in the carotid stenosis study?",
+      "answer": "The study group (Group 1) consisted of 96 patients who underwent carotid endarterectomy due to ≥ 70% CAS. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_GROUPS",
+          "citation_number": 1,
+          "text_sha256": "2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Methods p2 identifies the96 patients with>=70% CAS who underwent endarterectomy.",
+      "tags": [
+        "patient_group",
+        "population",
+        "literal"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "POP02",
+      "group_id": "tk37_population",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Karotis darlığı çalışmasının grupları kaç kişidir?",
+      "answer": "Çalışma grubu 96 hasta ve kontrol grubu 93 kişiden oluşmuştur. [1,2]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_GROUPS",
+          "citation_number": 1,
+          "text_sha256": "2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TK37_TOTAL",
+          "citation_number": 2,
+          "text_sha256": "96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p3_c1_t96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+          "page_number": 3,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Methods p2 and Results p3 agree:96 cases,93 controls,total189.",
+      "tags": [
+        "patient_group",
+        "control_group",
+        "multiple_citations"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "POP03",
+      "group_id": "tk37_population",
+      "split": "review_only",
+      "language": "en",
+      "question": "How many patients and controls were included in the carotid stenosis study?",
+      "answer": "Study group n=93 and control group n=96. [1,2]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_GROUPS",
+          "citation_number": 1,
+          "text_sha256": "2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TK37_TOTAL",
+          "citation_number": 2,
+          "text_sha256": "96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p3_c1_t96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+          "page_number": 3,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Case and control counts are reversed.",
+      "tags": [
+        "swapped_groups",
+        "patient_count"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "POP04",
+      "group_id": "tk37_population",
+      "split": "review_only",
+      "language": "en",
+      "question": "How many patients and controls were included in the carotid stenosis study?",
+      "answer": "All 189 participants underwent carotid endarterectomy. [1,2]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK37_GROUPS",
+          "citation_number": 1,
+          "text_sha256": "2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TK37_TOTAL",
+          "citation_number": 2,
+          "text_sha256": "96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+          "document_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0",
+          "chunk_id": "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p3_c1_t96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd",
+          "page_number": 3,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Only the96 case patients underwent endarterectomy;93 controls had no plaques/thickening.",
+      "tags": [
+        "patient_group",
+        "wrong_intervention"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "HB01",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the HbA1c ROC result for ischemic events in AF patients?",
+      "answer": "HbA1c AUC=0.712 with 95% CI: 0.542-0.763. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK36_ROC",
+          "citation_number": 1,
+          "text_sha256": "3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+          "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Own ROC Results p5 report HbA1c, distinct from HCR AUC0.821.",
+      "tags": [
+        "auc",
+        "ci",
+        "original_result"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "HB02",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "tr",
+      "question": "AF hastalarında HbA1c iskemik olayları nasıl ayırt etmiştir?",
+      "answer": "HbA1c için AUC 0,712 ve %95 GA 0,542–0,763 bildirilmiştir. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK36_ROC",
+          "citation_number": 1,
+          "text_sha256": "3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+          "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Faithful Turkish statement of the own HbA1c result, not the external discussion quote.",
+      "tags": [
+        "auc",
+        "ci",
+        "translation"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "HB03",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the HbA1c ROC result for ischemic events in AF patients?",
+      "answer": "HbA1c AUC=0.821, 95% CI: 0.682-0.889. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK36_ROC",
+          "citation_number": 1,
+          "text_sha256": "3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+          "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The changed values are HCR HbA1c/C-peptide values, not HbA1c.",
+      "tags": [
+        "wrong_biomarker",
+        "auc",
+        "ci"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "HB04",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "tr",
+      "question": "HbA1c ROC p değeri nedir?",
+      "answer": "HbA1c ROC p<0,001 olarak kesin doğrulanmıştır. [1]",
+      "expected_label": "uncertain",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK36_ROC",
+          "citation_number": 1,
+          "text_sha256": "3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+          "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The publication literally prints p<001; no editorial correction or exact p may be invented.",
+      "tags": [
+        "ambiguous_p",
+        "publication_typography"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "HB05",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "en",
+      "question": "Was the cohort restricted to diabetic AF patients?",
+      "answer": "All 1225 analyzed AF patients had diabetes. [1,2]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TK36_ROC",
+          "citation_number": 1,
+          "text_sha256": "3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+          "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec",
+          "page_number": 5,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TK36_POPULATION",
+          "citation_number": 2,
+          "text_sha256": "81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c",
+          "document_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7",
+          "chunk_id": "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The cohort includes AF patients, not an exclusively diabetic population; final1225 excludes300 missing-data records.",
+      "tags": [
+        "wrong_population",
+        "patient_count"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP01",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the 1-3 hour delta hs-troponin I ROC result for AMI?",
+      "answer": "According to the cut-off value, the maximum diagnostic accuracy is delta HS between 1-3 hours troponin I >47.2% had a sensitivity (80.0%) and specificity (89.4%) with AUC of 0.838 ± 0.066 (p <0.001). [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_ROC",
+          "citation_number": 1,
+          "text_sha256": "827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "page_number": 4,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Own p4 statement corresponds to TableII p3; ±0.066 is SE per table, not CI.",
+      "tags": [
+        "auc",
+        "se",
+        "time",
+        "literal"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP02",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "1–3 saatlik delta hs-troponin I için AMI ROC sonucu nedir?",
+      "answer": "1–3 saatlik delta hs-troponin I için AUC=0,838 ve p<0,001 bildirilmiştir. [1,2]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_ROC",
+          "citation_number": 1,
+          "text_sha256": "827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "page_number": 4,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TROP_TABLE",
+          "citation_number": 2,
+          "text_sha256": "9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+          "page_number": 3,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "P3 TableII and p4 own results identify the1-3h measurement and AUC0.838.",
+      "tags": [
+        "auc",
+        "p",
+        "time",
+        "translation"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP03",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the 1-3 hour delta hs-troponin I ROC result for AMI?",
+      "answer": "Delta hs troponin I (0-1h) AUC=0.838. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_ROC",
+          "citation_number": 1,
+          "text_sha256": "827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "page_number": 4,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "AUC0.838 belongs to1-3h;0-1h AUC is0.755.",
+      "tags": [
+        "wrong_time",
+        "auc"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP04",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the 1-3 hour delta hs-troponin I ROC result for AMI?",
+      "answer": "Delta hs troponin I (1-3h) AUC=0.838, 95% CI: 0.772-0.904. [1,2]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_ROC",
+          "citation_number": 1,
+          "text_sha256": "827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "page_number": 4,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TROP_TABLE",
+          "citation_number": 2,
+          "text_sha256": "9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+          "page_number": 3,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The CI was inferred from a standard error and is not published; do not manufacture it.",
+      "tags": [
+        "se_as_ci",
+        "inferred_statistics"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP05",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "1–3 saatlik delta hs-troponin I için AMI ROC sonucu nedir?",
+      "answer": "1–3 saatlik delta hs-troponin I eşiği >%66,7, duyarlılığı %80 ve özgüllüğü %89,4 bulunmuştur. [1,2]",
+      "expected_label": "partially_supported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_ROC",
+          "citation_number": 1,
+          "text_sha256": "827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1",
+          "page_number": 4,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        },
+        {
+          "source_id": "TROP_TABLE",
+          "citation_number": 2,
+          "text_sha256": "9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148",
+          "page_number": 3,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Sensitivity/specificity are1-3h values but cutoff66.7 belongs to0-1h; correct1-3h cutoff47.2.",
+      "tags": [
+        "wrong_threshold",
+        "partial_support",
+        "time"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP06",
+      "group_id": "troponin_secondary",
+      "split": "review_only",
+      "language": "en",
+      "question": "Did this study report sensitivity32.6% at the250% cutoff?",
+      "answer": "This study found sensitivity32.6%, specificity99.6% and PPV95.8 at a250% cutoff. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_KELLER",
+          "citation_number": 1,
+          "text_sha256": "9990850da5eeebe87694f395344a38e0a7bd6b0f76de9f47fbc149941a38eac7",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c3_t9990850da5eeebe87694f395344a38e0a7bd6b0f76de9f47fbc149941a38eac7",
+          "page_number": 4,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The cited passage explicitly attributes these values to Keller et al., not the current study.",
+      "tags": [
+        "secondary_as_original",
+        "source_type"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "TRP07",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Troponin çalışmasında kaç hasta değerlendirilmiştir?",
+      "answer": "Troponin çalışmasında 114 hasta değerlendirilmiştir. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "TROP_POPULATION",
+          "citation_number": 1,
+          "text_sha256": "e06b73cf9f67108e8a5e040d9d88e28a99abb7584054ad354e9887e926a6351d",
+          "document_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c",
+          "chunk_id": "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c3_te06b73cf9f67108e8a5e040d9d88e28a99abb7584054ad354e9887e926a6351d",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Results p2 states final114;20 AMI and94 without AMI are described separately.",
+      "tags": [
+        "patient_count",
+        "translation"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "CAD01",
+      "group_id": "cad_guideline",
+      "split": "review_only",
+      "language": "en",
+      "question": "How is FFR-CT positioned in the chest pain guideline cited by the review?",
+      "answer": "FFR-CT can be useful for diagnosis of vessel-specific ischemia and to guide decision-making regarding the use of coronary revascularization (Table 3). [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "CAD_GUIDELINE",
+          "citation_number": 1,
+          "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+          "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "page_number": 8,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "P8 guideline discussion supports vessel-specific ischemia diagnosis and decision-making; this is a recommendation, not an RCT effect.",
+      "tags": [
+        "guideline",
+        "literal"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "CAD02",
+      "group_id": "cad_guideline",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Derlemede FFR-CT hangi öneri sınıfıyla aktarılmıştır?",
+      "answer": "Orta-yüksek riskli akut veya stabil göğüs ağrılı ve CCTA proksimal/orta segmentinde %40–90 stenoz bulunan hastalarda FFR-CT Sınıf IIa önerisi olarak aktarılmıştır. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "CAD_GUIDELINE",
+          "citation_number": 1,
+          "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+          "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "page_number": 8,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The review explicitly quotes the classIIa recommendation for this population.",
+      "tags": [
+        "guideline",
+        "translation",
+        "patient_group"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "CAD03",
+      "group_id": "cad_guideline",
+      "split": "review_only",
+      "language": "en",
+      "question": "How is FFR-CT positioned in the chest pain guideline cited by the review?",
+      "answer": "This randomized FFR-CT trial enrolled400 patients and demonstrated a9.5% mortality reduction. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "CAD_GUIDELINE",
+          "citation_number": 1,
+          "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+          "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "page_number": 8,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The review contains a separate400-patient CCTA-guided PCI trial;9.5% is procedural success difference, not FFR-CT mortality benefit.",
+      "tags": [
+        "guideline_as_trial",
+        "wrong_endpoint",
+        "wrong_intervention"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "CAD04",
+      "group_id": "cad_guideline",
+      "split": "review_only",
+      "language": "en",
+      "question": "How is FFR-CT positioned in the chest pain guideline cited by the review?",
+      "answer": "The guideline gives FFR-CT a classI recommendation in all patients. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "CAD_GUIDELINE",
+          "citation_number": 1,
+          "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+          "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "page_number": 8,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "ClassIIa is changed toI and the population is broadened to all patients.",
+      "tags": [
+        "wrong_recommendation",
+        "wrong_population"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "OHCA01",
+      "group_id": "ohca_review",
+      "split": "review_only",
+      "language": "en",
+      "question": "What evidence was identified for Bahrain in the GCC OHCA scoping review?",
+      "answer": "No literature was identified for Bahrain. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "OHCA_REVIEW",
+          "citation_number": 1,
+          "text_sha256": "6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "document_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f",
+          "chunk_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "page_number": 1,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Abstract Results p1 explicitly reports no literature identified for Bahrain; this is a review search result, not proof no events occurred.",
+      "tags": [
+        "review",
+        "literal"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "OHCA02",
+      "group_id": "ohca_review",
+      "split": "review_only",
+      "language": "tr",
+      "question": "OHCA derlemesinde Bahreyn için hangi literatür bulunmuştur?",
+      "answer": "Derleme taramasında Bahreyn için literatür saptanmamıştır. [1]",
+      "expected_label": "supported",
+      "expected_accept": true,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "OHCA_REVIEW",
+          "citation_number": 1,
+          "text_sha256": "6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "document_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f",
+          "chunk_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "page_number": 1,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Faithful translation of a bounded search finding, not absolute absence of OHCA.",
+      "tags": [
+        "review",
+        "translation"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "OHCA03",
+      "group_id": "ohca_review",
+      "split": "review_only",
+      "language": "en",
+      "question": "What evidence was identified for Bahrain in the GCC OHCA scoping review?",
+      "answer": "The review included24 cardiac arrest patients. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "OHCA_REVIEW",
+          "citation_number": 1,
+          "text_sha256": "6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "document_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f",
+          "chunk_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "page_number": 1,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The number24 refers to studies, not patients.",
+      "tags": [
+        "wrong_count_unit",
+        "source_type"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "OHCA04",
+      "group_id": "ohca_review",
+      "split": "review_only",
+      "language": "tr",
+      "question": "OHCA derlemesinde Bahreyn için hangi sonuç bildirilmiştir?",
+      "answer": "Bahreyn’de hastane dışı kardiyak arrest hiç gerçekleşmemiştir. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "OHCA_REVIEW",
+          "citation_number": 1,
+          "text_sha256": "6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "document_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f",
+          "chunk_id": "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c",
+          "page_number": 1,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "No identified literature does not mean no cardiac arrests occurred.",
+      "tags": [
+        "absence_of_evidence",
+        "overstatement"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "GATE01",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Atriyal fibrilasyon hangi yöntemlerle tespit edilebilir?",
+      "answer": "AF giyilebilir cihazlarla tespit edilebilir. [1]",
+      "expected_label": "uncertain",
+      "expected_accept": false,
+      "component": "evidence_guard",
+      "evidence_refs": [],
+      "rationale": "No sources were supplied; reject before generation regardless of corpus answerability.",
+      "tags": [
+        "empty_context",
+        "correct_abstention"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "GATE02",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. [1]",
+      "expected_label": "uncertain",
+      "expected_accept": false,
+      "component": "evidence_guard",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "Only the literal excerpt AF is provided as a controlled truncation fault; it is too short to count as evidence.",
+      "tags": [
+        "short_context",
+        "correct_abstention"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output",
+      "context_excerpt": "AF"
+    },
+    {
+      "case_id": "GATE03",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Atriyal fibrilasyon hangi yöntemlerle tespit edilebilir?",
+      "answer": "AF giyilebilir cihazlarla tespit edilebilir. [1]",
+      "expected_label": "unsupported",
+      "expected_accept": false,
+      "component": "evidence_guard",
+      "evidence_refs": [
+        {
+          "source_id": "CAD_GUIDELINE",
+          "citation_number": 1,
+          "text_sha256": "116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "document_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21",
+          "chunk_id": "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7",
+          "page_number": 8,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "CAD p8 is not AF detection evidence; an irrelevant but long paragraph must not pass.",
+      "tags": [
+        "irrelevant_context",
+        "correct_abstention"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    },
+    {
+      "case_id": "CITE01",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "answer": "AF can be detected incidentally during clinical encounters, with wearable devices, or through interrogation of cardiac implanted electronic devices. This method has100% sensitivity. [1]",
+      "expected_label": "partially_supported",
+      "expected_accept": false,
+      "component": "answer_validation",
+      "evidence_refs": [
+        {
+          "source_id": "AF_DETECTION",
+          "citation_number": 1,
+          "text_sha256": "ba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "document_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39",
+          "chunk_id": "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0",
+          "page_number": 2,
+          "processing_version": "markdown-rotated-v3|pymupdf=2.1|pymupdf4llm=2.1|references-v2|chunking-table-v1"
+        }
+      ],
+      "rationale": "The first statement is supported, the additional clinical accuracy statement has no source.",
+      "tags": [
+        "uncited_claim",
+        "partial_support"
+      ],
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      },
+      "answer_provenance": "curated_evaluation_example_not_real_LLM_output"
+    }
+  ],
+  "retrieval_questions": [
+    {
+      "question_id": "af_detection_tr",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Atriyal fibrilasyon hangi yöntemlerle tespit edilebilir?",
+      "judgments": {
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "af_detection_en",
+      "group_id": "af_detection",
+      "split": "review_only",
+      "language": "en",
+      "question": "How can atrial fibrillation be detected?",
+      "judgments": {
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "tk37_roc_tr",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Kritik karotis darlığında ELR ve PLR için ROC sonuçları nelerdir?",
+      "judgments": {
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "tk37_roc_en",
+      "group_id": "tk37_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What ROC discrimination was reported for ELR and PLR in critical carotid stenosis?",
+      "judgments": {
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "tk37_population_tr",
+      "group_id": "tk37_population",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Karotis darlığı çalışmasındaki hasta ve kontrol sayıları nedir?",
+      "judgments": {
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4": 2,
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p3_c1_t96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "tk37_population_en",
+      "group_id": "tk37_population",
+      "split": "review_only",
+      "language": "en",
+      "question": "How many patients and controls were included in the carotid stenosis study?",
+      "judgments": {
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p2_c2_t2ccc3b5b7d835ea6270e21168199519ec8d152e409d7cc3047313156133a4df4": 2,
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p3_c1_t96f030eb24e3d1e32308b240cfba5ab9fc78b19bd52a77b0f38c007e2a0445cd": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "tk36_hba1c_tr",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "tr",
+      "question": "AF hastalarında HbA1c için ROC AUC ve güven aralığı nedir?",
+      "judgments": {
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "tk36_hba1c_en",
+      "group_id": "tk36_hba1c",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the HbA1c ROC result for ischemic events in AF patients?",
+      "judgments": {
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "troponin_roc_tr",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Troponin değişimi akut miyokard enfarktüsü tanısında nasıl değerlendirilir?",
+      "judgments": {
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1": 2,
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "troponin_roc_en",
+      "group_id": "troponin_roc",
+      "split": "review_only",
+      "language": "en",
+      "question": "What was the 1-3 hour delta hs-troponin I ROC result for AMI?",
+      "judgments": {
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p4_c2_t827b6d2c035bf3d55fa984a1571e7c4d1802244d085b9c24cfaf352c018fb4f1": 2,
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "cad_guideline_tr",
+      "group_id": "cad_guideline",
+      "split": "review_only",
+      "language": "tr",
+      "question": "Koroner arter hastalığının tanısında FFR-CT hangi öneriyle kullanılır?",
+      "judgments": {
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "cad_guideline_en",
+      "group_id": "cad_guideline",
+      "split": "review_only",
+      "language": "en",
+      "question": "How is FFR-CT positioned in the chest pain guideline cited by the review?",
+      "judgments": {
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "ohca_review_tr",
+      "group_id": "ohca_review",
+      "split": "review_only",
+      "language": "tr",
+      "question": "OHCA derlemesinde Bahreyn için literatür bulunmuş mudur?",
+      "judgments": {
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    },
+    {
+      "question_id": "ohca_review_en",
+      "group_id": "ohca_review",
+      "split": "review_only",
+      "language": "en",
+      "question": "What evidence was identified for Bahrain in the GCC OHCA scoping review?",
+      "judgments": {
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c": 2
+      },
+      "gold_complete": false,
+      "judgments_note": "Known direct supporting chunks only; other relevant and non-relevant chunks have not been exhaustively judged.",
+      "review": {
+        "status": "provisional",
+        "source": "assistant_curated_pdf_review_not_human_approval",
+        "reviewer_id": null,
+        "reviewed_at": null,
+        "reviewed_case_sha256": null
+      }
+    }
+  ]
+}

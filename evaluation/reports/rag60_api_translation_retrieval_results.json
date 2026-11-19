@@ -1,0 +1,669 @@
+{
+  "model": "gpt-6-luna",
+  "total": 48,
+  "retrieval_hit5": 27,
+  "reranker_hit5": 39,
+  "reranker_hit20": 48,
+  "by_category": {
+    "HB": {
+      "total": 8,
+      "hit5": 6,
+      "hit20": 8
+    },
+    "ELR": {
+      "total": 8,
+      "hit5": 5,
+      "hit20": 8
+    },
+    "AF": {
+      "total": 8,
+      "hit5": 7,
+      "hit20": 8
+    },
+    "CAD": {
+      "total": 8,
+      "hit5": 8,
+      "hit20": 8
+    },
+    "TRP": {
+      "total": 8,
+      "hit5": 6,
+      "hit20": 8
+    },
+    "OHCA": {
+      "total": 8,
+      "hit5": 7,
+      "hit20": 8
+    }
+  },
+  "results": [
+    {
+      "question_id": "RAG60-HB-01",
+      "original_question": "HbA1c/C-peptid oranını inceleyen AF çalışmasının tasarımı nedir?",
+      "translated_question": "What is the design of the AF study investigating the HbA1c/C-peptide ratio?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ],
+      "retrieval_rank": 3,
+      "reranker_rank": 2,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-02",
+      "original_question": "HCR çalışmasının temel araştırma amacı nedir?",
+      "translated_question": "What is the primary research objective of the HCR study?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p1_c0_t7f51ac80fe25ba10788b508a88b7ff679db411f37c0648355ed9bab4a4ad9e6a"
+      ],
+      "retrieval_rank": 8,
+      "reranker_rank": 5,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-03",
+      "original_question": "HCR çalışmasında verisi eksik olan hastalara nasıl işlem uygulanmıştır?",
+      "translated_question": "How were patients with missing data handled in the HCR study?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ],
+      "retrieval_rank": 7,
+      "reranker_rank": 7,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-04",
+      "original_question": "HCR çalışmasında AF tanısı hangi EKG bulgularıyla ve hangi asgari süreyle tanımlanmıştır?",
+      "translated_question": "What ECG findings and minimum duration were used to define AF in the HCR study?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ],
+      "retrieval_rank": 5,
+      "reranker_rank": 12,
+      "retrieval_hit5": true,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-05",
+      "original_question": "HCR ile iskemik olay arasındaki ilişki, HCR'yi değiştirmenin olayları önlediğini gösterir mi?",
+      "translated_question": "Does the association between HCR and ischemic events indicate that modifying HCR prevents events?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p1_c1_t52afd159691e53ab12b14ff2421a04e29fdcd57b855ce1c670236094a729d5e1",
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ],
+      "retrieval_rank": 3,
+      "reranker_rank": 5,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-06",
+      "original_question": "Başlangıçta bildirilen 1.525 kişi ile son analizdeki 1.225 kişi farklılığını makale nasıl açıklar?",
+      "translated_question": "How does the article explain the difference between the 1,525 individuals reported initially and the 1,225 individuals in the final analysis?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ],
+      "retrieval_rank": 6,
+      "reranker_rank": 2,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-07",
+      "original_question": "HCR çalışmasının analiz örnekleminde toplam kaç kişi ve iskemik olay olan/olmayan gruplarda kaçar kişi vardır?",
+      "translated_question": "How many participants were there in total in the HCR study’s analysis sample, and how many were in the groups with and without ischemic events?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p2_c2_t81c2c997226ade508854ece8f9eb179155d3120179f356948ff336bd71644d6c"
+      ],
+      "retrieval_rank": 7,
+      "reranker_rank": 5,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-HB-08",
+      "original_question": "AF ve iskemik olaylar için HCR'nin ROC kesme değeri, duyarlılığı, özgüllüğü, AUC ve %95 CI değerleri nelerdir?",
+      "translated_question": "What are the ROC cutoff value, sensitivity, specificity, AUC, and 95% CI for HCR in relation to AF and ischemic events?",
+      "expected_chunk_ids": [
+        "795f2506c5bd4f750de3899a8c22d3af6fcdb79415599ea35bfe2a75e3fb22b7_vbc452dc54a8ed2fa_p5_c0_t3a040a426d7069410376042d61ce91f30c15149e2f5c5246d378b4c7a25bb9ec"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-01",
+      "original_question": "ELR/PLR çalışmasında hasta ve kontrol grupları nasıl tanımlanmıştır?",
+      "translated_question": "How were the patient and control groups defined in the ELR/PLR study?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c0_t2d8b9b5ee958a5db05f6871b251950871af4f73fcadf3e1759f8dc4774b90b38"
+      ],
+      "retrieval_rank": 15,
+      "reranker_rank": 10,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-02",
+      "original_question": "ELR ve PLR'nin kritik karotis darlığıyla ilişkisini araştıran çalışmanın tasarımı nedir?",
+      "translated_question": "What is the design of the study investigating the association between ELR and PLR and critical carotid stenosis?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c0_t2d8b9b5ee958a5db05f6871b251950871af4f73fcadf3e1759f8dc4774b90b38"
+      ],
+      "retrieval_rank": 15,
+      "reranker_rank": 12,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-03",
+      "original_question": "Kritik karotis darlığı çalışmasında karşılaştırılan temel hematolojik belirteçler hangileridir?",
+      "translated_question": "What are the primary hematological markers compared in the critical carotid stenosis study?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c0_t2d8b9b5ee958a5db05f6871b251950871af4f73fcadf3e1759f8dc4774b90b38"
+      ],
+      "retrieval_rank": 5,
+      "reranker_rank": 5,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-04",
+      "original_question": "ELR/PLR çalışmasında öngörü ve ayırt edicilik hangi analizlerle değerlendirilmiştir?",
+      "translated_question": "Which analyses were used to evaluate prediction and discrimination in the ELR/PLR study?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p1_c1_t6ec639f00d71a33a22c51a0f632de45db68168d129f1457dea7308754bed073c"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-05",
+      "original_question": "Makaledeki ELR sonucu tek başına kesin tanı testi olarak kullanılmasını destekliyor mu?",
+      "translated_question": "Does the ELR result in the article support its use as a definitive diagnostic test on its own?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p6_c0_tb0d6c639fc2dd1c8a9b73272e29896d07af1a10afe95abb3e060a47dd32d2825"
+      ],
+      "retrieval_rank": 16,
+      "reranker_rank": 6,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-06",
+      "original_question": "ELR/PLR bulgularının tüm hastalara genellenmesini hangi tasarım sınırlılıkları etkiler?",
+      "translated_question": "Which design limitations affect the generalizability of ELR/PLR findings to all patients?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p6_c3_t1a4bca116acda398b37a0c8d0a6d0a03ed6e2fd1673b3b2dcb2cd9b708925248"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-07",
+      "original_question": "Makalenin kendi ELR ROC sonucunda AUC, %95 CI ve p değeri nedir?",
+      "translated_question": "What are the AUC, 95% CI, and p-value for the article’s own ROC result for ELR?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 2,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-ELR-08",
+      "original_question": "Makalenin kendi PLR ROC sonucunda AUC, %95 CI ve p değeri nedir?",
+      "translated_question": "What are the AUC, 95% CI, and p-value for the PLR ROC analysis reported in the article itself?",
+      "expected_chunk_ids": [
+        "261d84fa68ee3188bd807ce41aff494ac1885abe78074b98b068c06e20371cd0_vbc452dc54a8ed2fa_p5_c0_t8e9ac4faf16b5d2b88afa1b96102a4e4653a7ba68ab7cd730d469bfa8640a1e9"
+      ],
+      "retrieval_rank": 6,
+      "reranker_rank": 5,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-01",
+      "original_question": "AF derlemesine göre atriyal fibrilasyon hangi yollarla tespit edilebilir?",
+      "translated_question": "According to the AF review, what methods can be used to detect atrial fibrillation?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ],
+      "retrieval_rank": 10,
+      "reranker_rank": 2,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-02",
+      "original_question": "AF tanısı bulunmayan hangi hasta grubunda aralıklı AF araştırması için ILR kullanılabileceği belirtilmiştir?",
+      "translated_question": "In which group of patients without an AF diagnosis has ILR use been indicated for investigating intermittent AF?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ],
+      "retrieval_rank": 4,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-03",
+      "original_question": "AF derlemesinde aspirin, inme önlenmesinde antikoagülasyonun yerine öneriliyor mu?",
+      "translated_question": "In the AF review, is aspirin recommended instead of anticoagulation for stroke prevention?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c1_t9eb7517523cbad95ed9f66f2c88c3f8197dc1a1ea58c2a9334afbd94bf44ce36"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-04",
+      "original_question": "AF'nin başlangıcını, tekrarını ve komplikasyonlarını önlemek için yaşam tarzında hangi değişiklikler önerilir?",
+      "translated_question": "What lifestyle modifications are recommended to prevent the onset, recurrence, and complications of AF?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ],
+      "retrieval_rank": 11,
+      "reranker_rank": 8,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-05",
+      "original_question": "Genel popülasyonda asemptomatik AF taramasının yararı kesin olarak gösterilmiş midir?",
+      "translated_question": "Has the benefit of screening for asymptomatic AF in the general population been definitively demonstrated?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-06",
+      "original_question": "LOOP çalışmasında daha fazla AF tespiti, inme/sistemik emboli sonucunda anlamlı azalma gösterdi mi?",
+      "translated_question": "Did increased AF detection in the LOOP study demonstrate a significant reduction in stroke/systemic embolism outcomes?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ],
+      "retrieval_rank": 7,
+      "reranker_rank": 1,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-07",
+      "original_question": "Derlemede yıllık inme/tromboemboli riski en az %2 olan AF hastalarında antikoagülasyonun plaseboya göre inme riskindeki azalma aralığı nedir?",
+      "translated_question": "In the review, among patients with AF whose annual risk of stroke/thromboembolism is at least 2%, what is the range of reduction in stroke risk with anticoagulation compared with placebo?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p2_c0_tba3617fdc550310f6b8ad42fd0e87b5a89ada9068cdd40849fa5a737597c0be0"
+      ],
+      "retrieval_rank": 11,
+      "reranker_rank": 4,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-AF-08",
+      "original_question": "LOOP çalışmasında ILR ve kontrol gruplarında bildirilen AF tanısı oranları nelerdir?",
+      "translated_question": "What were the reported rates of AF diagnosis in the ILR and control groups in the LOOP study?",
+      "expected_chunk_ids": [
+        "9d2187931548b45d5f73a8b48a843e1bc64e576da52998bedcb0a70dcd254a39_vbc452dc54a8ed2fa_p4_c0_teb6518c32f26f7464fcc227eb05be2734235d960bb957939c3778e467b53d6c5"
+      ],
+      "retrieval_rank": 4,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-01",
+      "original_question": "CAD derlemesinin Table 1 tablosunda hangi fonksiyonel testler listelenir?",
+      "translated_question": "Which functional tests are listed in Table 1 of the CAD review?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p2_c2_tb71307e725dc529af2e27f0e1d4cf9cb159270e78c48751d12071e3d8f80830a",
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c0_t6bdae782578d5064616624d263f832e91757cd06652f498cedd2ee4697797976"
+      ],
+      "retrieval_rank": 4,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-02",
+      "original_question": "CAD derlemesinin Table 2 tablosunda hangi anatomik testler yer alır?",
+      "translated_question": "Which anatomical tests are included in Table 2 of the CAD review?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c2_tb5df68c00941d119c7bf6a9809b53e146e32cb60807cc05493493a2f923b870a"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-03",
+      "original_question": "CAD derlemesine göre CMR sol ventrikülün hangi özelliklerini değerlendirebilir?",
+      "translated_question": "According to the CAD review, which characteristics of the left ventricle can CMR assess?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c3_tded9bbd5e1edf4abcf5ca0c4293bf0f1a6911ea48a946e5684e8dc77104a2522"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 3,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-04",
+      "original_question": "CAD derlemesinde akut koroner sendromların başlıca alt türleri nelerdir?",
+      "translated_question": "What are the main subtypes of acute coronary syndromes in a CAD review?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p1_c2_t51e12a73e770c59cba06a29d7483ba3b5af046927be5e8a20bbe4a5d8576b817"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-05",
+      "original_question": "CCTA ile anatomik değerlendirme yapılması, Table 2'ye göre iskeminin tek başına doğrulandığı anlamına gelir mi?",
+      "translated_question": "Does anatomical assessment with CCTA mean that ischemia is confirmed on its own, according to Table 2?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c2_tb5df68c00941d119c7bf6a9809b53e146e32cb60807cc05493493a2f923b870a"
+      ],
+      "retrieval_rank": 10,
+      "reranker_rank": 1,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-06",
+      "original_question": "FFR-CT için Sınıf IIa ifadesi bu derlemenin kendi randomize deneyinin sonucu mudur?",
+      "translated_question": "Is the Class IIa statement for FFR-CT a result of this review’s own randomized trial?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p8_c2_t116d0896c920435e04ee512149064faf3c43185e0b1021d41021481262253bd7"
+      ],
+      "retrieval_rank": 8,
+      "reranker_rank": 1,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-07",
+      "original_question": "Table 1'de egzersiz EKG'nin duyarlılık ve özgüllüğü kaçtır?",
+      "translated_question": "What are the sensitivity and specificity of exercise ECG in Table 1?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p2_c2_tb71307e725dc529af2e27f0e1d4cf9cb159270e78c48751d12071e3d8f80830a",
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c1_tc48237717255b8c77d42434f20566535ded131719074a68608b8dd28b1b33f0f"
+      ],
+      "retrieval_rank": 19,
+      "reranker_rank": 1,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-CAD-08",
+      "original_question": "Table 2'de CCTA'nın duyarlılık ve özgüllüğü kaçtır?",
+      "translated_question": "What are the sensitivity and specificity of CCTA in Table 2?",
+      "expected_chunk_ids": [
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c2_tb5df68c00941d119c7bf6a9809b53e146e32cb60807cc05493493a2f923b870a",
+        "1d5842c9f78b3edb071cd62429cafcfef2bd80e2048687e43b5a73c677515a21_vbc452dc54a8ed2fa_p3_c3_tded9bbd5e1edf4abcf5ca0c4293bf0f1a6911ea48a946e5684e8dc77104a2522"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-01",
+      "original_question": "Delta hs-troponin I çalışmasına hangi başvuru şikâyeti olan hastalar alınmıştır?",
+      "translated_question": "Which patients presenting with what chief complaint were included in the Delta hs-troponin I study?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967"
+      ],
+      "retrieval_rank": 5,
+      "reranker_rank": 3,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-02",
+      "original_question": "Troponin çalışmasında kan örnekleri hangi zamanlarda alınmıştır?",
+      "translated_question": "At what time points were blood samples collected in the troponin study?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c0_t718e585e042d406df75f086a28a3e86779ecd82623c570035c266d81a9a71cbe"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-03",
+      "original_question": "Troponin çalışmasında delta değerleri nasıl ifade edilmiştir?",
+      "translated_question": "How were delta values expressed in the troponin study?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967"
+      ],
+      "retrieval_rank": 4,
+      "reranker_rank": 6,
+      "retrieval_hit5": true,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-04",
+      "original_question": "Troponin çalışmasında başlangıç troponini 18 ng/L altında olan hastalar analize alınmış mıdır?",
+      "translated_question": "Were patients with a baseline troponin level below 18 ng/L included in the analysis of the Troponin study?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c0_t718e585e042d406df75f086a28a3e86779ecd82623c570035c266d81a9a71cbe"
+      ],
+      "retrieval_rank": 3,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-05",
+      "original_question": "Table II'deki AUC±SE satırında 0,838±0,066 ifadesi %95 güven aralığı olarak yorumlanabilir mi?",
+      "translated_question": "Can the value 0.838±0.066 in the AUC±SE row of Table II be interpreted as a 95% confidence interval?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148"
+      ],
+      "retrieval_rank": 10,
+      "reranker_rank": 1,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-06",
+      "original_question": "Taburcu edilen hastalarda kısa süreli olay gözlenmemesi, on yıllık olay/mortalite yokluğu olarak genellenebilir mi?",
+      "translated_question": "Can the absence of short-term events observed in discharged patients be generalized to the absence of events/mortality over ten years?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p2_c3_te06b73cf9f67108e8a5e040d9d88e28a99abb7584054ad354e9887e926a6351d"
+      ],
+      "retrieval_rank": 11,
+      "reranker_rank": 1,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-07",
+      "original_question": "1–3 saat delta hs-troponin I için Table II'deki eşik, duyarlılık, özgüllük, AUC, SE ve p değerleri nelerdir?",
+      "translated_question": "What are the threshold, sensitivity, specificity, AUC, SE, and p values in Table II for 1–3-hour delta hs-troponin I?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p3_c2_t9d05e34c56e8823513fb034190895d3b1e0918daa6e657e78f793d7dee0fd148"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 2,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-TRP-08",
+      "original_question": "Troponin çalışmasının son analizinde kaç hasta ve kaç AMI olgusu vardır?",
+      "translated_question": "How many patients and AMI cases are there in the final analysis of the Troponin study?",
+      "expected_chunk_ids": [
+        "23d942b88a96b0c4539deb4bbaa064a17d8b97cbabf408c97b2cce6c9c9eb67c_vbc452dc54a8ed2fa_p1_c0_tb8e3c9ac1365bdbecc92bbc28a9bf7e3a520fba4c4d3696ac8eb1d7d75a64967"
+      ],
+      "retrieval_rank": 11,
+      "reranker_rank": 6,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-01",
+      "original_question": "Körfez ülkelerindeki OHCA makalesinin araştırma türü nedir?",
+      "translated_question": "What is the study type of the OHCA article in the Gulf countries?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ],
+      "retrieval_rank": 1,
+      "reranker_rank": 4,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-02",
+      "original_question": "OHCA derlemesinde hangi yayın dilleri uygun kabul edilmiştir?",
+      "translated_question": "Which publication languages were considered eligible in the OHCA review?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ],
+      "retrieval_rank": 3,
+      "reranker_rank": 2,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-03",
+      "original_question": "OHCA derlemesinde hangi temel bibliyografik veri tabanları taranmıştır?",
+      "translated_question": "Which core bibliographic databases were searched in the OHCA review?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ],
+      "retrieval_rank": 7,
+      "reranker_rank": 5,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-04",
+      "original_question": "OHCA derlemesinde literatür belirlenemeyen GCC ülkesi hangisidir?",
+      "translated_question": "Which GCC country had no literature identified in the OHCA review?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 1,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-05",
+      "original_question": "Derleme, çalışmaların heterojenliğini sonuçları raporlarken nasıl ele almıştır?",
+      "translated_question": "How did the review account for heterogeneity among the studies when reporting the results?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p2_c3_t5ef6ccc8da6a97844ed477c6a1f1c8bd9c91e073b36dde30e30b466f7bd691c9"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 3,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-06",
+      "original_question": "Bu kapsam derlemesinin dahil edilen çalışmalara kritik kalite değerlendirmesi yaptığını söylemek doğru mudur?",
+      "translated_question": "Is it correct to say that this scoping review conducted a critical appraisal of the quality of the included studies?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p2_c3_t5ef6ccc8da6a97844ed477c6a1f1c8bd9c91e073b36dde30e30b466f7bd691c9"
+      ],
+      "retrieval_rank": 2,
+      "reranker_rank": 2,
+      "retrieval_hit5": true,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-07",
+      "original_question": "OHCA derlemesinde kaç atıf taranmış ve kaç çalışma analize alınmıştır?",
+      "translated_question": "How many citations were screened in the OHCA review, and how many studies were included in the analysis?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ],
+      "retrieval_rank": 10,
+      "reranker_rank": 2,
+      "retrieval_hit5": false,
+      "hit5": true,
+      "hit20": true
+    },
+    {
+      "question_id": "RAG60-OHCA-08",
+      "original_question": "OHCA derlemesinin literatür taraması hangi tarih aralığını kapsamaktadır?",
+      "translated_question": "What date range does the literature search for the OHCA review cover?",
+      "expected_chunk_ids": [
+        "331dba2b95bc1d85a7e95d3b9b3a27ff0dbb13001a5f27e1306bc9b2833e453f_vbc452dc54a8ed2fa_p1_c1_t6c73a255d0541f6e3a84324e16ff0a3b9defd0a1de1d5b728c574f185130061c"
+      ],
+      "retrieval_rank": 18,
+      "reranker_rank": 6,
+      "retrieval_hit5": false,
+      "hit5": false,
+      "hit20": true
+    }
+  ]
+}

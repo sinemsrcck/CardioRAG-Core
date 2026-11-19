@@ -2,6 +2,7 @@
 from functools import lru_cache
 
 from sentence_transformers import CrossEncoder
+from src.query_normalization import reranking_query
 
 
 RERANKER_MODELS = {
@@ -58,8 +59,9 @@ def rerank(
 
     model = get_reranker(model_name)
 
+    scoring_question = reranking_query(question, model_name)
     pairs = [
-        (question, chunk["text"])
+        (scoring_question, chunk["text"])
         for chunk in valid_chunks
     ]
 

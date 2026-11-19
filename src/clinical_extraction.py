@@ -397,7 +397,8 @@ def to_clinical_draft_item(finding, *, reviewed_fields, source_language=None):
 def prepare_rag_save_kwargs(result, *, llm_model=None):
     """Prepare keyword arguments for Zehra's save_rag_result; NEVER call SQL.
 
-    Explicit actual LLM identity is required only for a generated answer. Guard
+    Explicit actual LLM identity is required for a generated, citation-rejected or claim-rejected
+    response; a rejected answer remains null. Guard
     abstention can have llm_enabled=True despite no generation: record it as no
     LLM invocation in the prepared copy. The caller must supply the real writer
     and transaction later; FK existence remains the writer's responsibility.
@@ -409,7 +410,7 @@ def prepare_rag_save_kwargs(result, *, llm_model=None):
         if not isinstance(prepared.get(key), str) or not prepared[key].strip():
             raise ValueError(f"Missing RAG field: {key}")
     status = prepared.get("status")
-    if status not in ("generated", "retrieval_only", "insufficient_evidence"):
+    if status not in ("generated", "citation_validation_failed", "claim_validation_failed", "retrieval_only", "insufficient_evidence"):
         raise ValueError("Unknown RAG status")
     evidence = prepared.get("evidence_check")
     if not isinstance(evidence, dict) or type(evidence.get("sufficient")) is not bool:
@@ -449,9 +450,20 @@ def prepare_rag_save_kwargs(result, *, llm_model=None):
         raise ValueError("Nonnegative response_time_seconds is required")
     prepared["response_time_seconds"] = elapsed
     prepared["top_rerank_score"] = finite(prepared.get("top_rerank_score"))
-    if status == "generated":
-        if not prepared["llm_enabled"] or not isinstance(prepared.get("answer"), str) or not prepared["answer"].strip():
+    if status in ("generated", "citation_validation_failed", "claim_validation_failed"):
+        if not prepared["llm_enabled"]:
+            raise ValueError("An actual LLM invocation is required")
+        if status == "generated" and (not isinstance(prepared.get("answer"), str) or not prepared["answer"].strip()):
             raise ValueError("Generated status requires an LLM answer")
+        if status == "citation_validation_failed" and (prepared.get("answer") is not None
+                or not isinstance(prepared.get("citation_check"), dict)
+                or prepared["citation_check"].get("valid") is not False):
+            raise ValueError("Rejected citation answer must be hidden and explicitly invalid")
+        if status == "claim_validation_failed" and (prepared.get("answer") is not None
+                or not isinstance(prepared.get("claim_verification"), dict)
+                or prepared["claim_verification"].get("status") != "failed"
+                or prepared["claim_verification"].get("claims_verified") is not False):
+            raise ValueError("Rejected clinical answer must remain hidden and explicitly failed")
         actual_model = prepared.get("llm_model") or llm_model
         if not isinstance(actual_model, str) or not actual_model.strip():
             raise ValueError("Provide the actual LLM model used")

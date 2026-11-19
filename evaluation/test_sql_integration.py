@@ -298,6 +298,9 @@ class SQLIntegrationTests(unittest.TestCase):
             result = answer_question_with_sql("atrial fibrillation", connection=self.conn, use_llm=False)
         self.assertEqual(result["status"], "retrieval_only")
         self.assertEqual(result["sources"][0]["chunk_id"], "new:chunk")
+        self.assertEqual(result["sources"][0]["source_text"], self.text)
+        self.assertEqual(result["sources"][0]["processing_version"], "current-version")
+        self.assertEqual(result["sources"][0]["text_sha256"], hashlib.sha256(self.text.encode()).hexdigest())
         self.assertEqual(result["sql_persistence"]["status"], "pending_caller_commit")
 
 
