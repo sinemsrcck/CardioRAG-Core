@@ -124,6 +124,38 @@ def test_modes_and_matching():
     check("bulgu yok + sistem bulgu üretti: FP", (1, 1, 1), (fp["bulgu"]["fp"], fp["alan"]["mudahale"]["fp"], fp["alan"]["doz"]["fp"]))
 
 
+def test_llm_labelled():
+    from src.evaluate_extraction import ham_to_gold
+    from src.gold_set import DURUMLAR, gold_hash
+
+    human = entry("H1", [{"mudahale": "aspirin"}])
+    machine = entry("L1", [{"mudahale": "warfarin"}], durum="llm_etiketli")
+    gold = gold_of(human, machine)
+    outputs = {"H1": out_of([{"mudahale": "aspirin"}]), "L1": out_of([{"mudahale": "heparin"}])}
+    human_result = evaluate(gold, outputs, bootstrap_iterations=0)
+    llm_result = evaluate(gold, outputs, bootstrap_iterations=0, durum="llm_etiketli")
+    check("llm_etiketli durumu tanımlı", True, "llm_etiketli" in DURUMLAR)
+    check("insan kümesi yalnız dogrulandi (llm adayı girmez)", (1, 1, 0),
+          (human_result["degerlendirilen_aday"], human_result["seviyeler"]["ham"]["birebir"]["ana"]["bulgu"]["tp"],
+           human_result["seviyeler"]["ham"]["birebir"]["ana"]["bulgu"]["fp"]))
+    check("llm kümesi yalnız llm_etiketli", (1, 0, 1),
+          (llm_result["degerlendirilen_aday"], llm_result["seviyeler"]["ham"]["birebir"]["ana"]["bulgu"]["tp"],
+           llm_result["seviyeler"]["ham"]["birebir"]["ana"]["bulgu"]["fn"]))
+    machine["bulgular"] = [{"mudahale": "çok farklı"}]
+    check("llm adayının değişmesi insan metriğini ve hash'ini değiştirmez", (human_result["seviyeler"], gold_hash(gold_of(human))),
+          (evaluate(gold, outputs, bootstrap_iterations=0)["seviyeler"], gold_hash(gold)))
+    try:
+        evaluate(gold, outputs, durum="taslak")
+        got = "kabul"
+    except ValueError:
+        got = "reddedildi"
+    check("geçersiz küme adı reddedilir", "reddedildi", got)
+    mapped = ham_to_gold({"drug": "x", "sample_size": "1,234 patients", "effect_measure": "hazard ratio",
+                          "p_value": "P < .001", "confidence_interval": "95% CI, 1-2"})
+    check("ham: sample_size, effect_measure, p, ci95 eşlenir", ("1234", "HR", "P < .001", "95% CI, 1-2"),
+          (mapped["hasta_sayisi"], mapped["etki_turu"], mapped["p"], mapped["ci95"]))
+
+
 def test_gold_rules():
     taslak = entry("T", [{"mudahale": "x"}], durum="taslak")
     atla = entry("S", [{"mudahale": "x"}], durum="atla")
@@ -348,9 +380,34 @@ def test_database(tmp):
           (metrics["etiket"], metrics["surumler"]["pipeline_version"], metrics["surumler"]["gold_hash"]))
     check("--mock: rapor dosyaları", True,
           all((folder / n).exists() for n in ("metrics.json", "alanlar.csv", "kirilim.csv", "hatalar.csv")))
-    check("--mock: değerlendirilemez alanlar ayrı", ["p", "ci95", "hasta_sayisi", "etki_turu", "icd10"],
+    check("--mock: değerlendirilemez alanlar ayrı (p/ci95/hasta_sayisi/etki_turu artık çıkarılıyor)", ["icd10"],
           metrics["degerlendirilemez_alanlar"])
     check("--mock: değerlendirilen aday", len(evaluable), metrics["degerlendirme"]["degerlendirilen_aday"])
+
+    # llm_etiketli: aynı gold dosyasında bir aday yapay zekâ etiketli -> ayrı küme, uyarıyla.
+    from src.gold_set import LLM_LABEL_WARNING, save_gold
+    llm_gold = json.loads(gold_path.read_text(encoding="utf-8"))
+    target = next(e for e in llm_gold["adaylar"] if e["durum"] == "dogrulandi" and e["bulgular"])
+    target["durum"] = "llm_etiketli"
+    llm_path = Path(tmp) / "gold_llm.json"
+    rebuilt = build_gold(llm_gold["adaylar"], llm_gold["meta"]["ornekleme"], "test")
+    save_gold(rebuilt, llm_path)
+    printed = []
+    from src.evaluate_extraction import print_summary
+    llm_metrics = run_evaluation(gold_path=llm_path, source="mock", ctx=ctx, report_dir=Path(tmp) / "rapor_llm",
+                                 bootstrap_iterations=50, out=lambda *_: None)
+    print_summary(llm_metrics, out=printed.append)
+    check("llm_etiketli: kümeler ayrı (insan 2, yapay zekâ 1)", (2, 1),
+          (llm_metrics["degerlendirme"]["degerlendirilen_aday"],
+           llm_metrics["llm_etiketli"]["degerlendirme"]["degerlendirilen_aday"]))
+    check("llm_etiketli: uyarı metni raporda ve ekranda", (LLM_LABEL_WARNING, True),
+          (llm_metrics["llm_etiketli"]["uyari"], any(LLM_LABEL_WARNING in line for line in printed)))
+    alanlar = (Path(llm_metrics["rapor_dir"]) / "alanlar.csv").read_text(encoding="utf-8-sig")
+    check("llm_etiketli: alanlar.csv'de ayrı küme ve uyarı", True,
+          "llm_etiketli;" in alanlar and "insan_dogrulanmis;" in alanlar and LLM_LABEL_WARNING in alanlar)
+    check("llm_etiketli: insan gold_hash'i yapay zekâ adayından etkilenmez", True,
+          rebuilt["meta"]["gold_hash"] != gold["meta"]["gold_hash"]
+          and rebuilt["meta"]["llm_etiketli_hash"] != rebuilt["meta"]["gold_hash"])
 
     # Önbellekten: iki bulgulu yanıt; biri güvenli parça dışında -> ham 2, dogrulanmis 1.
     from src.clinical_pipeline import preview_rows, process_response
@@ -384,6 +441,7 @@ def main():
     test_hand_example()
     test_modes_and_matching()
     test_gold_rules()
+    test_llm_labelled()
     test_sampling()
     with tempfile.TemporaryDirectory() as tmp:
         test_xlsx_roundtrip(tmp)

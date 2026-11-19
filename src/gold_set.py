@@ -26,7 +26,12 @@ GOLD_FILE = Path("data/clinical/gold_set.json")
 DEFAULT_XLSX = Path("data/review/gold/gold_etiketleme.xlsx")
 DEFAULT_N, DEFAULT_SEED = 60, 42
 REFERENCE_SOURCE = "referans_taslak (doğrulanmadı)"
-DURUMLAR = ("taslak", "dogrulandi", "atla")
+# dogrulandi: YALNIZCA insanın elle kontrol ettiği adaylar. llm_etiketli: yapay zekânın
+# (PDF'e bakarak) doldurduğu, insan doğrulaması OLMAYAN adaylar. Kod ve yapay zekâ
+# hiçbir zaman "dogrulandi" yazmaz; iki küme değerlendirmede asla karıştırılmaz.
+DURUMLAR = ("taslak", "dogrulandi", "llm_etiketli", "atla")
+LLM_LABEL_WARNING = ("yapay zekâ etiketli, insan doğrulaması yok; sonuç sistem-etiketleyici uyumudur, "
+                     "gerçek doğruluk değildir")
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +64,11 @@ GOLD_FIELDS = (
     GoldField("deger", "deger", ("numeric_value",), ("deger",), True, True),
     GoldField("unit", "birim", ("value_unit",), ("unit",), True, True),
     GoldField("sonuc", "metin", ("clinical_outcome",), ("sonuc_olcutu_tr",), True, True),
-    GoldField("p", "deger", (), ("p",), False, True),
-    GoldField("ci95", "deger", (), ("ci95",), False, True),
-    GoldField("hasta_sayisi", "tamsayi", (), ("hasta_sayisi",), False, True),
-    GoldField("etki_turu", "enum", (), ("etki_turu",), False, False,
+    GoldField("p", "deger", ("p_value",), ("p",), True, True),
+    GoldField("ci95", "deger", ("confidence_interval",), ("ci95",), True, True),
+    GoldField("hasta_sayisi", "tamsayi", ("sample_size",), ("hasta_sayisi",), True, True,
+              aciklama="Hasta/katılımcı sayısı (tam sayı; cümledeki sayı)."),
+    GoldField("etki_turu", "enum", ("effect_measure",), ("etki_turu",), True, False,
               secenekler=tuple(sorted(v for v in ETKI_TURU if v))),
     GoldField("icd10", "metin", (), ("icd10",), False, False, xlsx=False),
 )
@@ -231,12 +237,13 @@ HOWTO = [
     "3. Bir bulgu = tek müdahale (ilaç, girişimsel işlem veya tanı yöntemi). İki müdahale varsa iki satır.",
     "4. Yeni bulgu: satırı kopyalayıp altına yapıştırın, bulgu_no'yu artırın (aday_id aynı kalır).",
     "5. Bulgusu olmayan aday: bir satırda alanları boş bırakın, bulgu_yok = EVET.",
-    "6. durum: taslak (henüz bakılmadı) / dogrulandi (kontrol ettim, doğru) / atla (değerlendirme dışı).",
-    "   Bir adayın bütün satırları aynı durumda olmalı. YALNIZCA 'dogrulandi' adaylar metriğe girer.",
+    "6. durum: taslak (henüz bakılmadı) / dogrulandi (İNSAN kontrol etti, doğru) / llm_etiketli (yapay zekâ",
+    "   doldurdu, insan doğrulaması yok) / atla (değerlendirme dışı). Bir adayın bütün satırları aynı durumda olmalı.",
+    "   'dogrulandi' yalnızca elle kontrol eden insan tarafından yazılır; kod ve yapay zekâ asla yazmaz.",
+    "   'dogrulandi' ve 'llm_etiketli' adaylar ayrı ayrı değerlendirilir, asla karıştırılmaz.",
     "7. Sarı hücreler referans taslaktan önceden doldurulmuştur (kaynak = referans_taslak (doğrulanmadı));",
     "   kontrol etmeden 'dogrulandi' yapmayın. taslak_referans sütunu cümlede birebir geçmeyen önerilerdir.",
-    "8. mudahale_turu ve etki_turu açılır listeden seçilir. p, ci95, hasta_sayisi, etki_turu sistem tarafından",
-    "   henüz çıkarılmıyor: etiketlemeniz önerilir, ama şimdilik 'değerlendirilemez' olarak raporlanır.",
+    "8. mudahale_turu ve etki_turu açılır listeden seçilir. p ve ci95 cümleden birebir; hasta_sayisi tam sayı.",
     "9. Bitince: python -m src.evaluate_extraction --gold-yukle <bu dosya>",
     "",
     "Alanlar:",
@@ -411,8 +418,8 @@ def validate_labels(records, candidates_by_id, to_send_ids, havuz_by_id=None):
             findings.append(values)
         if no_finding and findings:
             errors.append("bulgu_yok = EVET ama bulgu alanları dolu")
-        if status == "dogrulandi" and not findings and not no_finding:
-            errors.append("doğrulanmış aday boş: bulgu yoksa bulgu_yok = EVET işaretleyin")
+        if status in ("dogrulandi", "llm_etiketli") and not findings and not no_finding:
+            errors.append(f"{status} aday boş: bulgu yoksa bulgu_yok = EVET işaretleyin")
         first = rows[0]
         entries.append({
             "aday_id": aday_id,
@@ -432,13 +439,17 @@ def validate_labels(records, candidates_by_id, to_send_ids, havuz_by_id=None):
     return entries
 
 
-def evaluable_entries(gold):
-    return [a for a in gold.get("adaylar", []) if a["durum"] == "dogrulandi" and not a["hatalar"]]
+def evaluable_entries(gold, durum="dogrulandi"):
+    """Tek bir kümenin hatasız adayları: 'dogrulandi' (insan) veya 'llm_etiketli' (yapay zekâ)."""
+    if durum not in ("dogrulandi", "llm_etiketli"):
+        raise ValueError("değerlendirme kümesi 'dogrulandi' veya 'llm_etiketli' olmalı")
+    return [a for a in (gold or {}).get("adaylar", []) if a["durum"] == durum and not a["hatalar"]]
 
 
-def gold_hash(gold):
+def gold_hash(gold, durum="dogrulandi"):
     payload = [{"aday_id": a["aday_id"], "bulgu_yok": a["bulgu_yok"], "bulgular": a["bulgular"],
-                "cumle_sha256": a["cumle_sha256"]} for a in sorted(evaluable_entries(gold), key=lambda a: a["aday_id"])]
+                "cumle_sha256": a["cumle_sha256"]}
+               for a in sorted(evaluable_entries(gold, durum), key=lambda a: a["aday_id"])]
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
@@ -449,7 +460,8 @@ def build_gold(entries, meta, source_name):
     gold = {
         "meta": {
             "schema": GOLD_SCHEMA, "alan_listesi_surumu": FIELD_LIST_VERSION,
-            "insan_dogrulamasi": "yalnız durum=dogrulandi ve hatasız adaylar metriğe girer",
+            "insan_dogrulamasi": "yalnız durum=dogrulandi ve hatasız adaylar 'insan_dogrulanmis' metriğine girer; "
+                                 "llm_etiketli adaylar ayrı kümededir (" + LLM_LABEL_WARNING + ")",
             "kaynak_dosya": source_name, "olusturma": datetime.now().isoformat(timespec="seconds"),
             "ornekleme": {k: meta.get(k) for k in ("seed", "n", "pipeline_version", "candidate_id_version")},
             "durum_sayilari": dict(sorted(status_counts.items())),
@@ -459,6 +471,7 @@ def build_gold(entries, meta, source_name):
         "adaylar": entries,
     }
     gold["meta"]["gold_hash"] = gold_hash(gold)
+    gold["meta"]["llm_etiketli_hash"] = gold_hash(gold, "llm_etiketli")
     return gold
 
 

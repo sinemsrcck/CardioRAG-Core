@@ -40,7 +40,10 @@ USER_MESSAGE_FORMAT = "user-json-v1: candidate_text, allowed_quote_spans, table_
 # Kendi yanıt şemamız: mevcut FIELDS + "procedure". clinical_extraction.py
 # değişmez; procedure ayrı denetlenip bulgu mevcut şemayla _validate_response'a verilir.
 PROCEDURE_FIELD = "procedure"
-PIPELINE_FIELDS = (*FIELDS, PROCEDURE_FIELD)
+# Değer alanları (alıntıdan birebir): p, %95 GA, örneklem büyüklüğü, etki ölçütü.
+VALUE_FIELDS = ("p_value", "confidence_interval", "sample_size", "effect_measure")
+EXTRA_FIELDS = (PROCEDURE_FIELD, *VALUE_FIELDS)
+PIPELINE_FIELDS = (*FIELDS, *EXTRA_FIELDS)
 INTERVENTION_FIELDS = ("drug", "diagnostic_method", PROCEDURE_FIELD)
 PIPELINE_FINDING_SCHEMA = {
     "type": "object",
@@ -74,6 +77,13 @@ Additional batch rules:
   one of these three fields will not be stored.
 - Copy patient_group, comparison, clinical_outcome, numeric_value and value_unit
   verbatim only when explicitly stated in the quote; otherwise use null.
+- p_value: the p value text exactly as written (e.g. "P < .001", "p=0.03").
+  confidence_interval: the confidence interval text exactly as written
+  (e.g. "95% CI, 0.62-0.88"). sample_size: the number of patients/participants
+  exactly as written (e.g. "n = 372", "1,234 patients"). effect_measure: the name
+  of the effect measure exactly as written (e.g. "hazard ratio", "OR", "AUC").
+  Copy each verbatim from evidence_quote; never calculate, convert or infer; use
+  null when absent.
 """
 PIPELINE_PROMPT = SYSTEM_PROMPT + PROMPT_ADDENDUM
 SYSTEM_MESSAGE = PIPELINE_PROMPT + "\nSchema: " + json.dumps(PIPELINE_RESPONSE_SCHEMA)
@@ -83,6 +93,66 @@ PROMPT_SHA = hashlib.sha256(
 ).hexdigest()[:12]
 PIPELINE_VERSION = f"{PIPELINE_NAME}-{PROMPT_SHA}"
 TOKEN_PARAMS = ("max_completion_tokens", "max_tokens")
+JSON_MODES = ("json_object", "none")
+
+# Sabit, sürümlü eşlemeler (değişince sürüm adı artırılır; taslak_notu'na yazılır).
+SAMPLE_SIZE_VERSION = "ornek-buyuklugu-v1"
+SAMPLE_SIZE_PATTERN = re.compile(
+    r"^\s*(?:n\s*=\s*)?(?P<num>\d{1,3}(?:,\d{3})+|\d+)"
+    r"(?:\s+(?:patients|participants|subjects|individuals|people|hasta|hastalar|kişi))?\s*$", re.IGNORECASE)
+EFFECT_MAP_VERSION = "etki-esleme-v1"
+EFFECT_MEASURE_MAP = {
+    "OR": ("or", "odds ratio", "odds ratios", "adjusted odds ratio", "aor"),
+    "RR": ("rr", "relative risk", "risk ratio", "adjusted relative risk"),
+    "HR": ("hr", "hazard ratio", "hazard ratios", "adjusted hazard ratio", "ahr"),
+    "IRR": ("irr", "incidence rate ratio", "incidence rate ratios"),
+    "AUC / C-istatistigi": ("auc", "auroc", "area under the curve", "area under the roc curve",
+                            "area under the receiver operating characteristic curve",
+                            "c-statistic", "c statistic", "c-index"),
+}
+ICD_MATCH_VERSION = "icd-birebir-v1"
+TABLE_VALUE_NOTE = "tablo: yeni alanlar sütun kaynağı doğrulanamadığı için yazılmadı"
+
+
+def parse_sample_size(raw):
+    """(tamsayı | None, açıklama). Binlik ayırıcılı değer yazılmaz: validate_row "1,234"ü tek sayı görür."""
+    if raw is None:
+        return None, None
+    match = SAMPLE_SIZE_PATTERN.match(str(raw))
+    if not match:
+        return None, "ayrıştırılamadı (deterministik kalıba uymuyor)"
+    number = match.group("num")
+    if "," in number:
+        return None, (f"binlik ayırıcılı değer ({int(number.replace(',', ''))}); validate_row sayı "
+                      "kontrolüyle çakışacağı için hasta_sayisi'na yazılmadı")
+    return int(number), "ayrıştırıldı"
+
+
+def _effect_key(raw):
+    return re.sub(r"\s+", " ", re.sub(r"[().:;,]", " ", str(raw).casefold())).strip()
+
+
+_EFFECT_INDEX = {alias: canonical for canonical, aliases in EFFECT_MEASURE_MAP.items() for alias in aliases}
+
+
+def map_effect_measure(raw):
+    """Sabit eşleme; eşleşmezse None (ham metin taslak_notu'nda kalır)."""
+    return None if raw is None else _EFFECT_INDEX.get(_effect_key(raw))
+
+
+def lookup_icd10(diagnosis, icd_names):
+    """(kod | None, açıklama): tanı adı icd10_who'daki bir adla normalize BİREBİR eşitse kod."""
+    if not diagnosis or not icd_names:
+        return None, None
+    from src.data_quality import norm_text
+
+    key = norm_text(diagnosis)
+    codes = sorted({code for code, en, tr in icd_names if key and key in (norm_text(en), norm_text(tr))})
+    if len(codes) == 1:
+        return codes[0], f"icd10_who adıyla birebir: '{diagnosis}'"
+    if len(codes) > 1:
+        return None, f"birden fazla kod eşleşti {codes}; boş bırakıldı"
+    return None, None
 
 MIN_SPAN_CHARS = 20
 NO_THINK_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
@@ -167,10 +237,12 @@ class Sources:
     ctx: object                      # clinical_validation.ValidationContext
     chunk_index: dict                # chunk_id -> chunk_index (güncel sürüm)
     max_lengths: dict = field(default_factory=dict)
+    icd_names: list = field(default_factory=list)          # [(kod, ad_en, ad_tr)]
+    article_metadata: dict = field(default_factory=dict)   # document_id -> {"baslik": ...}
 
 
 def load_sources(conn):
-    """Makaleler, doğrulama bağlamı, chunk sıraları ve sütun sınırları (READ ONLY)."""
+    """Makaleler, doğrulama bağlamı, chunk sıraları, sütun sınırları, ICD adları, metaveri (READ ONLY)."""
     from src.clinical_candidates import load_our_articles
     from src.clinical_validation import load_validation_context
     from src.database import _column_max_lengths
@@ -188,10 +260,19 @@ def load_sources(conn):
         chunk_index = {(bytes(cid).decode() if isinstance(cid, (bytes, bytearray)) else cid): int(idx)
                        for cid, idx in cursor.fetchall()}
         max_lengths = _column_max_lengths(cursor, "klinik_bulgular")
+        cursor.execute("SELECT kod, who_adi_en, saglik_bakanligi_adi_tr FROM icd10_who ORDER BY kod")
+        icd_names = [tuple(_decode(v) for v in row) for row in cursor.fetchall()]
+        cursor.execute("SELECT document_id, baslik FROM makaleler WHERE document_id IS NOT NULL")
+        article_metadata = {_decode(doc): {"baslik": _decode(title)} for doc, title in cursor.fetchall() if title}
     finally:
         conn.rollback()
         cursor.close()
-    return Sources(articles=articles, ctx=ctx, chunk_index=chunk_index, max_lengths=max_lengths)
+    return Sources(articles=articles, ctx=ctx, chunk_index=chunk_index, max_lengths=max_lengths,
+                   icd_names=icd_names, article_metadata=article_metadata)
+
+
+def _decode(value):
+    return bytes(value).decode("utf-8") if isinstance(value, (bytes, bytearray)) else value
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +311,7 @@ def safe_spans(text, page_prose, chunk_texts, min_len=MIN_SPAN_CHARS):
 def _exclusion(candidate, reason, detail):
     return {
         "aday_id": candidate.get("aday_id"), "dosya": candidate.get("dosya"),
+        "document_id": candidate.get("document_id"), "makale_id": candidate.get("makale_id"),
         "sayfa": candidate.get("sayfa"), "sayfa_bitis": candidate.get("sayfa_bitis"),
         "kaynak_turu": candidate.get("kaynak_turu"), "birlestirme": candidate.get("birlestirme"),
         "sebep": reason, "aciklama": detail, "cumle": candidate.get("cumle"),
@@ -325,16 +407,21 @@ def server_rejected_message(status, name, token_param="max_completion_tokens"):
 
 
 def call_llm(client, model, messages, *, max_tokens, no_think, max_retries, sleep,
-             token_param="max_completion_tokens"):
+             token_param="max_completion_tokens", json_mode="json_object"):
     """Tek istek; geçici hatalarda artan beklemeyle yeniden dener.
 
     Loglara/istisnalara anahtar, header, yanıt gövdesi veya istisna metni
     taşınmaz: yalnızca güvenli tür/kodlar ve sınırlı alt-istisna metaverisi.
+    json_mode='none' iken response_format gönderilmez; yanıt yine aynı kurallarla
+    ayrıştırılır (parse_llm_json) ve doğrulanır.
     """
     if token_param not in TOKEN_PARAMS:
         raise BatchStop("secenek", f"--max-tokens-param {TOKEN_PARAMS} içinden olmalı.")
-    kwargs = {"model": model, "messages": messages, token_param: max_tokens,
-              "response_format": {"type": "json_object"}}
+    if json_mode not in JSON_MODES:
+        raise BatchStop("secenek", f"--json-mode {JSON_MODES} içinden olmalı.")
+    kwargs = {"model": model, "messages": messages, token_param: max_tokens}
+    if json_mode == "json_object":
+        kwargs["response_format"] = {"type": "json_object"}
     if no_think:
         kwargs["extra_body"] = NO_THINK_EXTRA_BODY
     for attempt in range(max_retries + 1):
@@ -439,20 +526,24 @@ def validate_finding(finding, text, *, table_source=None):
         raise ValueError("Missing or unexpected finding fields")
     procedure = finding[PROCEDURE_FIELD]
     quote = finding["evidence_quote"]
-    if procedure is not None and (not isinstance(procedure, str) or not procedure.strip()
-                                  or not isinstance(quote, str) or procedure not in quote):
-        raise ValueError(f"{PROCEDURE_FIELD} must be null or verbatim evidence text")
+    # procedure ve değer alanları: string ve evidence_quote içinde BİREBİR (tablo dahil).
+    for name in EXTRA_FIELDS:
+        value = finding[name]
+        if value is not None and (not isinstance(value, str) or not value.strip()
+                                  or not isinstance(quote, str) or value not in quote):
+            raise ValueError(f"{name} must be null or verbatim evidence text")
     filled = [name for name in INTERVENTION_FIELDS if finding[name] not in (None, "")]
     if len(filled) > 1:
         raise ValueError("birden_fazla_mudahale: " + ", ".join(filled))
-    base = {key: value for key, value in finding.items() if key != PROCEDURE_FIELD}
+    # Ek alanlar ayrılır; kalan bulgu MEVCUT şemayla ve kurallarla (tipli tablo dahil) denetlenir.
+    base = {key: value for key, value in finding.items() if key not in EXTRA_FIELDS}
     try:
         normalized = _validate_response({"findings": [base]}, text, table_source=table_source)[0]
     except ValueError as exc:
         if not (procedure is not None and str(exc).startswith("Finding has no clinical fields")):
             raise
         normalized = base  # önceki bütün kurallar geçti; klinik alan = procedure
-    return {**normalized, PROCEDURE_FIELD: procedure}
+    return {**normalized, **{name: finding[name] for name in EXTRA_FIELDS}}
 
 
 TR_CHARS = re.compile(r"[çğıöşüÇĞİÖŞÜ]")
@@ -518,6 +609,38 @@ def build_row(finding, item, sources, *, model):
     if language == "tr":
         row["sonuc_olcutu_tr"] = finding["clinical_outcome"]
 
+    # Değer alanları. Tabloda sütun kaynağı (tipli tablo kuralı bu alanları bilmez)
+    # doğrulanamadığı için sütunlara YAZILMAZ; değerler nota konur.
+    raw_values = {name: finding.get(name) for name in VALUE_FIELDS if finding.get(name)}
+    automatic, value_notes, withheld = {}, {}, None
+    if candidate["kaynak_turu"] == "tablo":
+        if raw_values:
+            withheld = {"degerler": raw_values, "not": TABLE_VALUE_NOTE}
+            automatic["tablo_yeni_alanlar"] = f"otomatik (sütunlara yazılmadı: {', '.join(sorted(raw_values))})"
+    else:
+        row["p"] = finding.get("p_value")
+        row["ci95"] = finding.get("confidence_interval")
+        if finding.get("sample_size"):
+            count, reason = parse_sample_size(finding["sample_size"])
+            row["hasta_sayisi"] = count
+            value_notes["sample_size"] = {"ham": finding["sample_size"], "sonuc": reason,
+                                          "surum": SAMPLE_SIZE_VERSION}
+            if count is not None:
+                automatic["hasta_sayisi"] = f"otomatik (sample_size ayrıştırıldı: '{finding['sample_size']}')"
+        if finding.get("effect_measure"):
+            mapped = map_effect_measure(finding["effect_measure"])
+            row["etki_turu"] = mapped
+            value_notes["effect_measure"] = {"ham": finding["effect_measure"], "eslesen": mapped,
+                                             "surum": EFFECT_MAP_VERSION}
+            if mapped:
+                automatic["etki_turu"] = f"otomatik (effect_measure eşlemesi: '{finding['effect_measure']}')"
+    icd, icd_reason = lookup_icd10(finding.get("diagnosis"), getattr(sources, "icd_names", None))
+    row["icd10"] = icd
+    if icd_reason:
+        value_notes["icd10"] = {"tani": finding.get("diagnosis"), "sonuc": icd_reason, "surum": ICD_MATCH_VERSION}
+    if icd:
+        automatic["icd10"] = f"otomatik ({icd_reason})"
+
     note = {
         "kaynak": "clinical_pipeline",
         "pipeline_version": PIPELINE_VERSION,
@@ -533,11 +656,17 @@ def build_row(finding, item, sources, *, model):
             "source_language": "otomatik (karakter/kelime sezgisi)",
             "chunk_id": f"otomatik ({chunk_rule})",
             **({"kanit_cumle": "otomatik (tam tablo satırına genişletildi)"} if expanded else {}),
+            **automatic,
         },
         "kanit_genisletildi": expanded,
         "aday_birlestirme": candidate.get("birlestirme") or None,
+        "aday_cumlesi": candidate["cumle"],
         "notice": NOTICE,
     }
+    if value_notes:
+        note["deger_alanlari"] = value_notes
+    if withheld:
+        note["tablo_yazilmayan_alanlar"] = withheld
     if "table_context" in candidate:
         note["table_context"] = candidate["table_context"]
         from src.clinical_validation import clinical_table_type
@@ -547,6 +676,7 @@ def build_row(finding, item, sources, *, model):
         if family == "cct_recommendations":
             row["outcome_type"] = "öneri"
             note["table_relationship_rule"]["source_type"] = "guideline recommendation relayed by source"
+            note["otomatik_alanlar"]["outcome_type"] = "otomatik (cct_recommendations tablo ailesi)"
     row["taslak_notu"] = json.dumps(note, ensure_ascii=False, sort_keys=True)
     return row, None
 
@@ -593,12 +723,19 @@ def validation_trail(row):
     note = json.loads(row["taslak_notu"])
     table = row.get("kanit_turu") == "tablo"
     method = (note.get("extracted_fields") or {}).get("diagnostic_method")
+    automatic = note.get("otomatik_alanlar") or {}
     checks = [
-        "yanit_semasi (kendi şema: FIELDS + procedure)",
+        "yanit_semasi (kendi şema: FIELDS + procedure + değer alanları)",
         "alinti_aday_metninde_birebir",
-        "alanlar_alintida_birebir (procedure dahil)",
+        "alanlar_alintida_birebir (procedure, p_value, confidence_interval, sample_size, effect_measure dahil)",
         "tek_mudahale_alani (drug | procedure | diagnostic_method)",
         "tablo_tam_satir" if table else "guvenli_parca_icinde",
+        *(["tablo: yeni alanlar sütunlara yazılmadı (sütun kaynağı doğrulanamaz)"]
+          if note.get("tablo_yazilmayan_alanlar") else []),
+        *([f"sample_size: deterministik tamsayı ayrıştırma ({SAMPLE_SIZE_VERSION})"]
+          if "hasta_sayisi" in automatic else []),
+        *([f"effect_measure: sabit eşleme ({EFFECT_MAP_VERSION})"] if "etki_turu" in automatic else []),
+        *([f"icd10: icd10_who adıyla birebir eşleşme ({ICD_MATCH_VERSION})"] if "icd10" in automatic else []),
         *(["diagnostic_relationship: supported_local"] if method else []),
         "validate_source: makale_belge_eslesmesi",
         "validate_source: tek_sayfa",
@@ -616,7 +753,9 @@ def validation_trail(row):
         "gecen_kontroller": checks,
         "surumler": {"pipeline_version": PIPELINE_VERSION, "prompt_sha": PROMPT_SHA,
                      "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
-                     "clinical_validation_version": CLINICAL_VALIDATION_VERSION},
+                     "clinical_validation_version": CLINICAL_VALIDATION_VERSION,
+                     "ornek_buyuklugu": SAMPLE_SIZE_VERSION, "etki_esleme": EFFECT_MAP_VERSION,
+                     "icd_esleme": ICD_MATCH_VERSION},
         "not": "Otomatik kontroller klinik doğruluğu kanıtlamaz; insan incelemesi gerekli.",
     }
 
