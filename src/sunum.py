@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 SUNUM_FILE = Path(__file__).resolve().parent.parent / "sql" / "sunum_core.sql"
-ONLEM_SURUMU = "onlem-v1"
+ONLEM_SURUMU = "onlem-v2"
 
 # hata_turu -> (halüsinasyon/hata türü, uygulanan önlem, kuralın yeri). Sabit ve sürümlü.
 ONLEM_ESLEME = {
@@ -46,6 +46,9 @@ ONLEM_ESLEME = {
     "bulgu_gecersiz": ("Geçersiz bulgu", "Bulgu reddedilir", "clinical_pipeline.validate_finding"),
     "birden_fazla_mudahale": ("Ayrı gözlemlerin tek bulguda birleştirilmesi", "Bir bulgu = tek müdahale",
                               "clinical_pipeline.validate_finding"),
+    "yontem_istatistik": ("İstatistik/analiz yönteminin (ROC analysis, regresyon…) tanı yöntemi sanılması",
+                          "diagnostic_method sabit istatistik yöntemi listesine karşı denetlenir; reddedilir",
+                          "clinical_pipeline.validate_finding"),
     "diagnostic_relationship_uncertain": ("Desteklenmeyen tanı yöntemi / tablo ilişkisi",
                                           "Yerel dil bilgisi ve tipli tablo kuralları; belirsiz ilişki kaydedilmez",
                                           "clinical_validation.assess_diagnostic_relationship / assess_typed_table"),

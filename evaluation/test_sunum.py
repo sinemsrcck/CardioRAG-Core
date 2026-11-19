@@ -203,7 +203,7 @@ def test_offline(tmp):
              "birden_fazla_mudahale", "diagnostic_relationship_uncertain", "diagnostic_relationship_contradicted",
              "guvenli_parca_disinda", "mudahale_alani_yok", "kanit_chunk_yok", "kanit_birebir_degil", "yanlis_sayfa",
              "kanitta_olmayan_sayi", "deger_kumesi_disi", "clinical_relationship_uncertain",
-             "clinical_relationship_contradicted", "icd10_yok", "alan_cok_uzun"}
+             "clinical_relationship_contradicted", "icd10_yok", "alan_cok_uzun", "yontem_istatistik"}
     check("önlem eşlemesi bilinen kodları kapsıyor", [], sorted(known - set(ONLEM_ESLEME)))
 
 

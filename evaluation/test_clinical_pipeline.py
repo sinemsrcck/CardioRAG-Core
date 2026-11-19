@@ -6,6 +6,8 @@ Klinik çıkarım toplu işi testleri (sahte LLM; gerçek LLM gerekmez).
 
 A) Veritabanı gerektirmeyenler: <think> ayıklama, istek parametreleri,
    HTTP 400/422 mesajı, yeniden deneme, state.jsonl dayanıklılığı, kilit, önbellek.
+   Çıkarım talimatı v2: prompt kuralları, outcome_type/etki_turu eşlemesi,
+   yontem_istatistik, MockLLMClient senaryoları.
 B) MySQL gerektirenler (.env + kurulum): aday hazırlama, senaryolar, devam etme,
    --no-save -> önbellekten kayıt, --mock, --from-cache determinizmi, --dry-run.
    Bütün veritabanı yazımları ya dış transaction'da ROLLBACK edilir ya da
@@ -944,10 +946,282 @@ def test_database(tmp):
     check("sonda: klinik_bulgular / halusinasyon / hoca tabloları değişmedi", before, after)
 
 
+# ---------------------------------------------------------------------------
+# Çıkarım talimatı v2: prompt kuralları, outcome_type / etki_turu eşlemesi,
+# yontem_istatistik ve sahte yanıt senaryoları (veritabanı gerekmez)
+# ---------------------------------------------------------------------------
+
+PILOT_HCR = ("In the ROC analysis, the cut-off value of the HCR score in the group with an ischemic event "
+             "was found to be 79% sensitivity and 81% specificity.")
+PILOT_ELR = ("ROC analysis showed moderate discriminative ability for ELR [area under the curve (AUC)=0.633] "
+             "and PLR (AUC=0.627), while Neu% had limited predictive value.")
+PILOT_ILR = ("In patients presenting with ischemic stroke without diagnosed AF, an implantable loop recorder "
+             "(ie, subcutaneous telemetry device) can evaluate patients for intermittent AF.")
+PILOT_REVASK = ("The evidence unequivocally supports the fact that revascularization of the culprit lesion "
+                "in acute coronary syndromes leads to improved survival rates.")
+OLD_PIPELINE_VERSION = "clinical-pipeline-v1-a8c57cae5612"  # talimat v2 öncesi
+
+
+def _text_fixture(text, kind="metin", table_context=None):
+    from src.clinical_validation import ValidationContext
+    ctx = ValidationContext(pages={"doc": {1: text}}, makale_by_doc={"doc": "article"},
+                            chunks={("doc", 1): [("cid", text)]}, chunk_ids={"cid"},
+                            chunk_versions={"cid": "v"}, active_versions={"doc": "v"})
+    candidate = {"aday_id": "synthetic", "dosya": "fixture.pdf", "document_id": "doc", "makale_id": "article",
+                 "sayfa": 1, "kaynak_turu": kind, "cumle": text}
+    if table_context is not None:
+        candidate["table_context"] = table_context
+    return ({"candidate": candidate, "allowed_quote_spans": [text]},
+            SimpleNamespace(ctx=ctx, chunk_index={"cid": 0}, max_lengths={}))
+
+
+def _finding(text, **fields):
+    return {**dict.fromkeys(PIPELINE_FIELDS), "evidence_quote": text, **fields}
+
+
+def _mock_call(client, text):
+    message = json.dumps({"candidate_text": text, "allowed_quote_spans": [text]})
+    response = client._create(messages=[{"role": "system", "content": ""}, {"role": "user", "content": message}])
+    return response.choices[0].message.content
+
+
+def test_cikarim_kurallari():
+    from src.clinical_candidates import table_contexts
+    from src.clinical_pipeline import (DIAGNOSTIC_RATE_PATTERN, MOCK_RULE_SCENARIOS, OUTCOME_MAP_VERSION,
+                                       PIPELINE_NAME, PROMPT_ADDENDUM, PROMPT_SHA, STATISTICAL_METHOD_PATTERN,
+                                       SYSTEM_MESSAGE, _finding_error_code, build_row, classify_outcome,
+                                       validation_trail)
+    from src.clinical_validation import ETKI_TURU, OUTCOME_TYPE, validate_row
+
+    # 1) Prompt: yeni genel kurallar mevcut (system mesajına da giriyor)
+    for label, phrase in (
+        ("tanı yöntemi tanımı", "the test, device, score, ratio or biomarker used to detect or\n  diagnose"),
+        ("istatistik yöntemi yasak", "Statistical or analysis methods (e.g. ROC analysis, logistic regression,\n"
+                                     "  multivariate analysis, cut-off analysis) are NEVER a diagnostic_method"),
+        ("diagnosis vs patient_group", 'describes who the patients are (e.g. "patients with X") belongs in\n'
+                                       "  patient_group, not in diagnosis"),
+        ("ölçü başına ayrı bulgu", "emit a\n  separate finding for each (test, measure, number) combination"),
+        ("clinical_outcome birebir", "clinical_outcome is an EXACT verbatim copy"),
+        ("açık sonuç boş bırakılmaz", "do not leave\n  clinical_outcome null"),
+        ("amaç/tanım/tasarım bulgu değil", 'patient selection are NOT findings: return {"findings": []}'),
+    ):
+        check(f"prompt v2: {label}", True, phrase in PROMPT_ADDENDUM and phrase in SYSTEM_MESSAGE)
+    check("prompt v2: pilot cümlesine özel ifade yok", False,
+          any(word in PROMPT_ADDENDUM for word in ("HCR", "ELR", "PLR", "loop recorder", "culprit")))
+
+    # 2) pipeline_version prompt hash'iyle değişti
+    check("pipeline_version değişti (talimat v2)", True,
+          PIPELINE_VERSION != OLD_PIPELINE_VERSION and PIPELINE_VERSION == f"{PIPELINE_NAME}-{PROMPT_SHA}")
+
+    # 3) classify_outcome: tanısal performans (pilot cümleleri dahil)
+    def cls(text, intervention, **fields):
+        return classify_outcome(_finding(text, **fields), text, intervention)[:2]
+
+    diag_cases = [
+        ("pilot HCR sensitivity", PILOT_HCR, "HCR score", dict(clinical_outcome="sensitivity"), "oran / yuzde"),
+        ("pilot HCR specificity", PILOT_HCR, "HCR score", dict(clinical_outcome="specificity"), "oran / yuzde"),
+        ("pilot ELR area under the curve", PILOT_ELR, "ELR", dict(clinical_outcome="area under the curve"),
+         "AUC / C-istatistigi"),
+        ("pilot PLR AUC", PILOT_ELR, "PLR", dict(clinical_outcome="AUC"), "AUC / C-istatistigi"),
+        ("yalnız effect_measure AUROC", "AUROC was 0.80 for troponin.", "troponin",
+         dict(effect_measure="AUROC"), "AUC / C-istatistigi"),
+        ("C-statistic", "The C-statistic of the score was 0.71.", "score",
+         dict(clinical_outcome="C-statistic"), "AUC / C-istatistigi"),
+        ("area under the ROC curve", "The area under the ROC curve was 0.9.", "ECG",
+         dict(clinical_outcome="area under the ROC curve"), "AUC / C-istatistigi"),
+        ("positive predictive value", "ECG had a positive predictive value of 90%.", "ECG",
+         dict(clinical_outcome="positive predictive value"), "oran / yuzde"),
+        ("NPV", "The NPV of troponin was 99%.", "troponin", dict(clinical_outcome="NPV"), "oran / yuzde"),
+        ("diagnostic accuracy", "Diagnostic accuracy of CCT was 92%.", "CCT",
+         dict(clinical_outcome="Diagnostic accuracy"), "oran / yuzde"),
+        ("Türkçe duyarlılık", "EKG'nin duyarlılığı %85 bulundu.", "EKG", dict(clinical_outcome="duyarlılığı"),
+         "oran / yuzde"),
+    ]
+    for label, text, intervention, fields, effect in diag_cases:
+        check(f"sonuc-turu: {label}", ("tanısal performans", effect), cls(text, intervention, **fields))
+    non_diag = [
+        ("pilot revaskülarizasyon sonucu", PILOT_REVASK, "revascularization of the culprit lesion",
+         dict(clinical_outcome="improved survival rates")),
+        ("pilot ILR (ölçü yok)", PILOT_ILR, "implantable loop recorder", dict(diagnosis="intermittent AF")),
+        ("pilot Neu% limited predictive value", PILOT_ELR, "Neu%",
+         dict(clinical_outcome="limited predictive value")),
+        ("sensitivity analysis istatistik terimi", "In a sensitivity analysis, apixaban reduced stroke.",
+         "apixaban", dict(clinical_outcome="sensitivity analysis")),
+        ("mortality", "Apixaban reduced mortality.", "Apixaban", dict(clinical_outcome="mortality")),
+        ("hiç alan yok", "Apixaban was given.", "Apixaban", {}),
+    ]
+    for label, text, intervention, fields in non_diag:
+        check(f"sonuc-turu boş: {label}", (None, None), cls(text, intervention, **fields))
+    check("tanısal kalıp: kelime içi eşleşmez ('insensitivity')", None,
+          DIAGNOSTIC_RATE_PATTERN.search("insensitivity"))
+
+    # 4) classify_outcome: uygulama oranı (dar kalıplar) ve negatifler
+    usage = [
+        ("clinical_outcome 'use of statins'", "The use of statins was 64%.", "statins",
+         dict(clinical_outcome="use of statins")),
+        ("clinical_outcome 'utilization'", "PCI utilization was 40%.", "PCI", dict(clinical_outcome="utilization")),
+        ("alıntıda 'rate of PCI' (sonuç boş)", "The rate of PCI was 45%.", "PCI", {}),
+        ("alıntıda 'PCI rate' (sonuç boş)", "The PCI rate increased to 45%.", "PCI", {}),
+        ("alıntıda 'uptake of SGLT2 inhibitors'", "Uptake of SGLT2 inhibitors was low.", "SGLT2 inhibitors", {}),
+        ("Türkçe 'statin kullanım oranı'", "Statin kullanım oranı %60 idi.", "Statin", {}),
+    ]
+    for label, text, intervention, fields in usage:
+        check(f"sonuc-turu uygulama: {label}", ("uygulama oranı", None), cls(text, intervention, **fields))
+    usage_negative = [
+        ("müdahale yok", "The use of statins was 64%.", None, dict(clinical_outcome="use of statins")),
+        ("sonuç başka (mortality)", "The use of statins reduced mortality.", "statins",
+         dict(clinical_outcome="mortality")),
+        ("alıntıda 'use of' başka şey için", "The use of contrast was avoided in statin users.", "statin", {}),
+        ("kalıp yok", "Statins reduced mortality.", "Statins", {}),
+    ]
+    for label, text, intervention, fields in usage_negative:
+        check(f"sonuc-turu uygulama değil: {label}", (None, None), cls(text, intervention, **fields))
+    check("öncelik: tanısal performans > uygulama oranı", ("tanısal performans", "AUC / C-istatistigi"),
+          cls("The use of statins had an AUC of 0.6.", "statins",
+              clinical_outcome="use of statins", effect_measure="AUC"))
+
+    # 5) build_row: otomatik_alanlar, etki_turu yalnız boşsa, doğrulama izi, validate_row değer kümeleri
+    def built(text, **fields):
+        item, sources = _text_fixture(text)
+        normalized = validate_finding(_finding(text, **fields), text)
+        row, problem = build_row(normalized, item, sources, model="mock-only")
+        return row, item, sources, problem
+
+    row, item, sources, problem = built("AF can be detected with ECG; sensitivity was 90%.",
+                                        diagnostic_method="ECG", diagnosis="AF", effect_measure="sensitivity")
+    note = json.loads(row["taslak_notu"])
+    check("build_row: tanısal performans + oran / yuzde", ("tanısal performans", "oran / yuzde", None),
+          (row["outcome_type"], row["etki_turu"], problem))
+    check("build_row: outcome_type otomatik işaretli", True,
+          note["otomatik_alanlar"].get("outcome_type", "").startswith(f"otomatik ({OUTCOME_MAP_VERSION}"))
+    check("build_row: etki_turu otomatik işaretli", True,
+          note["otomatik_alanlar"].get("etki_turu", "").startswith(f"otomatik ({OUTCOME_MAP_VERSION}"))
+    check("build_row: sonuc_turu_eslemesi notu", ("tanısal performans", "oran / yuzde", OUTCOME_MAP_VERSION),
+          tuple(note["sonuc_turu_eslemesi"].get(k) for k in ("outcome_type", "etki_turu", "surum")))
+    check("build_row: satır pending", "pending", row["review_status"])
+    passed, rejected = preview_rows([row], item, sources)
+    check("validate_row: tanısal performans satırı geçer", (1, []),
+          (len(passed), [r["hata_turu"] for r in rejected]))
+    trail = json.loads(passed[0]["taslak_notu"])["otomatik_dogrulama"] if passed else {}
+    check("doğrulama izi: outcome_type eşlemesi", True,
+          any(c.startswith("outcome_type: deterministik eşleme") for c in trail.get("gecen_kontroller", [])))
+    check("doğrulama izi: etki_turu tanısal ölçüden", True,
+          any(c.startswith("etki_turu: tanısal performans") for c in trail.get("gecen_kontroller", [])))
+    check("doğrulama izi: sürüm", OUTCOME_MAP_VERSION, trail.get("surumler", {}).get("sonuc_turu_esleme"))
+    check("değer kümeleri: üretilen değerler OUTCOME_TYPE / ETKI_TURU içinde", True,
+          {"tanısal performans", "uygulama oranı"} <= OUTCOME_TYPE
+          and {"AUC / C-istatistigi", "oran / yuzde"} <= ETKI_TURU)
+    check("validate_row: küme dışı outcome_type reddedilir", (False, "deger_kumesi_disi"),
+          validate_row({**row, "outcome_type": "tanisal"}, sources.ctx)[:2])
+    check("validate_row: küme dışı etki_turu reddedilir", (False, "deger_kumesi_disi"),
+          validate_row({**row, "etki_turu": "AUC"}, sources.ctx)[:2])
+
+    row, item, sources, _ = built("AF can be detected with ECG; the AUC was 0.91.", diagnostic_method="ECG",
+                                  diagnosis="AF", effect_measure="AUC")
+    note = json.loads(row["taslak_notu"])
+    check("build_row: etki_turu doluysa eşleme ezmez (effect_measure eşlemesi kalır)",
+          ("tanısal performans", "AUC / C-istatistigi", True, "AUC / C-istatistigi", None),
+          (row["outcome_type"], row["etki_turu"], "effect_measure" in note["otomatik_alanlar"]["etki_turu"],
+           note["deger_alanlari"]["effect_measure"]["eslesen"], note["sonuc_turu_eslemesi"].get("etki_turu")))
+    check("validate_row: AUC satırı geçer", 1, len(preview_rows([row], item, sources)[0]))
+
+    row, item, sources, _ = built("Statins were used; the use of statins increased.", drug="statins")
+    note = json.loads(row["taslak_notu"])
+    check("build_row: uygulama oranı, etki_turu boş", ("uygulama oranı", None),
+          (row["outcome_type"], row["etki_turu"]))
+    check("build_row: uygulama oranı otomatik işaretli", True,
+          OUTCOME_MAP_VERSION in note["otomatik_alanlar"].get("outcome_type", "")
+          and "etki_turu" not in note["otomatik_alanlar"])
+    check("validate_row: uygulama oranı satırı geçer", 1, len(preview_rows([row], item, sources)[0]))
+
+    row, item, sources, _ = built("Statins were prescribed to all patients.", drug="Statins")
+    note = json.loads(row["taslak_notu"])
+    check("build_row: hiçbiri tutmazsa outcome_type / etki_turu / yon boş", (None, None, None, False),
+          (row["outcome_type"], row["etki_turu"], row["yon"], "outcome_type" in note["otomatik_alanlar"]))
+    check("doğrulama izi: eşleme yoksa outcome_type kontrolü yazılmaz", False,
+          any(c.startswith("outcome_type:") for c in validation_trail(row)["gecen_kontroller"]))
+
+    # Öncelik: CCT 'öneri' > tanısal performans (tablo ailesi kuralı önce gelir)
+    cct_table = "|COR|LOE|Indications for CCT|\n|---|---|---|\n|IIa|B|CAD sensitivity with CCT.|"
+    cct_row = "|IIa|B|CAD sensitivity with CCT.|"
+    item, sources = _text_fixture(cct_table, kind="tablo", table_context=table_contexts(cct_table)[cct_row])
+    item["candidate"]["cumle"] = cct_row
+    row, _ = build_row(_finding(cct_row, diagnostic_method="CCT", clinical_outcome="sensitivity"),
+                       item, sources, model="mock-only")
+    note = json.loads(row["taslak_notu"])
+    check("öncelik: CCT öneri > tanısal performans", ("öneri", None, False),
+          (row["outcome_type"], row["etki_turu"], "sonuc_turu_eslemesi" in note))
+
+    # Tablo (CCT dışı): outcome_type yazılır, etki_turu sütuna yazılmaz
+    plain_table = "|Test|Result|\n|---|---|\n|ECG|sensitivity 90%|"
+    plain_row = "|ECG|sensitivity 90%|"
+    item, sources = _text_fixture(plain_table, kind="tablo")
+    item["candidate"]["cumle"] = plain_row
+    row, _ = build_row(_finding(plain_row, diagnostic_method="ECG", clinical_outcome="sensitivity"),
+                       item, sources, model="mock-only")
+    check("tablo: outcome_type yazılır, etki_turu yazılmaz", ("tanısal performans", None),
+          (row["outcome_type"], row["etki_turu"]))
+
+    # 6) yontem_istatistik (sıkılaştırma; tanı alanına istatistik yöntemi yazılamaz)
+    for method in ("ROC analysis", "logistic regression", "multivariate analysis", "cut-off analysis",
+                   "Cox regression", "Kaplan-Meier"):
+        text = f"The {method} detected AF in this cohort."
+        try:
+            validate_finding(_finding(text, diagnostic_method=method, diagnosis="AF"), text)
+            code = "kabul"
+        except ValueError as exc:
+            code = _finding_error_code(str(exc))
+        check(f"yontem_istatistik: '{method}' reddedilir", "yontem_istatistik", code)
+    check("yontem_istatistik: test/skor/biyobelirteç adları listede değil", [],
+          [m for m in ("HCR score", "troponin", "ECG", "ELR", "implantable loop recorder", "CHA2DS2-VASc score",
+                       "NT-proBNP", "coronary CT angiography") if STATISTICAL_METHOD_PATTERN.search(m)])
+    check("yontem_istatistik: drug alanı etkilenmez", "Statins",
+          validate_finding(_finding("Statins were used.", drug="Statins"), "Statins were used.")["drug"])
+
+    # 7) MockLLMClient senaryoları
+    scenario_client = MockLLMClient(MOCK_RULE_SCENARIOS)
+    two_auc, roc, use, aim = list(MOCK_RULE_SCENARIOS)
+    item, sources = _text_fixture(two_auc)
+    rows, rejected, count = process_response(_mock_call(scenario_client, two_auc), item, sources, model="mock-llm")
+    check("mock: bir cümlede iki AUC -> iki ayrı bulgu", 2, count)
+    check("mock: iki AUC bulgusu bağımsız işlenir (mevcut tanısal ilişki kuralı: red)", True,
+          len(rows) + len(rejected) == 2
+          and all(r["hata_turu"].startswith("diagnostic_relationship_") for r in rejected))
+    mapped = []
+    for partial in MOCK_RULE_SCENARIOS[two_auc]:
+        row, _ = build_row(_finding(two_auc, **partial), item, sources, model="mock-llm")
+        mapped.append((row["mudahale_en"], row["deger"], row["outcome_type"], row["etki_turu"]))
+    check("mock: iki AUC -> iki tanısal performans satırı (eşleme)",
+          [("ELR test", "0.633", "tanısal performans", "AUC / C-istatistigi"),
+           ("PLR test", "0.627", "tanısal performans", "AUC / C-istatistigi")], mapped)
+
+    item, sources = _text_fixture(roc)
+    rows, rejected, count = process_response(_mock_call(scenario_client, roc), item, sources, model="mock-llm")
+    check("mock: diagnostic_method='ROC analysis' reddedilir", (0, ["yontem_istatistik"]),
+          (len(rows), [r["hata_turu"] for r in rejected]))
+    check("mock: red yanıt doğrulama aşamasında", "yanit_dogrulama", rejected[0]["asama"] if rejected else None)
+
+    item, sources = _text_fixture(use)
+    rows, rejected, count = process_response(_mock_call(scenario_client, use), item, sources, model="mock-llm")
+    check("mock: kullanım cümlesi -> uygulama oranı satırı (pending)", [("statins", "uygulama oranı", "pending")],
+          [(r["mudahale_en"], r["outcome_type"], r["review_status"]) for r in rows])
+
+    item, sources = _text_fixture(aim)
+    rows, rejected, count = process_response(_mock_call(scenario_client, aim), item, sources, model="mock-llm")
+    check("mock: çalışma amacı cümlesi -> findings=[]", (0, 0, 0), (count, len(rows), len(rejected)))
+
+    default = MockLLMClient()
+    check("mock: varsayılan istemci senaryo kullanmaz", {}, default.scenarios)
+    payload = json.loads(_mock_call(default, use))
+    check("mock: varsayılan davranış değişmedi (ilk ilaç kalıbı, sonuç alanı boş)", True,
+          len(payload["findings"]) == 1 and payload["findings"][0]["clinical_outcome"] is None)
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "offline").mkdir()
         test_offline(Path(tmp) / "offline")
+    test_cikarim_kurallari()
     with tempfile.TemporaryDirectory() as tmp:
         test_database(tmp)
 

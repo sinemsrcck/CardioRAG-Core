@@ -84,6 +84,28 @@ Additional batch rules:
   of the effect measure exactly as written (e.g. "hazard ratio", "OR", "AUC").
   Copy each verbatim from evidence_quote; never calculate, convert or infer; use
   null when absent.
+- diagnostic_method: the test, device, score, ratio or biomarker used to detect or
+  diagnose a condition (e.g. troponin, ECG, a risk score, a ratio/biomarker).
+  Statistical or analysis methods (e.g. ROC analysis, logistic regression,
+  multivariate analysis, cut-off analysis) are NEVER a diagnostic_method; never
+  put them in this field. If the sentence evaluates a score or biomarker with such
+  an analysis, diagnostic_method is the score or biomarker itself.
+- diagnosis: the condition that the test detects or diagnoses. A disease that only
+  describes who the patients are (e.g. "patients with X") belongs in
+  patient_group, not in diagnosis.
+- When one sentence reports several performance measures (sensitivity,
+  specificity, PPV, NPV, accuracy, AUC) or several tests/biomarkers, emit a
+  separate finding for each (test, measure, number) combination:
+  clinical_outcome = the measure's name exactly as written in the sentence
+  (e.g. "sensitivity", "area under the curve"), numeric_value = that measure's
+  number.
+- clinical_outcome is an EXACT verbatim copy of the outcome phrase in the
+  sentence (e.g. "improved survival rates"); never an interpretation, a summary
+  or your own wording. If the sentence states an explicit outcome, do not leave
+  clinical_outcome null.
+- Study aims or objectives ("To determine...", "The aim of..."), definitions,
+  classification or staging definitions, and descriptions of study design or
+  patient selection are NOT findings: return {"findings": []}.
 """
 PIPELINE_PROMPT = SYSTEM_PROMPT + PROMPT_ADDENDUM
 SYSTEM_MESSAGE = PIPELINE_PROMPT + "\nSchema: " + json.dumps(PIPELINE_RESPONSE_SCHEMA)
@@ -153,6 +175,64 @@ def lookup_icd10(diagnosis, icd_names):
     if len(codes) > 1:
         return None, f"birden fazla kod eşleşti {codes}; boş bırakıldı"
     return None, None
+
+
+# outcome_type / etki_turu: deterministik, sürümlü eşleme (model doldurmaz).
+# Öncelik: CCT "öneri" (tablo ailesi) > tanısal performans > uygulama oranı; tutmazsa boş.
+OUTCOME_MAP_VERSION = "sonuc-turu-v1"
+DIAGNOSTIC_AUC_PATTERN = re.compile(
+    r"\b(?:area under the(?: \w+){0,4} curve|auroc|auc|c-?statistics?|c statistics?)\b", re.IGNORECASE)
+DIAGNOSTIC_RATE_PATTERN = re.compile(
+    r"(?<!\w)(?:sensitivity(?! analys)|specificity|(?:positive|negative) predictive values?|ppv|npv|accuracy"
+    r"|duyarlılık|duyarlılığı|özgüllük|özgüllüğü|doğruluk|doğruluğu)(?!\w)", re.IGNORECASE)
+USAGE_GENERIC_PATTERN = re.compile(
+    r"(?<!\w)(?:use of|utilization|utilisation|uptake|uygulanma oranı|kullanım oranı)(?!\w)", re.IGNORECASE)
+
+
+def _usage_pattern(intervention):
+    """Müdahaleye bağlı dar kalıplar: 'rate of X', 'X rate', 'use of X', 'X uptake'..."""
+    name = re.escape(norm_ws(intervention).casefold())
+    return re.compile(
+        rf"(?<!\w)(?:(?:rate|use|utili[sz]ation|uptake) of {name}|{name} (?:rate|use|utili[sz]ation|uptake)"
+        rf"|{name} (?:uygulanma|kullanım) oranı)(?!\w)")
+
+
+def classify_outcome(finding, quote, intervention):
+    """(outcome_type | None, etki_turu önerisi | None, açıklama | None). Sabit kurallar, fuzzy yok.
+
+    - tanısal performans: clinical_outcome veya effect_measure bir performans ölçüsünü adlandırıyor.
+      etki_turu önerisi: AUC türleri -> "AUC / C-istatistigi", diğerleri -> "oran / yuzde".
+    - uygulama oranı: müdahale dolu VE (clinical_outcome kullanım/uygulama kalıbı içeriyor
+      VEYA clinical_outcome boşken alıntı müdahaleye bağlı dar kalıbı içeriyor).
+    """
+    outcome = norm_ws(finding.get("clinical_outcome") or "")
+    measure = norm_ws(finding.get("effect_measure") or "")
+    for source, text in (("clinical_outcome", outcome), ("effect_measure", measure)):
+        auc = DIAGNOSTIC_AUC_PATTERN.search(text) if text else None
+        rate = DIAGNOSTIC_RATE_PATTERN.search(text) if text else None
+        if auc or rate:
+            term = (auc or rate).group(0)
+            return ("tanısal performans", "AUC / C-istatistigi" if auc else "oran / yuzde",
+                    f"{source} performans ölçüsü içeriyor: '{term}'")
+    if not intervention:
+        return None, None, None
+    tied = _usage_pattern(intervention)
+    if outcome:
+        match = USAGE_GENERIC_PATTERN.search(outcome) or tied.search(outcome.casefold())
+        if match:
+            return "uygulama oranı", None, f"clinical_outcome kullanım kalıbı içeriyor: '{match.group(0)}'"
+        return None, None, None
+    match = tied.search(norm_ws(quote).casefold())
+    if match:
+        return "uygulama oranı", None, f"alıntı müdahaleye bağlı kullanım kalıbı içeriyor: '{match.group(0)}'"
+    return None, None, None
+
+
+# diagnostic_method olamayacak istatistik/analiz yöntemleri (sabit liste; sıkılaştırma).
+STATISTICAL_METHOD_PATTERN = re.compile(
+    r"(?<!\w)(?:roc|receiver operating characteristic|regression|multivariate|multivariable|univariate"
+    r"|univariable|cut-?off analysis|kaplan[- ]meier|cox|propensity score|statistical analysis"
+    r"|correlation analysis|lojistik regresyon|çok değişkenli|tek değişkenli)(?!\w)", re.IGNORECASE)
 
 MIN_SPAN_CHARS = 20
 NO_THINK_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
@@ -505,6 +585,8 @@ def _finding_error_code(message):
         return "bulgu_alanlari"
     if message.startswith("birden_fazla_mudahale"):
         return "birden_fazla_mudahale"
+    if message.startswith("yontem_istatistik"):
+        return "yontem_istatistik"
     return "bulgu_gecersiz"
 
 
@@ -514,6 +596,8 @@ def validate_finding(finding, text, *, table_source=None):
     1. Alan kümesi tam olarak PIPELINE_FIELDS + evidence_quote.
     2. procedure doluysa string ve evidence_quote içinde birebir.
     3. drug / diagnostic_method / procedure'den en fazla biri dolu.
+       diagnostic_method sabit istatistik yöntemi listesine uyuyorsa red
+       (yontem_istatistik; ör. "ROC analysis"). Sıkılaştırmadır.
     4. procedure çıkarılıp bulgu MEVCUT şemayla _validate_response'a verilir:
        alıntı aday metninde birebir, her dolu alan alıntıda birebir,
        diagnostic_method ilişki kontrolü. Tek istisna: yalnızca procedure dolu
@@ -535,6 +619,9 @@ def validate_finding(finding, text, *, table_source=None):
     filled = [name for name in INTERVENTION_FIELDS if finding[name] not in (None, "")]
     if len(filled) > 1:
         raise ValueError("birden_fazla_mudahale: " + ", ".join(filled))
+    method = finding["diagnostic_method"]
+    if isinstance(method, str) and STATISTICAL_METHOD_PATTERN.search(method):
+        raise ValueError(f"yontem_istatistik: '{method}' bir istatistik/analiz yöntemi; diagnostic_method olamaz")
     # Ek alanlar ayrılır; kalan bulgu MEVCUT şemayla ve kurallarla (tipli tablo dahil) denetlenir.
     base = {key: value for key, value in finding.items() if key not in EXTRA_FIELDS}
     try:
@@ -677,6 +764,19 @@ def build_row(finding, item, sources, *, model):
             row["outcome_type"] = "öneri"
             note["table_relationship_rule"]["source_type"] = "guideline recommendation relayed by source"
             note["otomatik_alanlar"]["outcome_type"] = "otomatik (cct_recommendations tablo ailesi)"
+    # Öncelik: CCT "öneri" (yukarıda) > tanısal performans > uygulama oranı (sonuc-turu-v1).
+    if not row.get("outcome_type"):
+        outcome_type, effect_hint, reason = classify_outcome(finding, quote, method or drug or procedure)
+        if outcome_type:
+            row["outcome_type"] = outcome_type
+            note["otomatik_alanlar"]["outcome_type"] = f"otomatik ({OUTCOME_MAP_VERSION}: {reason})"
+            mapping = {"outcome_type": outcome_type, "neden": reason, "surum": OUTCOME_MAP_VERSION}
+            # etki_turu yalnız boşsa ve metin satırında (tabloda değer alanları sütunlara yazılmaz).
+            if effect_hint and not row.get("etki_turu") and candidate["kaynak_turu"] != "tablo":
+                row["etki_turu"] = effect_hint
+                mapping["etki_turu"] = effect_hint
+                note["otomatik_alanlar"]["etki_turu"] = f"otomatik ({OUTCOME_MAP_VERSION}: tanısal performans ölçüsü)"
+            note["sonuc_turu_eslemesi"] = mapping
     row["taslak_notu"] = json.dumps(note, ensure_ascii=False, sort_keys=True)
     return row, None
 
@@ -734,7 +834,13 @@ def validation_trail(row):
           if note.get("tablo_yazilmayan_alanlar") else []),
         *([f"sample_size: deterministik tamsayı ayrıştırma ({SAMPLE_SIZE_VERSION})"]
           if "hasta_sayisi" in automatic else []),
-        *([f"effect_measure: sabit eşleme ({EFFECT_MAP_VERSION})"] if "etki_turu" in automatic else []),
+        *([f"effect_measure: sabit eşleme ({EFFECT_MAP_VERSION})"]
+          if ((note.get("deger_alanlari") or {}).get("effect_measure") or {}).get("eslesen") else []),
+        *([f"outcome_type: deterministik eşleme ({OUTCOME_MAP_VERSION}): {note['sonuc_turu_eslemesi']['outcome_type']}"]
+          if note.get("sonuc_turu_eslemesi") else []),
+        *([f"etki_turu: tanısal performans ölçüsünden ({OUTCOME_MAP_VERSION})"]
+          if (note.get("sonuc_turu_eslemesi") or {}).get("etki_turu") else []),
+        *(["diagnostic_method_istatistik_yontemi_degil (yontem_istatistik listesi)"] if method else []),
         *([f"icd10: icd10_who adıyla birebir eşleşme ({ICD_MATCH_VERSION})"] if "icd10" in automatic else []),
         *(["diagnostic_relationship: supported_local"] if method else []),
         "validate_source: makale_belge_eslesmesi",
@@ -755,7 +861,7 @@ def validation_trail(row):
                      "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
                      "clinical_validation_version": CLINICAL_VALIDATION_VERSION,
                      "ornek_buyuklugu": SAMPLE_SIZE_VERSION, "etki_esleme": EFFECT_MAP_VERSION,
-                     "icd_esleme": ICD_MATCH_VERSION},
+                     "icd_esleme": ICD_MATCH_VERSION, "sonuc_turu_esleme": OUTCOME_MAP_VERSION},
         "not": "Otomatik kontroller klinik doğruluğu kanıtlamaz; insan incelemesi gerekli.",
     }
 
@@ -804,7 +910,10 @@ class MockLLMClient:
 
     model = "mock-llm"
 
-    def __init__(self):
+    def __init__(self, scenarios=None):
+        # scenarios: {candidate_text: [kısmi bulgu, ...]}; eşleşen adayda bu sahte yanıt döner
+        # (eksik alanlar null). Varsayılan None: eski davranış aynen.
+        self.scenarios = scenarios or {}
         self.api_key = "mock-not-a-secret"
         self.requests = []
         self.chat = type("Chat", (), {})()
@@ -818,7 +927,12 @@ class MockLLMClient:
         self.requests.append(kwargs)
         user = json.loads(kwargs["messages"][1]["content"])
         findings = []
-        spans = [user["candidate_text"]] if "table_context" in user else user["allowed_quote_spans"]
+        if user["candidate_text"] in self.scenarios:
+            findings = [{**dict.fromkeys(PIPELINE_FIELDS), "evidence_quote": user["candidate_text"], **partial}
+                        for partial in self.scenarios[user["candidate_text"]]]
+            spans = []
+        else:
+            spans = [user["candidate_text"]] if "table_context" in user else user["allowed_quote_spans"]
         for span in spans:
             for category, regex in TREATMENT_REGEX.items():
                 match = regex.search(span)
@@ -833,3 +947,28 @@ class MockLLMClient:
         message = type("Message", (), {"content": content})()
         choice = type("Choice", (), {"finish_reason": "stop", "message": message})()
         return type("Response", (), {"choices": [choice]})()
+
+
+# Yeni çıkarım kurallarını sınayan sahte yanıtlar (yalnız testler / --mock senaryoları için;
+# sentetik cümleler). Model davranışını değil, doğrulama + eşleme hattını sınar.
+MOCK_RULE_SCENARIOS = {
+    # Bir cümlede iki biyobelirteç, iki AUC -> iki ayrı bulgu (tanısal performans, AUC).
+    "The area under the curve was 0.633 for the ELR test and 0.627 for the PLR test in detecting AF.": [
+        {"diagnostic_method": "ELR test", "diagnosis": "AF", "clinical_outcome": "area under the curve",
+         "numeric_value": "0.633"},
+        {"diagnostic_method": "PLR test", "diagnosis": "AF", "clinical_outcome": "area under the curve",
+         "numeric_value": "0.627"},
+    ],
+    # İstatistik yöntemi diagnostic_method olarak gelirse reddedilir (yontem_istatistik).
+    "ROC analysis showed that the HCR score detected AF with 79% sensitivity.": [
+        {"diagnostic_method": "ROC analysis", "diagnosis": "AF", "clinical_outcome": "sensitivity",
+         "numeric_value": "79%"},
+    ],
+    # Uygulama oranı: müdahale + kullanım kalıbı.
+    "The use of statins was 64% in patients with coronary artery disease.": [
+        {"drug": "statins", "patient_group": "patients with coronary artery disease",
+         "clinical_outcome": "use of statins", "numeric_value": "64%"},
+    ],
+    # Çalışma amacı: bulgu değil -> boş liste.
+    "The aim of this study was to determine the effect of apixaban on stroke.": [],
+}
