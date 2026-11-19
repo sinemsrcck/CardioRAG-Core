@@ -92,21 +92,69 @@ NOTICE = "Otomatik LLM çıkarımı; insan incelemesi gerekli; onay yok."
 class BatchStop(Exception):
     """Bütün işi durduran hata (ayar, sunucu reddi, kilit, ilk çalıştırma kuralı)."""
 
-    def __init__(self, code, message):
+    def __init__(self, code, message, provider_metadata=None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.provider_metadata = provider_metadata or {}
 
 
 class CandidateError(Exception):
     """Yalnızca o adayı 'hata' yapan sorun; iş devam eder."""
 
-    def __init__(self, code, detail=None, http_status=None, attempts=1):
+    def __init__(self, code, detail=None, http_status=None, attempts=1, connection_diagnostics=None,
+                 provider_metadata=None):
         super().__init__(code)
         self.code = code
         self.detail = detail
         self.http_status = http_status
         self.attempts = attempts
+        self.connection_diagnostics = connection_diagnostics
+        self.provider_metadata = provider_metadata or {}
+
+
+def safe_provider_metadata(exc):
+    """Fail-closed SDK metadata; no body/header/message serialization."""
+    result = {}
+    request_id = getattr(exc, "request_id", None)
+    if isinstance(request_id, str) and re.fullmatch(r"req_[a-fA-F0-9]{16,64}", request_id):
+        result["request_id"] = request_id
+    code = getattr(exc, "code", None)
+    allowed = {"server_error", "internal_error", "internal_server_error", "overloaded",
+               "rate_limit_exceeded", "insufficient_quota", "invalid_api_key",
+               "model_not_found", "invalid_request_error", "unsupported_parameter",
+               "invalid_value", "permission_denied", "context_length_exceeded"}
+    if isinstance(code, str) and code in allowed:
+        result["provider_error_code"] = code
+    return result
+
+
+def safe_connection_diagnostics(exc):
+    """Bounded cause metadata only; never serialize exception text or requests."""
+    import ssl
+
+    safe_types = {"APIConnectionError", "APITimeoutError", "ConnectError", "ReadError",
+                  "WriteError", "ConnectTimeout", "ReadTimeout", "WriteTimeout",
+                  "PoolTimeout", "TimeoutError", "ConnectionError", "OSError",
+                  "ConnectionResetError", "ConnectionAbortedError", "BrokenPipeError",
+                  "SSLError", "SSLCertVerificationError", "gaierror", "EndOfStream",
+                  "RemoteProtocolError", "LocalProtocolError"}
+    safe_ssl_reasons = {"CERTIFICATE_VERIFY_FAILED", "WRONG_VERSION_NUMBER",
+                        "TLSV1_ALERT_PROTOCOL_VERSION", "TLSV1_ALERT_UNKNOWN_CA",
+                        "SSLV3_ALERT_HANDSHAKE_FAILURE", "UNEXPECTED_EOF_WHILE_READING",
+                        "TLSV1_ALERT_INTERNAL_ERROR", "TLSV1_ALERT_ACCESS_DENIED"}
+    chain, seen = [], {id(exc)}
+    current = exc.__cause__ or (exc.__context__ if not exc.__suppress_context__ else None)
+    while current is not None and id(current) not in seen and len(chain) < 6:
+        seen.add(id(current))
+        name = type(current).__name__
+        number = getattr(current, "errno", None)
+        reason = getattr(current, "reason", None) if isinstance(current, ssl.SSLError) else None
+        chain.append({"type": name if name in safe_types else "OtherError",
+                      "errno": number if type(number) is int and -65535 <= number <= 65535 else None,
+                      "ssl_reason": reason if isinstance(reason, str) and reason in safe_ssl_reasons else None})
+        current = current.__cause__ or (current.__context__ if not current.__suppress_context__ else None)
+    return {"cause_chain": chain} if chain else None
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +247,9 @@ def prepare_candidates(candidates, sources):
     to_send, excluded = [], []
     for index, candidate in enumerate(candidates):
         kind = candidate.get("kaynak_turu")
+        if kind == "metadata":
+            excluded.append(_exclusion(candidate, "metaveri", "article front matter or bibliographic metadata; not clinical evidence"))
+            continue
         if kind == "başlık":
             excluded.append(_exclusion(candidate, "baslik",
                                        "kanit_turu yalnızca metin/tablo olabilir (validate_row)"))
@@ -278,7 +329,7 @@ def call_llm(client, model, messages, *, max_tokens, no_think, max_retries, slee
     """Tek istek; geçici hatalarda artan beklemeyle yeniden dener.
 
     Loglara/istisnalara anahtar, header, yanıt gövdesi veya istisna metni
-    taşınmaz: yalnızca istisna tür adı ve HTTP durum kodu.
+    taşınmaz: yalnızca güvenli tür/kodlar ve sınırlı alt-istisna metaverisi.
     """
     if token_param not in TOKEN_PARAMS:
         raise BatchStop("secenek", f"--max-tokens-param {TOKEN_PARAMS} içinden olmalı.")
@@ -293,21 +344,23 @@ def call_llm(client, model, messages, *, max_tokens, no_think, max_retries, slee
             name = type(exc).__name__
             status = getattr(exc, "status_code", None)
             status = status if type(status) is int else None
+            metadata = safe_provider_metadata(exc)
             if status in (400, 422):
                 raise BatchStop("sunucu_istegi_reddetti",
-                                server_rejected_message(status, name, token_param)) from None
+                                server_rejected_message(status, name, token_param), metadata) from None
             if status in (401, 403):
                 raise BatchStop("yetki_hatasi", f"LLM sunucusu kimlik doğrulamayı reddetti "
-                                f"(HTTP {status}, {name}). .env'deki LLM_API_KEY'i kontrol edin.") from None
+                                f"(HTTP {status}, {name}). .env'deki LLM_API_KEY'i kontrol edin.", metadata) from None
             if status == 404:
                 raise BatchStop("model_bulunamadi", f"LLM sunucusu 404 döndü ({name}). Model adı "
-                                "(--model / LLM_MODEL) veya LLM_BASE_URL yanlış olabilir.") from None
+                                "(--model / LLM_MODEL) veya LLM_BASE_URL yanlış olabilir.", metadata) from None
             retryable = (status in (408, 409, 429) or (status is not None and status >= 500)
                          or (status is None and name in RETRYABLE_NAMES))
             if retryable and attempt < max_retries:
                 sleep(2 ** attempt)
                 continue
-            raise CandidateError("api_hatasi", name, status, attempt + 1) from None
+            raise CandidateError("api_hatasi", name, status, attempt + 1,
+                                 safe_connection_diagnostics(exc), metadata) from None
 
 
 def response_text(response):
@@ -368,7 +421,7 @@ def _finding_error_code(message):
     return "bulgu_gecersiz"
 
 
-def validate_finding(finding, text):
+def validate_finding(finding, text, *, table_source=None):
     """Bir bulguyu kendi şemamızla + mevcut _validate_response ile denetler.
 
     1. Alan kümesi tam olarak PIPELINE_FIELDS + evidence_quote.
@@ -394,7 +447,7 @@ def validate_finding(finding, text):
         raise ValueError("birden_fazla_mudahale: " + ", ".join(filled))
     base = {key: value for key, value in finding.items() if key != PROCEDURE_FIELD}
     try:
-        normalized = _validate_response({"findings": [base]}, text)[0]
+        normalized = _validate_response({"findings": [base]}, text, table_source=table_source)[0]
     except ValueError as exc:
         if not (procedure is not None and str(exc).startswith("Finding has no clinical fields")):
             raise
@@ -487,6 +540,13 @@ def build_row(finding, item, sources, *, model):
     }
     if "table_context" in candidate:
         note["table_context"] = candidate["table_context"]
+        from src.clinical_validation import clinical_table_type
+        family = clinical_table_type(candidate["table_context"]["columns"])
+        note["table_relationship_rule"] = {"version": "typed-tables-v1", "table_type": family,
+            "scope": "local column/row support; not clinical truth or efficacy"}
+        if family == "cct_recommendations":
+            row["outcome_type"] = "öneri"
+            note["table_relationship_rule"]["source_type"] = "guideline recommendation relayed by source"
     row["taslak_notu"] = json.dumps(note, ensure_ascii=False, sort_keys=True)
     return row, None
 
@@ -500,7 +560,15 @@ def process_response(raw_text, item, sources, *, model):
         base = {"aday_id": candidate["aday_id"], "dosya": candidate["dosya"],
                 "sayfa": candidate["sayfa"], "bulgu_sirasi": position, "bulgu": finding}
         try:
-            normalized = validate_finding(finding, candidate["cumle"])
+            table_source = None
+            if candidate["kaynak_turu"] == "tablo":
+                matches = [text for _, text in sources.ctx.chunks.get(
+                    (candidate["document_id"], candidate["sayfa"]), [])
+                    if candidate["cumle"] in text]
+                if len(matches) != 1:
+                    raise ValueError("diagnostic_relationship_uncertain")
+                table_source = matches[0]
+            normalized = validate_finding(finding, candidate["cumle"], table_source=table_source)
         except ValueError as exc:
             rejections.append({**base, "asama": "yanit_dogrulama",
                                "hata_turu": _finding_error_code(str(exc)), "aciklama": str(exc)})

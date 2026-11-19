@@ -300,6 +300,103 @@ def assess_diagnostic_relationship(fields, evidence):
     return "uncertain"
 
 
+def clinical_table_type(columns):
+    """Closed table families; a label is not itself evidence of a relationship."""
+    def clean(s):
+        return norm_ws(re.sub(r"<[^>]+>", " ", s).replace("*", "")).casefold()
+    headers = [clean(c) for c in columns]
+    if (headers and headers[0].startswith("variable") and "p value" in headers
+            and any(re.fullmatch(r"ischemic event\s*\(n=\d+\)", h) for h in headers)
+            and any(re.fullmatch(r"no ischemic event\s*\(n=\d+\)", h) for h in headers)):
+        return "ischemic_group_variables"
+    if {"source", "control", "primary outcome"} <= set(headers) and any(h.startswith("participants") for h in headers):
+        return "study_summary"
+    if headers == ["cor", "loe", "indications for cct"]:
+        return "cct_recommendations"
+    return "generic"
+
+
+def assess_typed_table(fields, evidence, source_text):
+    """Use one literal row and verified column positions, never model-made context.
+
+    None delegates unrecognized families to the existing generic table rule.
+    Complex or incomplete associations remain uncertain.
+    """
+    from src.clinical_candidates import table_contexts, find_patterns
+    contexts = table_contexts(source_text or "")
+    if not any(clinical_table_type(c["columns"]) != "generic" for c in contexts.values()):
+        return None  # preserve the existing generic-table contract and regressions
+    matches = [c for row, c in contexts.items()
+               if norm_ws(row) == norm_ws(evidence)]
+    if len(matches) != 1:
+        return "uncertain"
+    ctx = matches[0]
+    family = clinical_table_type(ctx["columns"])
+    if family == "generic":
+        return None
+    if ctx["status"] != "simple":
+        return "uncertain"
+    clean = lambda s: norm_ws(re.sub(r"<[^>]+>", " ", s).replace("*", ""))
+    headers = [clean(h).casefold() for h in ctx["columns"]]
+    cells = [clean(c) for c in ctx["row_cells"]]
+    def contains(v, text):
+        return isinstance(v, str) and bool(v.strip()) and re.search(
+            r"(?<!\w)" + re.escape(norm_ws(v)) + r"(?!\w)", text, re.I) is not None
+    active = {k: v for k, v in fields.items() if v is not None and k in (
+        "diagnosis", "diagnostic_method", "drug", "procedure", "dose", "dose_unit",
+        "treatment_duration", "patient_group", "comparison", "clinical_outcome", "numeric_value", "value_unit")}
+    if any(not isinstance(v, str) or not v.strip() for v in active.values()):
+        return "uncertain"
+    if family == "ischemic_group_variables":
+        if any(k in active for k in ("drug", "procedure", "dose", "dose_unit", "treatment_duration", "comparison", "diagnosis")):
+            return "uncertain"  # covariates are not drug interventions or diagnosed diseases
+        method = active.get("diagnostic_method")
+        group = active.get("patient_group")
+        if not method or clean(method) != cells[0] or not group:
+            return "uncertain"
+        _, diagnostic_patterns, treatment_patterns = find_patterns(method)
+        if not diagnostic_patterns or treatment_patterns:
+            return "uncertain"  # a medication/covariate label is not a diagnostic method
+        indexes = [j for j, h in enumerate(headers) if clean(group).casefold() in
+                   (h, re.sub(r"\s*\(n=\d+\)$", "", h))]
+        if len(indexes) != 1 or indexes[0] == 0 or headers[indexes[0]] == "p value":
+            return "uncertain"
+        cell = cells[indexes[0]]
+        if not active.get("numeric_value") or active.get("clinical_outcome"):
+            return "uncertain"  # measurement, not proof of diagnostic efficacy or treatment benefit
+        if clean(active["numeric_value"]) != cell:
+            return "contradicted"
+        if active.get("value_unit") and not contains(active["value_unit"], cell):
+            return "contradicted"
+        return "supported_local"
+    if family == "study_summary":
+        roles = {"patient_group": [j for j,h in enumerate(headers) if h == "inclusion criteria"],
+                 "comparison": [j for j,h in enumerate(headers) if h == "control"],
+                 "clinical_outcome": [j for j,h in enumerate(headers) if h == "primary outcome"],
+                 "numeric_value": [j for j,h in enumerate(headers) if h == "primary outcome"],
+                 "value_unit": [j for j,h in enumerate(headers) if h == "primary outcome"]}
+        interventions = [j for j,h in enumerate(headers) if h in ("intervention", "treatment", "diagnostic method")]
+        for k in ("drug", "procedure", "diagnostic_method"):
+            roles[k] = interventions
+        if not active or any(k not in roles or len(roles[k]) != 1 for k in active):
+            return "uncertain"  # Source/Participants/Control cannot stand in for an intervention
+        if any(not contains(v, cells[roles[k][0]]) for k,v in active.items()):
+            return "contradicted"
+        if active.get("numeric_value") and not active.get("clinical_outcome"):
+            return "uncertain"
+        return "supported_local"
+    # Recommendation classes are not effect sizes, patient counts or ROC values.
+    if any(k in active for k in ("drug", "procedure", "dose", "dose_unit", "treatment_duration",
+                                "comparison", "clinical_outcome", "numeric_value", "value_unit")):
+        return "uncertain"
+    if not active.get("diagnostic_method") or not active.get("diagnosis"):
+        return "uncertain"
+    if any(not contains(v, cells[2]) for v in active.values()):
+        return "contradicted"
+    # The indication must express a diagnostic link, not merely list disease and test.
+    return assess_diagnostic_relationship(fields, cells[2])
+
+
 def assess_clinical_relationships(fields, evidence, source_text=None, source_type="metin"):
     """Local textual support, NOT clinical truth or human approval.
 
@@ -307,6 +404,10 @@ def assess_clinical_relationships(fields, evidence, source_text=None, source_typ
     labelled table rows are supported. Complex comparisons/coreference need
     review rather than a guessed relationship. No LLM judgement is consumed.
     """
+    if source_type == "tablo":
+        typed = assess_typed_table(fields, evidence, source_text)
+        if typed is not None:
+            return typed
     if fields.get("diagnostic_method") is not None:
         return assess_diagnostic_relationship(fields, evidence)
     names = ("drug", "dose", "patient_group", "clinical_outcome", "numeric_value")
@@ -445,7 +546,8 @@ def validate_relationship_row(row, ctx):
             patient_group=row.get("hasta_grubu"), comparison=row.get("comparator"),
             clinical_outcome=row.get("sonuc_olcutu_tr") or extracted.get("clinical_outcome"),
             numeric_value=row.get("deger"), value_unit=row.get("unit"))
-        result = assess_diagnostic_relationship(diagnostic, row.get("kanit_cumle"))
+        result = assess_clinical_relationships(diagnostic, row.get("kanit_cumle"), text,
+                                               row.get("kanit_turu") or "metin")
         if result != "supported_local":
             return result
         if extracted:
@@ -454,7 +556,8 @@ def validate_relationship_row(row, ctx):
                 return "uncertain"  # do not silently reinterpret legacy drug/outcome
             if diagnostic["diagnosis"] != extracted.get("diagnosis"):
                 return "contradicted"
-            result = assess_diagnostic_relationship(extracted, row.get("kanit_cumle"))
+            result = assess_clinical_relationships(extracted, row.get("kanit_cumle"), text,
+                                                   row.get("kanit_turu") or "metin")
             if result != "supported_local":
                 return result
         stored_result = payload.get("clinical_result")

@@ -32,6 +32,8 @@ from src.clinical_pipeline import (
     call_llm,
     parse_llm_json,
     preview_rows,
+    safe_connection_diagnostics,
+    safe_provider_metadata,
     process_response,
     validate_finding,
 )
@@ -39,6 +41,7 @@ from src.clinical_validation import norm_ws
 from src.run_clinical_batch import (
     JsonlWriter,
     Options,
+    _select,
     acquire_lock,
     cache_path,
     main as cli_main,
@@ -119,6 +122,122 @@ def findings_json(*findings):
 # ---------------------------------------------------------------------------
 
 def test_offline(tmp):
+    from src.clinical_candidates import mark_article_metadata, collect_candidates, table_contexts
+    from src.clinical_validation import (assess_clinical_relationships, clinical_table_type,
+                                         ValidationContext, validate_row)
+    title_text = "The Relationship Between HbA1c and Ischemic Events"
+    abstract_text = "Abstract Results: HbA1c AUC was 0.712."
+    blocks = [["metin", title_text, 1], ["metin", "Author Department of Cardiology", 1],
+              ["metin", abstract_text, 1], ["metin", "HbA1c was elevated in patients.", 1]]
+    marked = mark_article_metadata(blocks)
+    check("front matter classified without deleting abstract", ["metadata", "metadata", "metin", "metin"],
+          [b[0] for b in marked])
+    check("metadata classification preserves exact source text", [b[1] for b in blocks], [b[1] for b in marked])
+    check("no abstract boundary does not exclude arbitrary first-page results", "metin",
+          mark_article_metadata([["metin", "HbA1c AUC was 0.712.", 1]])[0][0])
+    check("clinical observation before abstract is retained", "metin",
+          mark_article_metadata([["metin", "HbA1c AUC=0.712.", 1],
+                                 ["başlık", "Abstract", 1]])[0][0])
+    check("exact document title metadata works without abstract", "metadata",
+          mark_article_metadata([["metin", title_text, 1]], {"baslik": title_text})[0][0])
+    check("second-page clinical text retained", "metin",
+          mark_article_metadata([["metin", title_text, 2]], {"baslik": title_text})[0][0])
+
+    variable = ("|Variable|Ischemic event (n=372)|No ischemic event (n=853)|p value|\n"
+                "|---|---|---|---|\n|HbA1c|7.1|5.5|0.01|")
+    row = "|HbA1c|7.1|5.5|0.01|"
+    fields = dict(diagnostic_method="HbA1c", patient_group="Ischemic event", numeric_value="7.1")
+    check("variable group column mapping", "supported_local",
+          assess_clinical_relationships(fields, row, variable, "tablo"))
+    check("variable wrong group value", "contradicted",
+          assess_clinical_relationships({**fields, "numeric_value": "5.5"}, row, variable, "tablo"))
+    check("variable no group is uncertain", "uncertain",
+          assess_clinical_relationships({**fields, "patient_group": None}, row, variable, "tablo"))
+    check("variable is not a drug intervention", "uncertain",
+          assess_clinical_relationships({**fields, "drug": "HbA1c"}, row, variable, "tablo"))
+    drug_variable = variable.replace("HbA1c", "Apixaban")
+    check("drug variable cannot masquerade as diagnostic test", "uncertain",
+          assess_clinical_relationships({**fields, "diagnostic_method": "Apixaban"},
+              row.replace("HbA1c", "Apixaban"), drug_variable, "tablo"))
+    check("variable table missing source rejected", "uncertain",
+          assess_clinical_relationships(fields, row, "", "tablo"))
+    check("variable p cannot donate clinical value", "contradicted",
+          assess_clinical_relationships({**fields, "numeric_value": "0.01"}, row, variable, "tablo"))
+    summary_table = ("|Source|Participants, No.|Inclusion criteria|Control|Primary outcome|Intervention|\n"
+                     "|---|---|---|---|---|---|\n|Study A|100|Adults|placebo|stroke 3%|apixaban|")
+    summary_row = "|Study A|100|Adults|placebo|stroke 3%|apixaban|"
+    sf = dict(drug="apixaban", patient_group="Adults", comparison="placebo", clinical_outcome="stroke 3%", numeric_value="3")
+    check("study summary preserves column roles", "supported_local",
+          assess_clinical_relationships(sf, summary_row, summary_table, "tablo"))
+    check("participants cannot donate outcome number", "contradicted",
+          assess_clinical_relationships({**sf, "numeric_value": "100"}, summary_row, summary_table, "tablo"))
+    check("control cannot be intervention", "contradicted",
+          assess_clinical_relationships({**sf, "drug": "placebo"}, summary_row, summary_table, "tablo"))
+    unknown_intervention = summary_table.replace("|Intervention|", "|Other|")
+    check("summary without explicit intervention column uncertain", "uncertain",
+          assess_clinical_relationships(sf, summary_row, unknown_intervention, "tablo"))
+    cct_table = "|COR|LOE|Indications for CCT|\n|---|---|---|\n|IIa|B|CAD can be detected with CCT.|"
+    cct_row = "|IIa|B|CAD can be detected with CCT.|"
+    cf = dict(diagnosis="CAD", diagnostic_method="CCT")
+    check("CCT explicit diagnostic indication", "supported_local",
+          assess_clinical_relationships(cf, cct_row, cct_table, "tablo"))
+    check("COR cannot be effect size", "uncertain",
+          assess_clinical_relationships({**cf, "numeric_value": "IIa"}, cct_row, cct_table, "tablo"))
+    cct_ambiguous = cct_table.replace("CAD can be detected with CCT.", "CAD and CCT.")
+    check("CCT co-occurrence remains uncertain", "uncertain",
+          assess_clinical_relationships(cf, "|IIa|B|CAD and CCT.|", cct_ambiguous, "tablo"))
+    check("wrong disease in CCT rejected", "contradicted",
+          assess_clinical_relationships({**cf, "diagnosis": "AF"}, cct_row, cct_table, "tablo"))
+    # Full source -> schema -> SQL boundary, with a verified literal row.
+    finding = {**dict.fromkeys(PIPELINE_FIELDS), **fields, "evidence_quote": row}
+    validated = validate_finding(finding, row, table_source=variable)
+    check("table schema allows group only from verified header", "Ischemic event", validated["patient_group"])
+    ctx = ValidationContext(pages={"doc": {1: variable}}, makale_by_doc={"doc": "article"},
+        chunks={("doc", 1): [("cid", variable)]}, chunk_ids={"cid"},
+        chunk_versions={"cid": "v"}, active_versions={"doc": "v"})
+    sql_row = dict(document_id="doc", makale_id="article", chunk_id="cid", kanit_sayfa=1,
+        kanit_turu="tablo", kanit_cumle=row, mudahale_turu="tanı testi", mudahale_en="HbA1c",
+        hasta_grubu="Ischemic event", deger="7.1", review_status="pending",
+        taslak_notu=json.dumps({"extracted_fields": finding, "table_context": table_contexts(variable)[row]}))
+    check("typed table direct SQL validation passes", True, validate_row(sql_row, ctx)[0])
+    check("typed table direct SQL wrong value rejected", False, validate_row({**sql_row, "deger": "5.5"}, ctx)[0])
+    check("typed table stale source rejected", False,
+          validate_row({**sql_row, "processing_version": "old"}, ctx)[0])
+    cct_ctx = ValidationContext(pages={"doc": {1: cct_table}}, makale_by_doc={"doc": "article"},
+        chunks={("doc", 1): [("cid", cct_table)]}, chunk_ids={"cid"},
+        chunk_versions={"cid": "v"}, active_versions={"doc": "v"})
+    cct_item = {"candidate": {"aday_id": "synthetic-cct", "dosya": "fixture.pdf",
+        "document_id": "doc", "makale_id": "article", "sayfa": 1, "kaynak_turu": "tablo",
+        "cumle": cct_row, "table_context": table_contexts(cct_table)[cct_row]},
+        "allowed_quote_spans": [cct_row]}
+    cct_finding = {**dict.fromkeys(PIPELINE_FIELDS), **cf, "evidence_quote": cct_row}
+    built, rejected, _ = process_response(findings_json(cct_finding), cct_item,
+        SimpleNamespace(ctx=cct_ctx, chunk_index={"cid": 0}), model="mock-only")
+    check("typed CCT mock pipeline builds one candidate", (1, 0), (len(built), len(rejected)))
+    check("CCT stored as pending recommendation not research effect", ("pending", "öneri", None),
+          tuple(built[0].get(k) for k in ("review_status", "outcome_type", "deger")) if built else None)
+    check("typed CCT SQL boundary passes without writing", True,
+          validate_row(built[0], cct_ctx)[0] if built else False)
+
+    # A pilot is an explicit allowlist, not the first round-robin text hit.
+    # Biomarker words in a title do not make it a clinical observation.
+    title = {"candidate": {"aday_id": "title", "dosya": "a.pdf", "makale_id": "a",
+                            "cumle": "The Relationship Between HbA1c/C-Peptide Ratio and Ischemic Event"}}
+    clinical = {"candidate": {"aday_id": "clinical", "dosya": "b.pdf", "makale_id": "b",
+                               "cumle": "AF can be detected with wearable devices."}}
+    metadata = [{"candidate": {"aday_id": kind, "dosya": "a.pdf", "makale_id": "a",
+                                "cumle": text}} for kind, text in (
+        ("author", "Author: Example Researcher"), ("journal", "Journal 2026;1:1-9"),
+        ("nonclinical", "Correspondence and publication information"))]
+    pilot_opts = Options(aday=["clinical"], limit=1, no_save=True)
+    check("pilot allowlist: title/author/journal/nonclinical excluded", [clinical],
+          _select([title, *metadata, clinical], pilot_opts))
+    check("pilot allowlist independent of collection order", [clinical],
+          _select([clinical, *reversed(metadata), title], pilot_opts))
+    check("missing pilot ID: no fallback to first candidate", [],
+          _select([title, *metadata], pilot_opts))
+    check("pilot ID filter does not mutate candidates", "title", title["candidate"]["aday_id"])
+
     # <think> ayıklama ve JSON.
     check("think bloğu ayıklanıyor", [], parse_llm_json('<think>x {"a":1}</think>\n{"findings": []}')["findings"])
     check("yalnız kapanış </think> (şablon açılışı)", [], parse_llm_json('düşünce</think>{"findings": []}')["findings"])
@@ -225,6 +344,81 @@ def test_offline(tmp):
         got = (exc.code, exc.attempts)
     check("zaman aşımı: 3 yeniden deneme sonra aday hatası", ("api_hatasi", 4), got)
     check("artan bekleme", [1, 2, 4], sleeps)
+
+    # Safe nested transport diagnostics, without a real network or SQL call.
+    import ssl
+    from unittest.mock import patch
+
+    root = ConnectionResetError(10054, "sk-SECRET private patient text https://user:password@host")
+    middle = type("ReadError", (Exception,), {})("private connection details")
+    outer = type("APIConnectionError", (Exception,), {})("Bearer sk-SECRET")
+    middle.__cause__ = root
+    outer.__cause__ = middle
+    diagnostic = safe_connection_diagnostics(outer)
+    check("cause chain preserves safe types", ["ReadError", "ConnectionResetError"],
+          [r["type"] for r in diagnostic["cause_chain"]])
+    check("cause chain preserves numeric errno", 10054, diagnostic["cause_chain"][1]["errno"])
+    check("cause diagnostics no exception messages", False,
+          any(s in json.dumps(diagnostic) for s in ("SECRET", "patient", "password", "Bearer", "https://")))
+    certificate = ssl.SSLError("secret certificate message")
+    certificate.reason = "CERTIFICATE_VERIFY_FAILED"
+    outer.__cause__ = certificate
+    check("SSL reason allowlist", "CERTIFICATE_VERIFY_FAILED",
+          safe_connection_diagnostics(outer)["cause_chain"][0]["ssl_reason"])
+    certificate.reason = "SECRET_CUSTOM_REASON"
+    certificate.errno = "secret errno"
+    check("unknown SSL reason and string errno removed", (None, None),
+          tuple(safe_connection_diagnostics(outer)["cause_chain"][0][k] for k in ("ssl_reason", "errno")))
+    outer.__cause__ = middle
+    root.__cause__ = outer
+    check("cyclic cause chain terminates", 2, len(safe_connection_diagnostics(outer)["cause_chain"]))
+    root.__cause__ = None
+    check("no cause backward compatible", None, safe_connection_diagnostics(Exception("secret")))
+
+    fake = {"candidate": {"aday_id": "transport-fixture", "dosya": "fixture.pdf", "makale_id": "fixture",
+                          "cumle": "Synthetic clinical evidence fixture."},
+            "allowed_quote_spans": []}
+    client = ScriptedClient(lambda *_: (_ for _ in ()).throw(outer))
+    with patch("src.database.save_clinical_findings") as save, patch("src.database.get_connection") as connect:
+        summary = run_batch(Options(base_dir=Path(tmp) / "transport", limit=1, no_save=True,
+            model="mock-transport", max_retries=0, max_consecutive_errors=1), client=client,
+            prepared=(SimpleNamespace(), [fake], [], 1), out=quiet, sleep=quiet)
+        check("transport error no SQL writes", False, save.called)
+        check("transport error no SQL connection", False, connect.called)
+    check("transport retry=0 exactly one mock request", 1, len(client.requests))
+    check("transport stops on first error", "ust_uste_hata", summary["durma_sebebi"])
+    logged = json.loads((Path(summary["run_dir"]) / "errors.jsonl").read_text(encoding="utf-8"))
+    check("errors log contains safe cause metadata", diagnostic, logged.get("connection_diagnostics"))
+    check("errors log no sensitive content", False,
+          any(s in json.dumps(logged) for s in ("SECRET", "private", "password", "Bearer", "https://")))
+
+    provider = http_error(500, "InternalServerError")
+    provider.request_id = "req_" + "a1" * 16
+    provider.code = "server_error"
+    check("safe provider request ID and code", {"request_id": provider.request_id,
+          "provider_error_code": "server_error"}, safe_provider_metadata(provider))
+    for malicious in ("sk-SECRET", "req_" + "a"*32 + "\nAuthorization: SECRET",
+                      "https://secret-host/path", {"api_key": "SECRET"}):
+        provider.request_id = malicious
+        provider.code = malicious
+        check("unsafe provider metadata rejected", {}, safe_provider_metadata(provider))
+    provider.request_id = "req_" + "b2" * 16
+    provider.code = "server_error"
+    for status in (500, 400, 401, 404):
+        provider.status_code = status
+        fake_client = ScriptedClient(lambda *_: (_ for _ in ()).throw(provider))
+        with patch("src.database.save_clinical_findings") as save, patch("src.database.get_connection") as connect:
+            result = run_batch(Options(base_dir=Path(tmp) / ("provider-" + str(status)),
+                limit=1, no_save=True, model="mock-provider", max_retries=0,
+                max_consecutive_errors=1), client=fake_client,
+                prepared=(SimpleNamespace(), [fake], [], 1), out=quiet, sleep=quiet)
+            check("provider metadata no SQL IO", (False, False), (save.called, connect.called))
+        record = json.loads((Path(result["run_dir"]) / "errors.jsonl").read_text(encoding="utf-8"))
+        check("provider metadata logged safely", (provider.request_id, "server_error"),
+              (record.get("request_id"), record.get("provider_error_code")))
+        check("provider raw body not logged", False,
+              any(s in json.dumps(record) for s in ("SECRET", "response body", "api_key", "Authorization")))
+        check("provider error no automatic retry", 1, len(fake_client.requests))
 
     # state.jsonl: yarım son satır çökertmez, uyarı loglanır; sonraki ekleme yeni satırda.
     state = Path(tmp) / "state.jsonl"

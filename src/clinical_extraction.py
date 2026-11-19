@@ -61,7 +61,7 @@ concatenate captions or headers into a quote, or infer absent cell values.
 """
 
 
-def _validate_response(payload, text):
+def _validate_response(payload, text, *, table_source=None):
     """Validate the entire strict RESPONSE_SCHEMA plus extractive grounding."""
     if not isinstance(payload, dict) or set(payload) != {"findings"}:
         raise ValueError("Expected only a findings array")
@@ -78,17 +78,27 @@ def _validate_response(payload, text):
         quote = finding["evidence_quote"]
         if not isinstance(quote, str) or not quote.strip() or quote not in text:
             raise ValueError("evidence_quote is not a verbatim candidate substring")
+        table_context = None
+        if table_source is not None:
+            from src.clinical_candidates import table_contexts
+            table_context = table_contexts(table_source).get(quote)
+            if not table_context or table_context["status"] != "simple":
+                raise ValueError("diagnostic_relationship_uncertain")
         for field in FIELDS:
             value = finding[field]
             if value is not None and (
-                not isinstance(value, str) or not value.strip() or value not in quote
+                not isinstance(value, str) or not value.strip() or (
+                    value not in quote and not (
+                        table_context and field == "patient_group"
+                        and value in " ".join(table_context["columns"])))
             ):
                 raise ValueError(f"{field} must be null or verbatim evidence text")
         if all(finding[field] is None for field in FIELDS):
             raise ValueError("Finding has no clinical fields")
-        if finding["diagnostic_method"] is not None:
-            from src.clinical_validation import assess_diagnostic_relationship
-            status = assess_diagnostic_relationship(finding, quote)
+        if finding["diagnostic_method"] is not None or table_context is not None:
+            from src.clinical_validation import assess_diagnostic_relationship, assess_clinical_relationships
+            status = (assess_clinical_relationships(finding, quote, table_source, "tablo")
+                      if table_context is not None else assess_diagnostic_relationship(finding, quote))
             if status != "supported_local":
                 raise ValueError("diagnostic_relationship_" + status)
         normalized.append(finding)
