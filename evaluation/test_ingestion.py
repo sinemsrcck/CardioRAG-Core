@@ -44,7 +44,7 @@ CURRENT_CHUNKS_SQL = (
 )
 
 # Hoca tablolarındaki satır sayıları (makaleler: yalnızca document_id IS NULL).
-# Hocanın eski verisi temizlendi (README, kurulum adım 2); ingest bu sayıları
+# Hocanın eski verisi temizlendi (README, kurulum adım 6); ingest bu sayıları
 # değiştirmemeli.
 EXPECTED_PROTECTED_ROWS = {
     "makaleler": 0,

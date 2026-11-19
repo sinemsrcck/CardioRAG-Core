@@ -79,11 +79,49 @@ SOURCE C:/dosyanin/yolu/kardiyo_tam_metin.sql;
 SHOW TABLES;
 ```
 
-`SHOW TABLES` en az şu 6 tabloyu göstermeli: `icd10_who`, `makaleler`, `semptom_iliskileri`, `sonuclar`, `tani_tedavi`, `tkd_kurallari`.
+`SHOW TABLES` en az şu 6 tabloyu göstermeli: `icd10_who`, `makaleler`, `semptom_iliskileri`, `sonuclar`, `tani_tedavi`, `tkd_kurallari`. Bu tablolardaki hocanın eski satırları 6. adımda temizlenecek.
 
-### 2. Hocanın eski verisini temizleme
+### 2. PDF'ler
 
-Hocanın SQL dosyası tablo yapıları ile `icd10_who` ve `tkd_kurallari` referans verisi için gereklidir; ama içindeki eski makale ve bulgu satırları kullanılmaz (6 PDF baştan indexlenir). Bu yüzden yükledikten hemen sonra eski satırlar silinir. Hiçbir tablo DROP edilmez; `icd10_who` ve `tkd_kurallari` olduğu gibi kalır.
+6 PDF'i `data/pdfs/` klasörüne koyun (klasör repoda yoktur). **Aynı dosyalar** olmalıdır: `document_id`, PDF içeriğinin SHA-256 hash'idir; farklı bir dosya farklı bir belge sayılır.
+
+### 3. Ortam değişkenleri
+
+```powershell
+Copy-Item .env.example .env
+```
+
+`.env` içinde `MYSQL_PASSWORD` ve (LLM kullanılacaksa) `LLM_BASE_URL`, `LLM_API_KEY` doldurulur. `LLM_MODEL` şablonda `src/rag.py`'deki varsayılanla aynı değere (`Qwen/Qwen3-8B`) ayarlıdır; bu satır boş bırakılmamalıdır, çünkü `.env`'de boş tanımlı bir değişken için `os.getenv` varsayılanı değil boş metni döndürür. `LLM_BASE_URL` boşsa LLM çağrısı açık bir hata verir (`use_llm=False` ile retrieval yine çalışır); `LLM_API_KEY` boşsa `"not-required"` gönderilir.
+
+### 4. Python ortamı
+
+```powershell
+conda create -n cardiorag python=3.11
+conda activate cardiorag
+pip install -r requirements.txt
+```
+
+İlk çalıştırmada embedding ve reranker modelleri Hugging Face'ten indirilir (bge-reranker-v2-m3 yaklaşık 2.2 GB).
+
+### 5. Veritabanını kurma ve doldurma (sırayla)
+
+```powershell
+python -m src.database --init
+python -m src.ingest
+python -m src.article_metadata --write --tam-metin temiz
+python -m src.load_translations
+```
+
+- `src.database --init`: yeni tabloları, eksik sütunları, kısıtları ve VIEW'ları oluşturur; tekrar çalıştırılabilir, hiçbir şey silmez. `--check` (varsayılan) yalnızca durumu raporlar.
+- `src.ingest`: 6 PDF'i okur, temizler, parçalar, embedding üretir ve yazar (varsayılan model `minilm`; `--model bge-m3` seçeneği var). Tekrar çalıştırmak güvenlidir; var olan chunk ve embedding'ler yeniden yazılmaz.
+- `src.article_metadata --write --tam-metin temiz`: 6 makaleyi `makaleler` tablosuna yeni satır olarak ekler (başlık, dergi, yıl, DOI, abstract, temizlenmiş tam metin). Önce `--dry-run` ile yazmadan görülebilir.
+- `src.load_translations`: Türkçe özeti olmayan 4 makalenin LLM çevirilerini `data/clinical/abstract_translations.json`'dan `makaleler.ozet_tr`'ye yükler. Çeviride `abstract_en`'de olmayan bir sayı varsa o kayıt yazılmaz; PDF'ten gelen orijinal Türkçe özetin üzerine asla yazılmaz. Önce `--dry-run` ile görülebilir; tekrar çalıştırmak bir şey değiştirmez. Bu adım `article_metadata`'dan sonra çalıştırılır; `article_metadata`'yı daha sonra yeniden çalıştırmak çevirileri silmez.
+
+### 6. Hocanın eski verisini temizleme
+
+Bu adım, 5. adımdaki komutların hepsi çalıştıktan sonra yapılır.
+
+Hocanın SQL dosyası tablo yapıları ile `icd10_who` ve `tkd_kurallari` referans verisi için gereklidir; ama içindeki eski makale ve bulgu satırları kullanılmaz (6 PDF baştan indexlenir). Bu yüzden eski satırlar silinir. Hiçbir tablo DROP edilmez; `icd10_who` ve `tkd_kurallari` olduğu gibi kalır.
 
 Önce yedek alınması önerilir (`backups/` git'e girmez; PowerShell'de `>` dosyayı UTF-16 yazacağı için `--result-file` kullanılır):
 
@@ -116,51 +154,13 @@ COMMIT;   -- sayılar yanlışsa COMMIT yerine: ROLLBACK;
 SET SQL_SAFE_UPDATES = 1;
 ```
 
-> `makaleler.document_id` sütunu henüz yoksa (hocanın SQL'i yeni yüklendiyse) önce `python -m src.database --init` çalıştırılır (adım 6'nın ilk komutu; hiçbir şey silmez), sonra bu adım uygulanır.
-
 **Bu adımdan sonra hocanın SQL dosyası tekrar yüklenmemelidir**; yüklenirse eski satırlar geri gelir ve testler (`test_database_schema`, `test_ingestion`, `test_makaleler`) başarısız olur.
-
-### 3. PDF'ler
-
-6 PDF'i `data/pdfs/` klasörüne koyun (klasör repoda yoktur). **Aynı dosyalar** olmalıdır: `document_id`, PDF içeriğinin SHA-256 hash'idir; farklı bir dosya farklı bir belge sayılır.
-
-### 4. Ortam değişkenleri
-
-```powershell
-Copy-Item .env.example .env
-```
-
-`.env` içinde `MYSQL_PASSWORD` ve (LLM kullanılacaksa) `LLM_BASE_URL`, `LLM_API_KEY` doldurulur. `LLM_MODEL` şablonda `src/rag.py`'deki varsayılanla aynı değere (`Qwen/Qwen3-8B`) ayarlıdır; bu satır boş bırakılmamalıdır, çünkü `.env`'de boş tanımlı bir değişken için `os.getenv` varsayılanı değil boş metni döndürür. `LLM_BASE_URL` boşsa LLM çağrısı açık bir hata verir (`use_llm=False` ile retrieval yine çalışır); `LLM_API_KEY` boşsa `"not-required"` gönderilir.
-
-### 5. Python ortamı
-
-```powershell
-conda create -n cardiorag python=3.11
-conda activate cardiorag
-pip install -r requirements.txt
-```
-
-İlk çalıştırmada embedding ve reranker modelleri Hugging Face'ten indirilir (bge-reranker-v2-m3 yaklaşık 2.2 GB).
-
-### 6. Veritabanını kurma ve doldurma (sırayla)
-
-```powershell
-python -m src.database --init
-python -m src.ingest
-python -m src.article_metadata --write --tam-metin temiz
-python -m src.load_translations
-```
-
-- `src.database --init`: yeni tabloları, eksik sütunları, kısıtları ve VIEW'ları oluşturur; tekrar çalıştırılabilir, hiçbir şey silmez. `--check` (varsayılan) yalnızca durumu raporlar.
-- `src.ingest`: 6 PDF'i okur, temizler, parçalar, embedding üretir ve yazar (varsayılan model `minilm`; `--model bge-m3` seçeneği var). Tekrar çalıştırmak güvenlidir; var olan chunk ve embedding'ler yeniden yazılmaz.
-- `src.article_metadata --write --tam-metin temiz`: 6 makaleyi `makaleler` tablosuna yeni satır olarak ekler (başlık, dergi, yıl, DOI, abstract, temizlenmiş tam metin). Önce `--dry-run` ile yazmadan görülebilir.
-- `src.load_translations`: Türkçe özeti olmayan 4 makalenin LLM çevirilerini `data/clinical/abstract_translations.json`'dan `makaleler.ozet_tr`'ye yükler. Çeviride `abstract_en`'de olmayan bir sayı varsa o kayıt yazılmaz; PDF'ten gelen orijinal Türkçe özetin üzerine asla yazılmaz. Önce `--dry-run` ile görülebilir; tekrar çalıştırmak bir şey değiştirmez. Bu adım `article_metadata`'dan sonra çalıştırılır; `article_metadata`'yı daha sonra yeniden çalıştırmak çevirileri silmez.
 
 ## Tablolar
 
 ### Hocanın tabloları
 
-Tablo yapıları hocanın SQL dosyasından gelir. Eski satırlar kurulum adım 2'de temizlendi; kod bu tablolara satır eklemez veya silmez (yalnızca `makaleler`'e bizim 6 makalemiz eklenir) ve testler bu sayıların işlemlerle değişmediğini kontrol eder.
+Tablo yapıları hocanın SQL dosyasından gelir. Eski satırlar kurulum adım 6'da temizlendi; kod bu tablolara satır eklemez veya silmez (yalnızca `makaleler`'e bizim 6 makalemiz eklenir) ve testler bu sayıların işlemlerle değişmediğini kontrol eder.
 
 | Tablo | İçerik | Durum |
 |---|---|---|
@@ -264,7 +264,7 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 
 Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılır.
 
-**MySQL gerektirenler** (`.env` ve kurulum adım 2 ile 6 tamamlanmış olmalı):
+**MySQL gerektirenler** (`.env` ve kurulum adım 5 ile 6 tamamlanmış olmalı):
 
 | Test | Ne yapar |
 |---|---|

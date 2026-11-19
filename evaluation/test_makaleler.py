@@ -35,7 +35,7 @@ from src.load_translations import (
 
 
 # Hocanın eski 5 satırı (document_id IS NULL) temizlendi (README, kurulum
-# adım 2); bu tabloda hocanın satırı olmamalı. Sabit bir hash tutulmaz:
+# adım 6); bu tabloda hocanın satırı olmamalı. Sabit bir hash tutulmaz:
 # professor_rows_fingerprint işlemlerden önce ve sonra alınıp karşılaştırılır.
 EXPECTED_PROFESSOR_ROWS = 0
 
