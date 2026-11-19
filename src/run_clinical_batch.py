@@ -495,10 +495,16 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
                 error_types[exc.code] += 1
                 errors_log.write({"aday_id": aday_id, "dosya": candidate["dosya"], "hata": exc.code,
                                   "detay": exc.detail, "http_status": exc.http_status,
+                                  **({"connection_diagnostics": exc.connection_diagnostics}
+                                     if exc.connection_diagnostics else {}),
+                                  **exc.provider_metadata,
                                   "deneme": exc.attempts, "run_id": run_id, "zaman": _now()})
                 record_state(item, "hata", hata=exc.code)
                 consecutive_errors += 1
-            except BatchStop:
+            except BatchStop as exc:
+                if exc.provider_metadata:
+                    errors_log.write({"aday_id": aday_id, "hata": exc.code,
+                                      "run_id": run_id, "zaman": _now(), **exc.provider_metadata})
                 raise
             except Exception as exc:  # noqa: BLE001 - veritabanı vb.; aday hatası olarak kaydedilir
                 counters["hata"] += 1
@@ -514,7 +520,8 @@ def run_batch(opts, *, client=None, connection=None, prepared=None, sleep=time.s
                 out(f"  {number}/{len(work)} aday işlendi")
         summary["durum"] = "tamamlandi"
     except BatchStop as stop:
-        summary.update(durum="durduruldu", durma_sebebi=stop.code, mesaj=stop.message)
+        summary.update(durum="durduruldu", durma_sebebi=stop.code, mesaj=stop.message,
+                       **stop.provider_metadata)
     except KeyboardInterrupt:
         summary.update(durum="kesildi", mesaj="Kullanıcı kesti; aynı komutla kaldığı yerden devam eder.")
     finally:

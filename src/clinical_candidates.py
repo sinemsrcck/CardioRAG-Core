@@ -415,7 +415,35 @@ def table_contexts(page_text):
     return contexts
 
 
-def collect_candidates(articles):
+def mark_article_metadata(blocks, metadata=None):
+    """Classify front matter, never discard first-page abstract observations.
+
+    A positive abstract boundary is required for the positional rule. Without
+    it only exact supplied metadata and explicit bibliographic blocks qualify.
+    Source text/page and all downstream candidate bindings remain literal.
+    """
+    metadata = metadata or {}
+    exact = {strip_markdown(v).casefold() for k in ("baslik", "title", "authors", "citation")
+             for v in ([metadata.get(k)] if isinstance(metadata.get(k), str) else []) if v}
+    first = [i for i, (_, _, page) in enumerate(blocks) if page == 1]
+    boundary = next((i for i in first if re.match(
+        r"^(?:abs\s*tract|abstract|özet|ozet)\b", blocks[i][1], re.I)), None)
+    result = []
+    for i, (kind, text, page) in enumerate(blocks):
+        clinical_statement = bool(re.search(
+            r"\b(?:was|were|showed|reduced|increased|found|included|received|"
+            r"can be detected|can detect|bulundu|bildirilmiştir)\b|"
+            r"\b(?:AUC|sensitivity|specificity|HR|OR|RR)\s*(?:=|:|of)\s*\d", text, re.I))
+        is_meta = kind != "tablo" and (
+            (page == 1 and boundary is not None and i < boundary and not clinical_statement)
+            or (page == 1 and text.casefold() in exact)
+            or bool(re.fullmatch(r"(?:DOI:\s*\S+|(?:Keywords|Anahtar\s+Kelimeler)\s*:.*)", text, re.I))
+            or bool(re.match(r"^(?:Correspondence|Corresponding author)\s*:", text, re.I)))
+        result.append(["metadata" if is_meta else kind, text, page])
+    return result
+
+
+def collect_candidates(articles, *, article_metadata=None):
     candidates = []
     for filename, makale_id, document_id, full_text in articles:
         if not PAGE_MARKER.search(full_text or ""):
@@ -424,6 +452,8 @@ def collect_candidates(articles):
         for page, page_text in iter_pages(full_text):
             blocks += page_blocks(page, page_text)
             tables[page] = table_contexts(page_text)
+
+        blocks = mark_article_metadata(blocks, (article_metadata or {}).get(document_id))
 
         seen = set()
         for source_type, sentence, page, end_page, joined in iter_units(blocks):
