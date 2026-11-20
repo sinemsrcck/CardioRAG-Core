@@ -14,7 +14,9 @@ Kontroller:
 - Zenginleştirme: pilot_findings_v2.json varsa tüm tablo kayıtları eşleşiyor, bilgi_turu/baglam değişmiyor.
 - SQL önizleme: grup/analiz başına satır; küme alanları src.clinical_validation kümelerinde;
   validate_row'un sayı ve tablo-kanıt kontrolleri (saf fonksiyonlar) geçiyor.
-- mudahale_turu yalnız ilaç satırlarında ("arka plan tedavisi"); diğerleri boş ve raporda listeli.
+- mudahale_turu yalnız ilaç satırlarında ("arka plan tedavisi"); diğerleri boş (aktarım yolu zorunlu tutmuyor).
+- Aktarım (import_records girdisi): 116 kayıt, izinli alanlar, review_status yok; validate_records
+  grup/analiz satırlarını tekrar saymıyor, gerçek tekrarı "tekrar" hatasıyla yakalıyor.
 - Veritabanı: gerçek modüller yüklenir (mysql-connector-python gerekli), ama bağlantı fonksiyonları
   çağrılınca hata veren sarmalayıcılarla değiştirilir; hiç çağrılmamalı.
 """
@@ -30,7 +32,7 @@ import src.database as database
 from src.clinical_validation import (
     ETKI_TURU, KANIT_TURU, MUDAHALE_TURU, NUMBER_CHECKED, OUTCOME_TYPE, YON, evidence_in_text, numbers_in)
 import src.pilot_tablo as pt
-from src.pilot_clinical import pdf_pages
+from src.pilot_clinical import INPUT_FIELDS, STRUCTURED_FIELDS, pdf_pages, validate_records
 
 # Gerçek modüller yüklü; yalnızca bağlantı açan fonksiyonlar kilitlenir. Bir çağrı olursa test düşer.
 DB_CALLS = []
@@ -184,13 +186,13 @@ def main():
           (gl['unit'], gl['mudahale_turu'], gl['outcome_type']))
     lvef = next(r for r in preview if r['sonuc_olcutu_tr'] == 'LvEF')
     check('LvEF (eko) mudahale_turu boş + neden', (None, True),
-          (lvef['mudahale_turu'], 'ekip kararı bekliyor' in note(lvef)['mudahale_turu_bos_nedeni']))
+          (lvef['mudahale_turu'], 'zorunlu tutmuyor' in note(lvef)['mudahale_turu_bos_nedeni']))
     medication = {(n['tablo_no'], n['satir_no']) for n in map(note, preview) if n['alt_bolum'] == 'Medications'}
     check('mudahale_turu yalnız ilaç satırlarında', True,
           all(bool(r['mudahale_turu']) == ((note(r)['tablo_no'], note(r)['satir_no']) in medication) for r in preview))
     check('"tanı testi" hiç atanmadı', 0, sum(r['mudahale_turu'] == 'tanı testi' for r in preview))
     check('mudahale_turu dolu / boş (13x2 ilaç)', (26, 90), (sum(bool(r['mudahale_turu']) for r in preview), summary['sql_mudahale_turu_bos']))
-    check('raporda bekleyen satır listesi (38 T1 + 7 T2)', (45, 90),
+    check('raporda mudahale_turu boş satır listesi (38 T1 + 7 T2)', (45, 90),
           (len(summary['sql_mudahale_turu_bos_satirlar']), sum(p['sql_satiri'] for p in summary['sql_mudahale_turu_bos_satirlar'])))
     check('Table 2 outcome_type boş', True, all(r['outcome_type'] is None for r in preview if note(r)['tablo_no'] == 2))
     wf = [r for r in preview if r['mudahale_en'] == 'Warfarin']
@@ -201,6 +203,27 @@ def main():
           [('OR', '3.124', '2.213-4.310', '<0.001', 'univariate', None), ('OR', '3.216', '2.334-4.365', '<0.001', 'multivariate', None)],
           [(r['etki_turu'], r['deger'], r['ci95'], r['p'], note(r)['analiz'], r['hasta_grubu']) for r in hc])
     check('hasta_sayisi hep NULL (n başlıkta)', True, all(r['hasta_sayisi'] is None for r in preview))
+
+    # --- import_records aktarım kayıtları ---
+    transfer = result['aktarim']
+    allowed = INPUT_FIELDS | set(STRUCTURED_FIELDS)
+    check('aktarım kaydı = önizleme satırı', (116, 116), (len(transfer), summary['aktarim_kaydi']))
+    check('aktarım alanları import_records\'un kabul ettikleri', [],
+          sorted({k for r in transfer for k in r} - allowed))
+    check('aktarımda review_status / hasta_sayisi yok', (0, 0),
+          (sum('review_status' in r for r in transfer), sum('hasta_sayisi' in r for r in transfer)))
+    check('aktarımda Sinem alanları pilot kaydıyla aynı', True, all(
+        all(r[k] == records[json.loads(r['taslak_notu'])['pilot_v2_sira'] - 1][k]
+            for k in ('bilgi_turu', 'baglam', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'kanit_turu'))
+        for r in transfer) if real else True)
+    hb_t = [r for r in transfer if r.get('sonuc_olcutu_tr') == 'HbA1c' and json.loads(r['taslak_notu'])['tablo_no'] == 1]
+    check('aktarım HbA1c: aynı kanıt, iki grup', (2, 1, ['Ischemic event', 'No ischemic event']),
+          (len(hb_t), len({r['kanit_cumle'] for r in hb_t}), [r['hasta_grubu'] for r in hb_t]))
+    accepted, errors = validate_records(transfer, pages)
+    check('validate_records(aktarım): grup/analiz satırları tekrar sayılmıyor', (116, 0), (len(accepted), len(errors)))
+    accepted, errors = validate_records(transfer + [dict(transfer[0])], pages)
+    check('validate_records: gerçek tekrar "tekrar" hatası', (116, 1, True),
+          (len(accepted), len(errors), bool(errors) and errors[0]['hata'].startswith('tekrar')))
 
     # --- Küme kontrolü (src.clinical_validation) ---
     constants = {pt.ETKI_N_PCT, pt.ETKI_OTHER} | {code for _, code in pt.EFFECT_TYPES}

@@ -4,7 +4,9 @@ Sorun: pilot çıkarım (src/pilot_auto_extract.py) tablo satırını başlıks�
 "|HbA1c|7.83±1.2|6.23±1.2|<0.001|" hangi değerin hangi gruba ait olduğunu söylemiyor.
 Bu modül pdf_pages metnindeki markdown tabloları ayrıştırır, kanit_turu=tablo kayıtlarını
 ilgili satıra bağlar ve klinik_bulgular sütunlarına (yeni tablo/sütun açmadan) bir SQL
-ÖNİZLEMESİ üretir. Veritabanına bağlanmaz, bilgi_turu/baglam değerlerini değiştirmez.
+ÖNİZLEMESİ üretir. Ayrıca src.pilot_clinical.import_records'a doğrudan verilebilecek aktarım
+kayıtları (grup/analiz başına bir kayıt, review_status YOK) yazar. Veritabanına bağlanmaz,
+bilgi_turu/baglam değerlerini değiştirmez.
 
 Kurallar:
 - Ham kanıt (tablo satırı) birebir korunur; ayrıca <br>, <sup>, ** temizlenmiş metin üretilir.
@@ -20,6 +22,8 @@ import json
 import re
 from pathlib import Path
 
+from src.pilot_clinical import STRUCTURED_FIELDS
+
 PILOT_DIR = Path('data/review/pilot')
 DEFAULT_JSON = PILOT_DIR / 'pilot_findings_v2.json'
 DEFAULT_CSV = PILOT_DIR / '02_zehra_klinik_incelemesi.csv'
@@ -32,8 +36,10 @@ VERSION = 'pilot-tablo-v1'
 ETKI_N_PCT = 'oran / yuzde'
 ETKI_OTHER = 'diger'
 MUDAHALE_ILAC = 'arka plan tedavisi'
-MUDAHALE_BOS_NEDENI = ('Doğrulayıcı (validate_row) zorunlu tutuyor; grup ölçümü/ilişki satırı için kümede '
-                       '(tedavi / tanı testi / arka plan tedavisi) uygun değer yok - ekip kararı bekliyor')
+MUDAHALE_BOS_NEDENI = ('İlaç satırı değil (grup ölçümü / ilişki satırı); aktarım yolu '
+                       '(pilot_clinical.import_records) mudahale_turu\'yu zorunlu tutmuyor, boş kalması sorun değil')
+# import_records'a gidecek temel (Sinem'in) alanlar; pilot kaydından aynen alınır.
+TRANSFER_BASE_FIELDS = ('bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'kanit_turu')
 OUTCOME_KULLANIM = 'uygulama oranı'
 OUTCOME_POPULASYON = 'çalışma popülasyonu'
 EFFECT_TYPES = (('odds ratio', 'OR'), ('hazard ratio', 'HR'), ('relative risk', 'RR'),
@@ -350,12 +356,10 @@ def is_medication(row):
 def sql_preview(record, table, row, document_id=None):
     """klinik_bulgular sütunlarıyla önizleme satırları. Mevcut sütunlar; yeni sütun yok.
 
-    Doğrulayıcı uyumu (src.clinical_validation.validate_row):
-    - Küme alanları (etki_turu, mudahale_turu, outcome_type) izinli değerlerden.
-    - hasta_sayisi ve comparator'daki n, kanıt satırında geçmediği için (başlıkta) 'kanitta_olmayan_sayi'
-      ile reddedilirdi; bu yüzden NULL / n'siz yazılır, n değerleri taslak_notu'nda (grup_n, comparator_n).
-    - mudahale_turu doğrulayıcıda zorunlu, ama yalnız ilaç satırlarında ("arka plan tedavisi") doldurulur.
-      Diğer satırlar (grup ortalaması / oran ölçümleri, Table 2) boş kalır: ekip kararı bekliyor, raporda listelenir.
+    - Küme alanları (etki_turu, mudahale_turu, outcome_type) src.clinical_validation kümelerinden.
+    - Grup n'leri hasta_sayisi'na yazılmaz (ekip kararı); taslak_notu'da (grup_n, comparator_n) kalır.
+    - mudahale_turu yalnız ilaç satırlarında ("arka plan tedavisi"); diğerleri boş. Aktarım yolu
+      (pilot_clinical.import_records) mudahale_turu'yu zorunlu tutmuyor.
     """
     base = {'document_id': document_id, 'kanit_sayfa': table['sayfa'], 'kanit_cumle': record['kanit_cumle'],
             'kanit_turu': 'tablo', 'review_status': 'pending', 'cikarma_yontemi': None, 'doz': None, 'yon': None}
@@ -379,7 +383,7 @@ def sql_preview(record, table, row, document_id=None):
     for group in row_groups(table, row):
         note = dict(note_base, sutun=group['sutun'], grup_n=group['n'], comparator_sutun=group['comparator_sutun'],
                     comparator_n=group['comparator_n'], p_sutun=group['p_sutun'], deger_bicimi=group['deger_bicimi'],
-                    hasta_sayisi_bos_nedeni='n sütun başlığında, kanıt satırında değil (kanitta_olmayan_sayi)')
+                    hasta_sayisi_bos_nedeni='Ekip kararı: grup n\'leri taslak_notu\'da (grup_n, comparator_n) kalır')
         if medication:
             note['not'] = 'Kullanım oranı n (%); doz değil.'
             mudahale_turu, mudahale_en, outcome, measure = MUDAHALE_ILAC, row['degisken'], OUTCOME_KULLANIM, 'kullanım oranı'
@@ -394,13 +398,21 @@ def sql_preview(record, table, row, document_id=None):
     return out
 
 
+def transfer_record(record, preview_row):
+    """import_records'a verilecek kayıt: pilot kaydının temel alanları + önizleme satırının dolu
+    yapılandırılmış alanları. review_status konmaz (onay sonra insan tarafından verilir)."""
+    item = {key: record[key] for key in TRANSFER_BASE_FIELDS if record.get(key) is not None}
+    item.update({key: preview_row[key] for key in STRUCTURED_FIELDS if preview_row.get(key) is not None})
+    return item
+
+
 # ---------------------------------------------------------------------------
 # Akış ve rapor
 # ---------------------------------------------------------------------------
 
 def enrich(records, pages, document_id=None):
     tables = parse_tables(pages)
-    enriched, preview, by_row = [], [], {}
+    enriched, preview, transfer, by_row = [], [], [], {}
     for record in records:
         if record.get('kanit_turu') != 'tablo':
             continue
@@ -409,7 +421,9 @@ def enrich(records, pages, document_id=None):
         if status == 'eslesti':
             item['tablo'] = table_info(table, row)
             by_row.setdefault((table['tablo_no'], row['satir_no']), []).append(record.get('v2_sira'))
-            preview.extend(sql_preview(record, table, row, document_id))
+            rows = sql_preview(record, table, row, document_id)
+            preview.extend(rows)
+            transfer.extend(transfer_record(record, p) for p in rows)
         elif status == 'belirsiz':
             item['adaylar'] = row
         enriched.append(item)
@@ -417,12 +431,12 @@ def enrich(records, pages, document_id=None):
                 'degisken': r['degisken'], 'ham': r['ham']}
                for t in tables for r in t['satirlar'] if (t['tablo_no'], r['satir_no']) not in by_row]
     duplicates = {f'Table {k[0]} satır {k[1]}': v for k, v in by_row.items() if len(v) > 1}
-    return {'tablolar': tables, 'kayitlar': enriched, 'sql_onizleme': preview,
+    return {'tablolar': tables, 'kayitlar': enriched, 'sql_onizleme': preview, 'aktarim': transfer,
             'pilot_kaydinda_yok': missing, 'ayni_satira_birden_fazla_kayit': duplicates}
 
 
 def mudahale_pending(preview):
-    """mudahale_turu boş önizleme satırları, tablo satırı başına gruplanmış (ekip kararı bekleyenler)."""
+    """mudahale_turu boş önizleme satırları, tablo satırı başına gruplanmış (bilgi amaçlı; aktarım için sorun değil)."""
     groups = {}
     for row in preview:
         if row['mudahale_turu']:
@@ -451,6 +465,7 @@ def summarize(result, source):
         'pilot_kaydinda_yok': len(result['pilot_kaydinda_yok']),
         'ayni_satira_birden_fazla_kayit': len(result['ayni_satira_birden_fazla_kayit']),
         'sql_onizleme_satiri': len(preview),
+        'aktarim_kaydi': len(result['aktarim']),
         'sql_mudahale_turu_bos': sum(not r['mudahale_turu'] for r in preview),
         'sql_mudahale_turu_bos_satirlar': mudahale_pending(preview),
         'sql_outcome_type_bos': sum(not r['outcome_type'] for r in preview),
@@ -474,8 +489,9 @@ def report_markdown(summary, result):
         f'| Pilot kaydında olmayan tablo satırı | {s["pilot_kaydinda_yok"]} |',
         f'| Aynı satıra birden fazla kayıt | {s["ayni_satira_birden_fazla_kayit"]} |',
         f'| SQL önizleme satırı | {s["sql_onizleme_satiri"]} |',
+        f'| import_records aktarım kaydı (`pilot_tablo_aktarim.json`, review_status yok) | {s["aktarim_kaydi"]} |',
         f'| …mudahale_turu dolu (yalnız ilaç: "arka plan tedavisi") | {s["sql_onizleme_satiri"] - s["sql_mudahale_turu_bos"]} |',
-        f'| …mudahale_turu boş (doğrulayıcı zorunlu tutuyor, ekip kararı bekliyor) | {s["sql_mudahale_turu_bos"]} |',
+        f'| …mudahale_turu boş (aktarım yolu zorunlu tutmuyor; sorun değil) | {s["sql_mudahale_turu_bos"]} |',
         f'| …outcome_type boş | {s["sql_outcome_type_bos"]} |', '',
     ]
     for t in result['tablolar']:
@@ -492,12 +508,11 @@ def report_markdown(summary, result):
         lines += ['', '## Aynı satıra birden fazla kayıt', '']
         lines += [f'- {k}: v2_sira {v}' for k, v in result['ayni_satira_birden_fazla_kayit'].items()]
     pending = s['sql_mudahale_turu_bos_satirlar']
-    lines += ['', '## mudahale_turu boş — doğrulayıcı zorunlu tutuyor, ekip kararı bekliyor', '',
-              f'`src.clinical_validation.validate_row` `mudahale_turu`\'yu zorunlu tutar (küme: tedavi / tanı testi / '
-              f'arka plan tedavisi); boş satırlar `deger_kumesi_disi` ile reddedilir. Bu modül yalnız ilaç satırlarını '
-              f'doldurur; aşağıdaki {len(pending)} tablo satırı ({s["sql_mudahale_turu_bos"]} SQL önizleme satırı) için '
-              f'ekip kararı gerekiyor. Grup ortalaması / oran ölçümleri tanı testi değerlendirmesi değildir, bu yüzden '
-              f'"tanı testi" atanmadı.', '',
+    lines += ['', '## mudahale_turu boş satırlar (bilgi amaçlı)', '',
+              f'Aktarım yolu `src.pilot_clinical.import_records` `mudahale_turu`\'yu zorunlu tutmuyor; eski '
+              f'`validate_row` yolu bu pilot için kullanılmıyor. Yalnız ilaç satırları "arka plan tedavisi"; aşağıdaki '
+              f'{len(pending)} tablo satırı ({s["sql_mudahale_turu_bos"]} SQL satırı) boş kalır ve bu sorun değildir. '
+              f'Grup ortalaması / oran ölçümleri tanı testi değerlendirmesi olmadığı için "tanı testi" atanmadı.', '',
               '| Tablo | Satır | Alt bölüm | Değişken | bilgi_turu (pilot) | v2_sira | SQL satırı |',
               '|---|---|---|---|---|---|---|']
     lines += [f'| {p["tablo_no"]} | {p["satir_no"]} | {p["alt_bolum"] or "—"} | {p["degisken"]} | {p["bilgi_turu"]} | '
@@ -513,15 +528,16 @@ def report_markdown(summary, result):
               'biçim `taslak_notu.deger_bicimi`. `outcome_type`="çalışma popülasyonu".',
               '- İlaç satırları (Medications): `mudahale_en`=ilaç, `mudahale_turu`="arka plan tedavisi", '
               '`outcome_type`="uygulama oranı", `sonuc_olcutu_tr`="kullanım oranı", `doz`=NULL (kullanım oranı, doz değil).',
-              '- İlaç dışı tüm satırlar (demografik, tanı, laboratuvar, eko, Table 2): `mudahale_turu` boş — '
-              'doğrulayıcı zorunlu tutuyor, ekip kararı bekliyor (yukarıdaki liste).',
+              '- İlaç dışı tüm satırlar (demografik, tanı, laboratuvar, eko, Table 2): `mudahale_turu` boş; '
+              'aktarım yolu zorunlu tutmuyor.',
               '- Etki tablosu (Table 2): analiz başına 1 satır; `etki_turu`="OR", `deger`=OR, `ci95`, `p` ayrı; '
               'analiz türü `taslak_notu.analiz`; `hasta_grubu` NULL. `outcome_type` boş: retrospektif prediktör analizi '
               'için "prognostik değer" uygunluğundan emin olunamadı.',
-              '- `hasta_sayisi` NULL ve `comparator` n\'siz: n (372/853) sütun başlığında, kanıt satırında değil; '
-              'validate_row bunu `kanitta_olmayan_sayi` ile reddederdi. n değerleri `taslak_notu.grup_n` / `comparator_n`.',
-              '- Not: `src/pilot_clinical.import_records` `bilgi_turu`, `baglam`, `klinik_bilgi`, `klinik_bilgi_en` sütunlarını '
-              'istiyor; bunlar `sql/schema_core.sql` ve `CORE_COLUMN_MIGRATIONS`\'ta yok (bu modül o fonksiyonu kullanmıyor).']
+              '- `hasta_sayisi` NULL ve `comparator` n\'siz (ekip kararı): n değerleri `taslak_notu.grup_n` / `comparator_n`.',
+              '- Aktarım (`pilot_tablo_aktarim.json`): önizleme satırı başına bir kayıt; pilot kaydının `bilgi_turu`, `baglam`, '
+              '`klinik_bilgi_en`, `kanit_cumle`, `sayfa`, `kanit_turu` alanları aynen + dolu yapılandırılmış alanlar '
+              '(`src.pilot_clinical.STRUCTURED_FIELDS`). `review_status` yok: manuel doğrulamadan sonra insan verir; '
+              '`import_records` yalnız `verified` kayıt yazar.']
     return '\n'.join(lines) + '\n'
 
 
@@ -544,17 +560,19 @@ def main():
     args = parser.parse_args()
     output = Path(args.output)
     report = output.with_name(output.stem.replace('_zengin', '') + '_raporu.md')
-    if not args.overwrite and (output.exists() or report.exists()):
-        raise FileExistsError(f'Mevcut çıktı var (--overwrite ile yazılır): {output} / {report}')
+    transfer = output.with_name(output.stem.replace('_zengin', '') + '_aktarim.json')
+    if not args.overwrite and (output.exists() or report.exists() or transfer.exists()):
+        raise FileExistsError(f'Mevcut çıktı var (--overwrite ile yazılır): {output} / {report} / {transfer}')
     result = run(args.pdf, args.findings)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     report.write_text(report_markdown(result['rapor'], result), encoding='utf-8')
+    transfer.write_text(json.dumps(result['aktarim'], ensure_ascii=False, indent=2), encoding='utf-8')
     s = result['rapor']
     print(f"Girdi: {s['girdi']} | Tablo: {s['tablo_sayisi']} ({s['tablo_veri_satiri']} satır) | "
           f"Tablo kaydı: {s['tablo_kaydi']} | Eşleşen: {s['eslesen']} | Eşleşmeyen: {s['eslesmeyen']} | "
           f"Belirsiz: {s['belirsiz']} | Pilot kaydında yok: {s['pilot_kaydinda_yok']} | "
-          f"SQL önizleme: {s['sql_onizleme_satiri']} satır (mudahale_turu boş: {s['sql_mudahale_turu_bos']})")
-    print(f'Çıktı: {output} | Rapor: {report} | SQL değişmedi')
+          f"SQL önizleme: {s['sql_onizleme_satiri']} satır | Aktarım kaydı: {s['aktarim_kaydi']}")
+    print(f'Çıktı: {output} | Rapor: {report} | Aktarım: {transfer} | SQL değişmedi')
 
 
 if __name__ == '__main__':
