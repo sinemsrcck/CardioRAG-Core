@@ -158,7 +158,13 @@ def generate_answer(question, context, sources):
         f"Kaynaklar:\n{context}\n\n"
         f"Soru: {question}\n\n"
         "Yalnızca kaynaklara dayanarak yanıtla. "
-        "Her önemli iddiayı kaynak numarasıyla belirt."
+        "Yanıtı Türkçe ve kısa yaz. "
+        "Kaynakta açıkça bulunmayan bilgileri üretme. "
+        "Her olgusal cümlenin ve her liste maddesinin sonuna "
+        "ilgili kaynak numarasını [1] biçiminde ekle. "
+        "Atıfsız giriş cümlesi, başlık veya sonuç paragrafı yazma. "
+        "Kaynaklar soruyu yanıtlamıyorsa bunu açıkça belirt; "
+        "eksik bilgileri tahmin etme."
     )
 
     client = None
@@ -246,6 +252,7 @@ def answer_question(
         question=question,
         enforce_keyword_overlap=False,
     )
+    candidate_evidence_check = evidence_check
     eligible_ids = [chunk.get("chunk_id") for chunk in evidence_check.get("chunks", [])]
     
     selected = select_diverse_sources(
@@ -259,8 +266,10 @@ def answer_question(
     if evidence_check["sufficient"]:
         # Yalnızca bağlam bütçesine sığan, gerçekten gönderilecek parçalar.
         source_ids = {source["chunk_id"] for source in sources}
+        by_source = {source["chunk_id"]: source for source in sources}
         context_chunks = [
-            chunk for chunk in selected if chunk.get("chunk_id") in source_ids
+            {**chunk, "text": by_source[chunk["chunk_id"]].get("source_text", "")}
+            for chunk in selected if chunk.get("chunk_id") in source_ids
         ]
         evidence_check = check_evidence(
             context_chunks,
@@ -274,6 +283,10 @@ def answer_question(
                 "reason": "no_usable_context",
                 "chunks": [],
             }
+        elif any(not isinstance(source.get("source_text"), str) or
+                 hashlib.sha256(source["source_text"].encode("utf-8")).hexdigest() != source.get("text_sha256")
+                 for source in sources):
+            evidence_check = {"sufficient": False, "reason": "source_integrity_failed", "chunks": []}
         elif use_llm and any(not source.get("processing_version") or
                 type(source.get("page_number")) is not int or source["page_number"] < 1 or
                 any(source.get(key) in (None, "", "?") for key in
@@ -358,9 +371,17 @@ def answer_question(
         "evidence_check": {
             "sufficient": evidence_check["sufficient"],
             "reason": evidence_check["reason"],
-            "scope": "demo_facets_v1_not_clinical_verification",
+            "scope": evidence_check.get("scope", "pre_generation_usability_not_clinical_verification"),
+            "semantic_verified": False, "clinical_verified": False,
+            "relevance_checks": evidence_check.get("relevance_checks", []),
         },
         "debug": {
+            "evidence_stages": {
+                stage: {key: check.get(key) for key in
+                        ("sufficient", "reason", "scope", "relevance_checks")}
+                for stage, check in (("candidates", candidate_evidence_check),
+                                     ("context", evidence_check))
+            },
             "query_normalization": {"retrieval_policy": query_policy(embedding_model),
                 "retrieval_queries": retrieval_queries(question, embedding_model),
                 "reranker_policy": query_policy(reranker_model),

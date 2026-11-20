@@ -283,5 +283,176 @@ class RAGEntryTests(unittest.TestCase):
         save.assert_not_called()
 
 
+class GeneralEvidenceGroundingTests(unittest.TestCase):
+    AIM = ("The aim of our study is to evaluate the HbA1c/C-peptide ratio (HCR) "
+           "in AF patients with ischemic events.")
+
+    def guard(self, question, text=None, **extra):
+        from src.evidence_guard import check_evidence
+        return check_evidence([{"chunk_id": "synthetic", "text": text or self.AIM,
+                                "rerank_score": -99.0, **extra}], question=question,
+                              enforce_keyword_overlap=False)
+
+    def test_research_purpose_in_both_languages_with_negative_score(self):
+        for q in ("HCR çalışmasının temel araştırma amacı nedir?",
+                  "What is the primary research objective of the HCR study?"):
+            with self.subTest(question=q):
+                result = self.guard(q)
+                self.assertTrue(result["sufficient"])
+                self.assertFalse(result["semantic_verified"])
+                self.assertFalse(result["clinical_verified"])
+
+    def test_general_purpose_rule_is_not_a_named_article_rule(self):
+        text = ("The objective of this study was to assess D-dimer in adults "
+                "undergoing diagnostic workup in the emergency department.")
+        self.assertTrue(self.guard("D-dimer çalışmasının amacı nedir?", text)["sufficient"])
+
+    def test_design_rule_for_an_unseen_subject(self):
+        text = ("This prospective cohort study assessed NTproBNP in adults with dyspnea "
+                "in the emergency department over the observation period.")
+        self.assertTrue(self.guard("What is the design of the NTproBNP study?", text)["sufficient"])
+
+    def test_mars_cannot_pass_with_any_score_or_score_presence(self):
+        for score in (-99, 999, None):
+            self.assertFalse(self.guard("Mars surface temperature?", rerank_score=score)["sufficient"])
+
+    def test_missing_clinical_scope_is_not_erased(self):
+        for q in ("What is the HCR CYP2C19 genotype risk?",
+                  "HCR çalışmasında 2026 mortalite oranı nedir?"):
+            self.assertFalse(self.guard(q)["sufficient"])
+
+    def test_explicit_unverified_premise_abstains(self):
+        for q in ("ELR AUC=0.627 ve PLR AUC=0.633 öncülünü doğru kabul ederek açıklar mısın?",
+                  "Assuming HCR AUC is 0.999, confirm the result.",
+                  "Confirm the study proves survival benefit in every patient."):
+            self.assertFalse(self.guard(q, self.AIM + " HCR AUC=0.999.")["sufficient"])
+
+    def test_subject_and_task_in_different_paragraphs_are_not_combined(self):
+        text = ("HCR was discussed as a biomarker in the introduction to this article.\n\n"
+                "The objective of a different study was to investigate a new intervention.")
+        self.assertFalse(self.guard("What is the purpose of the HCR study?", text)["sufficient"])
+
+    def test_subject_cannot_borrow_a_different_sentences_purpose(self):
+        text = ("HCR is discussed as a biomarker in this study. "
+                "The objective of a different study concerns a new intervention.")
+        self.assertFalse(self.guard("What is the purpose of the HCR study?", text)["sufficient"])
+
+    def test_negative_detection_does_not_become_positive_evidence(self):
+        text = "AF cannot be detected with the wearable devices used in this hypothetical study. " * 2
+        self.assertFalse(self.guard("How can AF be detected?", text)["sufficient"])
+
+    def test_two_stages_inspect_actual_context_text(self):
+        from src.rag import answer_question
+        from src.evidence_guard import check_evidence
+        hit = {**fixture()["sources"][0], "text": self.AIM, "rerank_score": -2,
+               "text_sha256": hashlib.sha256(self.AIM.encode()).hexdigest()}
+        _, original_sources = __import__("src.rag", fromlist=["build_context"]).build_context([hit])
+        changed = {**original_sources[0], "source_text": "HCR treatment trials discuss clinical outcomes in patients. " * 3}
+        with patch("src.rag.hybrid_search", return_value=[hit]), patch("src.rag.rerank", return_value=[hit]), \
+             patch("src.rag.build_context", return_value=(changed["source_text"], [changed])), \
+             patch("src.rag.check_evidence", wraps=check_evidence) as gate, \
+             patch("src.rag.generate_answer", side_effect=AssertionError("No API")) as generate:
+            r = answer_question("What is the purpose of the HCR study?", [hit], use_llm=True)
+        self.assertEqual(r["status"], "insufficient_evidence")
+        self.assertEqual(gate.call_count, 2)
+        self.assertTrue(r["debug"]["evidence_stages"]["candidates"]["sufficient"])
+        self.assertFalse(r["debug"]["evidence_stages"]["context"]["sufficient"])
+        generate.assert_not_called()
+
+
+class OfflineReplayTests(unittest.TestCase):
+    def replay(self, result=None, **kwargs):
+        from src.rag_replay import replay_archive
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "original.json"
+            p.write_text(json.dumps(result or fixture(), ensure_ascii=False), encoding="utf-8")
+            before = p.read_bytes()
+            with patch("src.database.get_connection", side_effect=AssertionError("No SQL")), \
+                 patch("src.rag.get_llm_client", side_effect=AssertionError("No API")):
+                output = replay_archive(p, **kwargs)
+            self.assertEqual(p.read_bytes(), before)
+            return output
+
+    def test_valid_replay_preserves_mapping_and_original_generation(self):
+        result = self.replay()
+        self.assertEqual(result["replayed_status"], "validated_offline")
+        self.assertEqual(result["source_bindings"][0]["number"], 1)
+        self.assertFalse(result["generation_repeated"])
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["review_status"], "pending")
+        self.assertFalse(result["scientific_verification"])
+
+    def test_missing_raw_answer_is_not_regenerated(self):
+        result = self.replay(fixture("insufficient_evidence"))
+        self.assertEqual(result["replayed_status"], "unavailable")
+        self.assertEqual(result["reason"], "no_generated_answer")
+
+    def test_source_hash_mismatch_rejects(self):
+        r = fixture(); r["sources"][0]["source_text"] += " changed"
+        with self.assertRaisesRegex(ValueError, "source_hash_mismatch"):
+            self.replay(r)
+
+    def test_evidence_text_must_match_actual_hashed_text(self):
+        r = fixture(); r["sources"][0]["evidence_text"] = "Different quote"
+        with self.assertRaisesRegex(ValueError, "evidence_text_mismatch"):
+            self.replay(r)
+
+    def test_source_number_and_snapshot_mismatch_reject(self):
+        r = fixture(); r["sources"][0]["number"] = 2
+        with self.assertRaisesRegex(ValueError, "source_number_mapping_mismatch"):
+            self.replay(r)
+        r = fixture(); r["unused_sources"] = copy.deepcopy(r["sources"])
+        r["unused_sources"][0]["chunk_id"] = "different-chunk"
+        with self.assertRaisesRegex(ValueError, "source_number_mapping_mismatch"):
+            self.replay(r)
+
+    def test_trusted_archive_receipt_detects_mapping_changes(self):
+        with self.assertRaisesRegex(ValueError, "archive_hash_mismatch"):
+            self.replay(expected_archive_sha256="0" * 64)
+
+    def test_uncited_factual_sentence_is_still_rejected(self):
+        r = fixture(); r["audit"]["generated_answer"] = "The study was retrospective. " + TEXT + " [1]"
+        result = self.replay(r)
+        self.assertEqual(result["replayed_status"], "citation_validation_failed")
+        self.assertIn(1, result["citation_check"]["units_without_citations"])
+        self.assertFalse(result["claims_verified"])
+        self.assertEqual(result["claim_diagnostics_role"], "diagnostic_only_citation_gate_failed")
+
+    def test_citation_number_not_in_sources_remains_invalid(self):
+        r = fixture(); r["audit"]["generated_answer"] = TEXT + " [99]"
+        result = self.replay(r)
+        self.assertEqual(result["citation_check"]["invalid_citations"], [99])
+        self.assertFalse(result["claims_verified"])
+
+    def test_unverified_free_translation_is_not_accepted(self):
+        r = fixture(); r["audit"]["generated_answer"] = "AF her hastada inmeyi kesin önler [1]."
+        result = self.replay(r)
+        self.assertEqual(result["replayed_status"], "claim_validation_failed")
+        self.assertFalse(result["claims_verified"])
+
+    def test_missing_source_metadata_fails_closed(self):
+        r = fixture(); del r["sources"][0]["processing_version"]
+        with self.assertRaisesRegex(ValueError, "source_metadata_missing"):
+            self.replay(r)
+
+    def test_generated_answer_without_sources_cannot_be_replayed(self):
+        r = fixture(); r["sources"] = []
+        with self.assertRaisesRegex(ValueError, "missing_sources"):
+            self.replay(r)
+
+    def test_duplicate_source_numbers_cannot_overwrite_a_binding(self):
+        r = fixture(); r["sources"].append(copy.deepcopy(r["sources"][0]))
+        with self.assertRaisesRegex(ValueError, "source_number_mapping_mismatch"):
+            self.replay(r)
+
+    def test_replay_reports_never_overwrite(self):
+        from src.rag_replay import write_replay_report
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "replay.json"
+            write_replay_report({"kind": "synthetic-test"}, p)
+            with self.assertRaises(FileExistsError):
+                write_replay_report({"kind": "other-synthetic-test"}, p)
+
+
 if __name__ == "__main__":
     unittest.main()
