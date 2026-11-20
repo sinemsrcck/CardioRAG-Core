@@ -271,7 +271,8 @@ def test_database(tmp):
         conn.close()
     names = {name for name, _ in objects}
     check("sunum nesneleri kurulu", True, {"cikarim_reddedilenler", "hata_onlem", "v_cardiorag_bulgular",
-                                           "v_bulgu_kaynak", "v_halusinasyon_onlemleri", "kaynak_bul"} <= names)
+                                           "v_bulgu_kaynak", "v_halusinasyon_onlemleri", "kaynak_bul",
+                                           "v_rag_sorgular", "v_rag_kaynaklar", "v_rag_iddialar"} <= names)
     check("hata_onlem eşleme sayısı", len(ONLEM_ESLEME), mappings)
     before = db_counts()
 
@@ -462,11 +463,232 @@ def test_database(tmp):
     check("sonda: bütün tablolar başlangıçtakiyle aynı", before, db_counts())
 
 
+# ---------------------------------------------------------------------------
+# RAG sunum VIEW'ları (v_rag_sorgular, v_rag_kaynaklar, v_rag_iddialar)
+# ---------------------------------------------------------------------------
+
+RAG_TABLES = ("rag_sorgulari", "rag_sorgu_kaynaklari", "halusinasyon_degerlendirme")
+RAG_VIEWS = ("v_rag_sorgular", "v_rag_kaynaklar", "v_rag_iddialar")
+ABSTENTION = "Bu soruyu yanıtlamak için yeterli kullanılabilir kanıt bulunamadı."
+
+
+def rag_counts():
+    from src.database import get_connection
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        out = {}
+        for table in RAG_TABLES:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            out[table] = cursor.fetchone()[0]
+        conn.rollback()
+        return out
+    finally:
+        conn.close()
+
+
+def rag_view_rows(cursor, view, query_id, order="1"):
+    cursor.execute(f"SELECT * FROM {view} WHERE query_id = %s ORDER BY {order}", (query_id,))
+    names = [d[0] for d in cursor.description]
+    decode = lambda v: bytes(v).decode() if isinstance(v, (bytes, bytearray)) else v  # noqa: E731
+    return [{n: decode(v) for n, v in zip(names, row)} for row in cursor.fetchall()]
+
+
+def _sha(text):
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def rag_fixture_chunks(cursor, count=3):
+    """Gerçek, aktif chunk'lar (FK + metin/hash doğrulaması sahte chunk'la geçmez).
+
+    URL / 'sk-' içeren metinler atlanır: public_rag_payload bunları maskeler ve hash bozulur.
+    """
+    cursor.execute("""
+        SELECT c.chunk_id, c.document_id, c.page_number, c.processing_version, c.text, c.text_sha256, b.filename
+        FROM pdf_chunks AS c JOIN pdf_belgeleri AS b ON b.document_id = c.document_id
+        WHERE b.durum = 'tamamlandi' AND c.processing_version = b.processing_version
+          AND CHAR_LENGTH(c.text) > 300 AND c.text NOT LIKE '%%http%%' AND c.text NOT LIKE '%%://%%'
+          AND c.text NOT LIKE '%%sk-%%'
+        ORDER BY c.document_id, c.page_number, c.chunk_id""")
+    rows, seen = [], set()
+    for chunk_id, doc, page, version, text, digest, filename in cursor.fetchall():
+        decode = lambda v: bytes(v).decode() if isinstance(v, (bytes, bytearray)) else v  # noqa: E731
+        chunk_id, doc, version, text, digest, filename = map(decode, (chunk_id, doc, version, text, digest, filename))
+        if doc in seen or _sha(text) != digest:
+            continue
+        seen.add(doc)
+        rows.append(dict(chunk_id=chunk_id, document_id=doc, page_number=page, processing_version=version,
+                         source_text=text, text_sha256=digest, filename=filename))
+        if len(rows) == count:
+            break
+    return rows
+
+
+def rag_result(status, chunks, used, claims, *, question):
+    """rag_persistence.save_rag_bundle için sentetik (mock_test) sonuç; kaynaklar gerçek chunk."""
+    import uuid
+
+    sources = [{**chunks[i], "number": n} for n, i in enumerate(used, 1)]
+    generated = " ".join(f"{c['claim_text']} [{c.get('citations', [1])[0]}]." for c in claims) or None
+    llm = status in ("generated", "claim_validation_failed", "citation_validation_failed")
+    return dict(
+        query_id=str(uuid.uuid4()), question=question, status=status,
+        answer=generated if status == "generated" else (ABSTENTION if status == "insufficient_evidence" else None),
+        audit={"generated_answer": generated if llm else None, "scope": "restricted_audit_not_user_answer"},
+        sources=sources,
+        citation_check={"valid": True, "used_citations": list(range(1, len(sources) + 1))} if llm else None,
+        claim_verification={"scope": "mock source-grounded fixture, not expert approval", "claims": claims},
+        claims_verified=status == "generated", response_time_seconds=0.25,
+        retrieved_count=len(chunks), embedding_model="minilm", reranker_model="minilm",
+        rerank_method="cross_encoder", llm_enabled=llm, llm_model="mock-test-model" if llm else None,
+        evidence_check={"sufficient": status != "insufficient_evidence", "reason": "mock_test"},
+        top_rerank_score=1.5 if status != "insufficient_evidence" else -2.0,
+        debug={"retrieved_hits": [{"chunk_id": c["chunk_id"], "rrf_score": 0.03 - i / 1000}
+                                  for i, c in enumerate(chunks)],
+               "reranked_hits": [{"chunk_id": c["chunk_id"], "rerank_score": 1.5 - i}
+                                 for i, c in enumerate(chunks)]},
+        run_provenance={"kind": "mock_test", "real_llm": False})
+
+
+def rag_claim(index, text, status, chunk=None, citation=1):
+    claim = dict(claim_index=index, claim_text=text, claim_text_sha256=_sha(text), citations=[citation],
+                 status=status, reasons=[] if status == "supported" else ["mock_test_reason"], matches=[])
+    if chunk is not None:
+        claim["matches"] = [dict(chunk_id=chunk["chunk_id"], evidence_quote=text)]
+    return claim
+
+
+def test_rag_views():
+    from src.database import get_connection
+    from src.rag_persistence import save_rag_bundle
+    from src.sunum import ensure_schema, installed_objects
+
+    conn = get_connection()
+    try:
+        names = {name for name, _ in installed_objects(conn)[0]}
+        if not set(RAG_VIEWS) <= names:
+            ensure_schema(conn)  # DDL: transaction dışında, tekrar çalıştırılabilir
+            names = {name for name, _ in installed_objects(conn)[0]}
+        check("RAG VIEW'ları kurulu", True, set(RAG_VIEWS) <= names)
+        cursor = conn.cursor()
+        queryable = []
+        for view in RAG_VIEWS:
+            cursor.execute(f"SELECT COUNT(*) FROM {view}")
+            queryable.append(cursor.fetchone()[0] >= 0)
+        check("RAG VIEW'ları sorgulanabilir", [True] * 3, queryable)
+        conn.rollback()
+        cursor.close()
+    finally:
+        conn.close()
+
+    before = rag_counts()
+    conn = get_connection()
+    conn.autocommit = False
+    try:
+        conn.start_transaction()
+        cursor = conn.cursor()
+        chunks = rag_fixture_chunks(cursor)
+        check("RAG fixture: 3 gerçek aktif chunk", 3, len(chunks))
+        if len(chunks) < 3:
+            return
+        q1, q2 = chunks[0]["source_text"][:120].strip(), chunks[1]["source_text"][:120].strip()
+        generated = rag_result("generated", chunks, [0, 1],
+                               [rag_claim(1, q1, "supported", chunks[0], 1), rag_claim(2, q2, "supported", chunks[1], 2)],
+                               question="Sentetik test sorusu (generated)")
+        failed = rag_result("claim_validation_failed", chunks[:2], [0],
+                            [rag_claim(1, q1, "supported", chunks[0]),
+                             rag_claim(2, "Sentetik kısmen desteklenen iddia", "partially_supported"),
+                             rag_claim(3, "Sentetik desteklenmeyen iddia", "not_supported"),
+                             rag_claim(4, "Sentetik belirsiz iddia", "uncertain")],
+                            question="Sentetik test sorusu (claim_validation_failed)")
+        insufficient = rag_result("insufficient_evidence", chunks[:2], [], [],
+                                  question="Sentetik test sorusu (insufficient_evidence)")
+        saved = [save_rag_bundle(generated, question_type="cevaplanabilir", connection=conn, allow_test_data=True),
+                 save_rag_bundle(failed, question_type="cevaplanabilir", connection=conn, allow_test_data=True),
+                 save_rag_bundle(insufficient, question_type="cevaplanamaz", connection=conn, allow_test_data=True)]
+        check("save_rag_bundle: 3 örnek yazıldı (commit yok)", ["pending_caller_commit"] * 3,
+              [s["status"] for s in saved])
+
+        def page(chunk):
+            return f"{chunk['filename']} s.{chunk['page_number']}"
+
+        # v_rag_sorgular: soru başına tek satır, toplamalar çoğalmadan
+        per_query = {q["query_id"]: rag_view_rows(cursor, "v_rag_sorgular", q["query_id"])
+                     for q in (generated, failed, insufficient)}
+        rows = {qid: found[0] for qid, found in per_query.items() if found}
+        counts = [len(per_query[q["query_id"]]) for q in (generated, failed, insufficient)]
+        check("v_rag_sorgular: soru başına 1 satır (iddia satırları çoğaltmaz)", [1, 1, 1], counts)
+        keys = ("soru_tipi", "durum", "bulunan_kaynak", "kullanilan_kaynak", "kullanilan_kaynaklar", "citation_correct",
+                "iddia_sayisi", "iddia_supported", "iddia_partially_supported", "iddia_not_supported", "iddia_belirsiz",
+                "hata_turu", "uygulanan_onlem", "duzeldi_mi", "degerlendirme_satiri", "klinik_bulgu_sayisi",
+                "klinik_cikarim_red_sayisi")
+
+        def view(qid):
+            from decimal import Decimal
+            row = rows.get(qid) or {}
+            return tuple(int(row[k]) if isinstance(row.get(k), (int, Decimal)) else row.get(k) for k in keys)
+
+        check("v_rag_sorgular: generated",
+              ("cevaplanabilir", "generated", 3, 2, f"{page(chunks[0])}; {page(chunks[1])}", "1",
+               2, 2, 0, 0, 0, None, None, None, 2, 0, 0), view(generated["query_id"]))
+        check("v_rag_sorgular: claim_validation_failed (iddia sayıları)",
+              ("cevaplanabilir", "claim_validation_failed", 2, 1, page(chunks[0]), "1",
+               4, 1, 1, 1, 1, "claim_not_supported, claim_partially_supported, claim_uncertain", None, None, 4, 0, 0),
+              view(failed["query_id"]))
+        check("v_rag_sorgular: insufficient_evidence",
+              ("cevaplanamaz", "insufficient_evidence", 2, 0, None, None,
+               0, 0, 0, 0, 0, "insufficient_evidence", None, None, 1, 0, 0), view(insufficient["query_id"]))
+        check("v_rag_sorgular: cevap yalnız generated/ret metninde dolu, reddedilen cevap gösterilmez",
+              (generated["answer"], None, ABSTENTION),
+              tuple(rows.get(q["query_id"], {}).get("cevap") for q in (generated, failed, insufficient)))
+        check("v_rag_sorgular: durum_aciklama ayrı sütun",
+              ("Cevap üretildi; atıf ve iddia kontrollerinden geçti",
+               "İddia kontrolünden geçmedi ya da kontrol hata verdi; cevap gösterilmedi",
+               "Yeterli kanıt bulunamadı; cevap verilmedi"),
+              tuple(rows.get(q["query_id"], {}).get("durum_aciklama") for q in (generated, failed, insufficient)))
+        check("v_rag_sorgular: kanıt / model sütunları tablodan",
+              (("sufficient", "mock-test-model"), ("insufficient", None)),
+              tuple((rows.get(q["query_id"], {}).get("evidence_status"), rows.get(q["query_id"], {}).get("llm_model"))
+                    for q in (generated, insufficient)))
+
+        # v_rag_kaynaklar: source_rank sırası, kullanılan işaretleri, dosya/sayfa, metin başlangıcı
+        sources = rag_view_rows(cursor, "v_rag_kaynaklar", generated["query_id"], "source_rank")
+        check("v_rag_kaynaklar: generated 3 kaynak, sıra ve bağlam işareti",
+              [(1, 1), (2, 1), (3, 0)], [(r["source_rank"], int(r["used_in_context"])) for r in sources])
+        check("v_rag_kaynaklar: dosya / sayfa / chunk_baslangic",
+              [(c["filename"], c["page_number"], c["source_text"][:200]) for c in chunks],
+              [(r["dosya"], r["sayfa"], r["chunk_baslangic"]) for r in sources])
+        check("v_rag_kaynaklar: insufficient_evidence 2 kaynak, hiçbiri bağlamda", [0, 0],
+              [int(r["used_in_context"]) for r in rag_view_rows(cursor, "v_rag_kaynaklar", insufficient["query_id"],
+                                                                "source_rank")])
+
+        # v_rag_iddialar: iddia başına satır; olay satırı (insufficient_evidence) iddia değildir
+        claims = rag_view_rows(cursor, "v_rag_iddialar", failed["query_id"], "iddia_no")
+        check("v_rag_iddialar: claim_validation_failed 4 iddia",
+              [(1, "supported", chunks[0]["filename"], chunks[0]["page_number"]),
+               (2, "partially_supported", None, None), (3, "not_supported", None, None), (4, None, None, None)],
+              [(r["iddia_no"], r["claim_supported"], r["destekleyen_dosya"], r["destekleyen_sayfa"]) for r in claims])
+        check("v_rag_iddialar: claim_text ve hata_turu tablodaki gibi",
+              [(q1, None), ("Sentetik kısmen desteklenen iddia", "claim_partially_supported"),
+               ("Sentetik desteklenmeyen iddia", "claim_not_supported"), ("Sentetik belirsiz iddia", "claim_uncertain")],
+              [(r["claim_text"], r["hata_turu"]) for r in claims])
+        check("v_rag_iddialar: satır sayıları (generated, failed, insufficient)", [2, 4, 0],
+              [len(rag_view_rows(cursor, "v_rag_iddialar", q["query_id"])) for q in (generated, failed, insufficient)])
+        cursor.close()
+    finally:
+        conn.rollback()
+        conn.close()
+    check("RAG VIEW testi: ROLLBACK sonrası tablolar başlangıçla aynı", before, rag_counts())
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         test_offline(Path(tmp))
     with tempfile.TemporaryDirectory() as tmp:
         test_database(tmp)
+    test_rag_views()
     width = max(len(r[0]) for r in results)
     print(f"\n{'Kontrol':<{width}}  {'Beklenen':<26}  {'Bulunan':<40}  Sonuç")
     print("-" * (width + 80))
