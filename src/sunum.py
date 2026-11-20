@@ -5,7 +5,8 @@ Sunum görünümleri, reddedilen çıkarımlar ve kaynak izleme.
 
 Kurar: kalite tabloları (data_quality.ensure_schema), cikarim_reddedilenler,
 hata_onlem (+ ONLEM_ESLEME içeriği), v_bulgu_notu, v_cardiorag_bulgular,
-v_bulgu_kaynak, v_halusinasyon_onlemleri ve kaynak_bul(arama) procedure'ü.
+v_bulgu_kaynak, v_halusinasyon_onlemleri, RAG için v_rag_sorgular / v_rag_kaynaklar /
+v_rag_iddialar (salt okunur) ve kaynak_bul(arama) procedure'ü.
 klinik_bulgular'ın yapısına, v_tani_tedavi / v_sonuclar'a ve
 halusinasyon_degerlendirme'ye dokunmaz. DDL örtük COMMIT yapar: açık bir
 transaction içinde çağırmayın.
@@ -145,7 +146,8 @@ def installed_objects(conn):
         cursor.execute("SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
                        "AND TABLE_NAME IN ('cikarim_reddedilenler', 'hata_onlem', 'kalite_isaretleri', "
                        "'kalite_calistirmalari', 'v_bulgu_notu', 'v_cardiorag_bulgular', 'v_bulgu_kaynak', "
-                       "'v_halusinasyon_onlemleri', 'v_kalite_ozet', 'v_kalite_bulgu') ORDER BY TABLE_TYPE, TABLE_NAME")
+                       "'v_halusinasyon_onlemleri', 'v_kalite_ozet', 'v_kalite_bulgu', "
+                       "'v_rag_sorgular', 'v_rag_kaynaklar', 'v_rag_iddialar') ORDER BY TABLE_TYPE, TABLE_NAME")
         objects = [(name, "VIEW" if kind == "VIEW" else "TABLO") for name, kind in cursor.fetchall()]
         cursor.execute("SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE() "
                        "AND ROUTINE_TYPE = 'PROCEDURE' AND ROUTINE_NAME = 'kaynak_bul'")

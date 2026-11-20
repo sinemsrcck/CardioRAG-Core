@@ -451,7 +451,7 @@ python -m src.evaluate_extraction --degerlendir --mock                 # sahte L
 python -m src.sunum --kur
 ```
 
-Kurar: `cikarim_reddedilenler`, `hata_onlem` (hata türü → halüsinasyon türü → önlem eşlemesi, `onlem-v2`), kalite tabloları, `v_bulgu_notu`, `v_cardiorag_bulgular`, `v_bulgu_kaynak`, `v_halusinasyon_onlemleri` VIEW'ları ve `kaynak_bul(arama)` procedure'ü. `klinik_bulgular`'ın yapısına, `v_tani_tedavi` / `v_sonuclar`'a ve `halusinasyon_degerlendirme`'ye dokunmaz. Tablolar model koşusu (`python -m src.run_clinical_batch` veya `--from-cache`) ve kalite koşusundan (`python -m src.data_quality`) sonra dolar. Bütün satırlar `review_status = 'pending'`; İngilizce sonuçlar çevrilmemiştir (`sonuc_kaynagi` sütunu belirtir).
+Kurar: `cikarim_reddedilenler`, `hata_onlem` (hata türü → halüsinasyon türü → önlem eşlemesi, `onlem-v2`), kalite tabloları, `v_bulgu_notu`, `v_cardiorag_bulgular`, `v_bulgu_kaynak`, `v_halusinasyon_onlemleri`, RAG için `v_rag_sorgular`, `v_rag_kaynaklar`, `v_rag_iddialar` VIEW'ları ve `kaynak_bul(arama)` procedure'ü. `klinik_bulgular`'ın yapısına, `v_tani_tedavi` / `v_sonuclar`'a ve `halusinasyon_degerlendirme`'ye dokunmaz. Tablolar model koşusu (`python -m src.run_clinical_batch` veya `--from-cache`) ve kalite koşusundan (`python -m src.data_quality`) sonra dolar. Bütün satırlar `review_status = 'pending'`; İngilizce sonuçlar çevrilmemiştir (`sonuc_kaynagi` sütunu belirtir).
 
 MySQL Workbench'te:
 
@@ -493,7 +493,34 @@ SELECT * FROM v_bulgu_kaynak WHERE bulgu_id = 1;
 SELECT * FROM v_kalite_bulgu ORDER BY hata_sayisi DESC, uyari_sayisi DESC;
 SELECT kategori, seviye, kontrol_kodu, COUNT(*) AS sayi FROM v_kalite_ozet
 GROUP BY kategori, seviye, kontrol_kodu ORDER BY sayi DESC;
+
+-- 8) RAG soru-cevap: her soru tek satır (durum, cevap, kanıt, kaynaklar, iddia sayıları)
+SELECT query_id, soru, soru_tipi, durum, durum_aciklama, cevap, evidence_status, guard_reason, llm_model,
+       bulunan_kaynak, kullanilan_kaynak, kullanilan_kaynaklar, citation_correct,
+       iddia_sayisi, iddia_supported, iddia_partially_supported, iddia_not_supported, iddia_belirsiz,
+       hata_turu, uygulanan_onlem, duzeldi_mi, created_at
+FROM v_rag_sorgular ORDER BY created_at DESC;
+
+-- Durum dağılımı
+SELECT durum, durum_aciklama, COUNT(*) AS soru_sayisi FROM v_rag_sorgular GROUP BY durum, durum_aciklama;
+
+-- Bir sorunun kaynakları (bulunan bütün adaylar; used_in_context = 1 olanlar LLM bağlamına girdi)
+SELECT source_rank, used_in_context, retrieval_score, rerank_score, dosya, sayfa, chunk_baslangic
+FROM v_rag_kaynaklar WHERE query_id = '...' ORDER BY source_rank;
+
+-- İddialar ve destekleyen kaynak; desteklenmeyen / belirsiz olanlar
+SELECT query_id, soru, iddia_no, claim_text, claim_supported, citation_correct, destekleyen_dosya, destekleyen_sayfa, hata_turu
+FROM v_rag_iddialar WHERE claim_supported IS NULL OR claim_supported <> 'supported' ORDER BY query_id, iddia_no;
 ```
+
+RAG VIEW'ları salt okunurdur; değerleri tablolarda (`rag_sorgulari`, `rag_sorgu_kaynaklari`, `halusinasyon_degerlendirme`) nasılsa öyle gösterir, yorum katmaz. `halusinasyon_degerlendirme`'den yalnız `kayit_turu = 'soru_cevap'` satırları okunur.
+
+- **`v_rag_sorgular`** soru başına tek satırdır; kaynak ve iddia sayıları alt sorgularla toplanır. `durum` = `ham_cikti.$.generation_status`. `durum_aciklama` ayrı bir Türkçe açıklama sütunudur: generated → "Cevap üretildi; atıf ve iddia kontrollerinden geçti", citation_validation_failed → "Atıf kontrolünden geçmediği için cevap gösterilmedi", claim_validation_failed → "İddia kontrolünden geçmedi ya da kontrol hata verdi; cevap gösterilmedi", insufficient_evidence → "Yeterli kanıt bulunamadı; cevap verilmedi", retrieval_only → "Yalnız kaynak araması yapıldı; LLM çağrılmadı", generation_failed → "LLM cevabı üretilemedi".
+- **`cevap` reddedilen cevapta boştur** (NULL); modelin ürettiği ama reddedilen metin yalnız `halusinasyon_degerlendirme.ham_cikti` içinde (`audit.generated_answer`) durur, VIEW'da gösterilmez.
+- Bir soruda birden fazla değerlendirme satırı varsa `citation_correct`, `hata_turu`, `uygulanan_onlem`, `duzeldi_mi` farklı değerleri virgülle yan yana gösterir; hepsi boşsa boştur. `hata_turu`'ndaki `insufficient_evidence` / `retrieval_only_not_evaluated` hata değil, olay kaydıdır.
+- `iddia_*` sayıları iddia satırlarından (`ham_cikti.$.evaluation.claim_index` ya da `claim_text` dolu) sayılır; `iddia_belirsiz` = `claim_supported` boş olan iddia.
+- **RAG dışı kullanım:** `sql_integration` ile kaydedilen bir soruya klinik çıkarım bağlanabilir. Bu sorular da listelenir; `klinik_bulgu_sayisi` ve `klinik_cikarim_red_sayisi` sütunları bunu gösterir. Değerlendirme satırı olmayan soruda (`degerlendirme_satiri = 0`) `durum` boştur.
+- `retrieval_score` RRF birleşik sıralama puanıdır (kosinüs benzerliği değil); sıra `source_rank`'tir (reranker sırası).
 
 `kaynak_bul` arama metnini yalnızca değer olarak kullanır (dinamik SQL yok); `%`, `_` ve `\` joker değil, düz karakterdir.
 

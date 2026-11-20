@@ -122,3 +122,131 @@ FROM (
 ) AS g
 JOIN cikarim_reddedilenler AS e ON e.satir_hash = g.ornek_hash
 LEFT JOIN hata_onlem AS o ON o.hata_turu = COALESCE(NULLIF(g.alt_tur, ''), g.hata_turu);
+
+
+-- ---------------------------------------------------------------------------
+-- RAG soru-cevap sunumu (salt okunur). Tablolar Sinem'in yazıcılarından gelir
+-- (rag_persistence.save_rag_bundle / sql_integration); burada yalnız okunur.
+-- Değerler tabloda nasılsa öyle gösterilir; bir soruda birden fazla değerlendirme
+-- satırı varsa farklı değerler GROUP_CONCAT(DISTINCT) ile yan yana yazılır.
+-- halusinasyon_degerlendirme'den yalnız kayit_turu = 'soru_cevap' alınır.
+-- ---------------------------------------------------------------------------
+
+-- Soru başına bir satır. Toplamalar alt sorgularda (satır çoğalmaz).
+-- durum = ham_cikti.$.generation_status; durum_aciklama ayrı, Türkçe açıklama sütunudur.
+-- klinik_bulgu_sayisi / klinik_cikarim_red_sayisi: soruya bağlanmış klinik çıkarım (RAG dışı kullanım).
+CREATE OR REPLACE VIEW v_rag_sorgular AS
+SELECT
+    q.query_id,
+    q.question AS soru,
+    h.soru_tipi,
+    h.durum,
+    CASE h.durum
+        WHEN 'generated' THEN 'Cevap üretildi; atıf ve iddia kontrollerinden geçti'
+        WHEN 'citation_validation_failed' THEN 'Atıf kontrolünden geçmediği için cevap gösterilmedi'
+        WHEN 'claim_validation_failed' THEN 'İddia kontrolünden geçmedi ya da kontrol hata verdi; cevap gösterilmedi'
+        WHEN 'insufficient_evidence' THEN 'Yeterli kanıt bulunamadı; cevap verilmedi'
+        WHEN 'retrieval_only' THEN 'Yalnız kaynak araması yapıldı; LLM çağrılmadı'
+        WHEN 'generation_failed' THEN 'LLM cevabı üretilemedi'
+    END AS durum_aciklama,
+    q.answer AS cevap,
+    q.evidence_status, q.evidence_score, q.guard_reason, q.llm_model, q.created_at,
+    COALESCE(k.bulunan_kaynak, 0) AS bulunan_kaynak,
+    COALESCE(k.kullanilan_kaynak, 0) AS kullanilan_kaynak,
+    k.kullanilan_kaynaklar,
+    h.citation_correct,
+    COALESCE(h.iddia_sayisi, 0) AS iddia_sayisi,
+    COALESCE(h.iddia_supported, 0) AS iddia_supported,
+    COALESCE(h.iddia_partially_supported, 0) AS iddia_partially_supported,
+    COALESCE(h.iddia_not_supported, 0) AS iddia_not_supported,
+    COALESCE(h.iddia_belirsiz, 0) AS iddia_belirsiz,
+    h.hata_turu, h.uygulanan_onlem, h.duzeldi_mi,
+    COALESCE(h.degerlendirme_satiri, 0) AS degerlendirme_satiri,
+    COALESCE(kb.klinik_bulgu_sayisi, 0) AS klinik_bulgu_sayisi,
+    COALESCE(kc.klinik_cikarim_red_sayisi, 0) AS klinik_cikarim_red_sayisi
+FROM rag_sorgulari AS q
+LEFT JOIN (
+    SELECT
+        s.query_id,
+        COUNT(*) AS bulunan_kaynak,
+        SUM(s.used_in_context) AS kullanilan_kaynak,
+        GROUP_CONCAT(CASE WHEN s.used_in_context THEN CONCAT(b.filename, ' s.', c.page_number) END
+                     ORDER BY s.source_rank SEPARATOR '; ') AS kullanilan_kaynaklar
+    FROM rag_sorgu_kaynaklari AS s
+    LEFT JOIN pdf_chunks AS c ON c.chunk_id = s.chunk_id
+    LEFT JOIN pdf_belgeleri AS b ON b.document_id = c.document_id
+    GROUP BY s.query_id
+) AS k ON k.query_id = q.query_id
+LEFT JOIN (
+    SELECT
+        d.query_id,
+        COUNT(*) AS degerlendirme_satiri,
+        GROUP_CONCAT(DISTINCT d.soru_tipi ORDER BY d.soru_tipi SEPARATOR ', ') AS soru_tipi,
+        GROUP_CONCAT(DISTINCT d.durum ORDER BY d.durum SEPARATOR ', ') AS durum,
+        GROUP_CONCAT(DISTINCT d.citation_correct ORDER BY d.citation_correct SEPARATOR ', ') AS citation_correct,
+        SUM(d.iddia) AS iddia_sayisi,
+        SUM(d.iddia = 1 AND d.claim_supported = 'supported') AS iddia_supported,
+        SUM(d.iddia = 1 AND d.claim_supported = 'partially_supported') AS iddia_partially_supported,
+        SUM(d.iddia = 1 AND d.claim_supported = 'not_supported') AS iddia_not_supported,
+        SUM(d.iddia = 1 AND d.claim_supported IS NULL) AS iddia_belirsiz,
+        GROUP_CONCAT(DISTINCT d.hata_turu ORDER BY d.hata_turu SEPARATOR ', ') AS hata_turu,
+        GROUP_CONCAT(DISTINCT d.uygulanan_onlem ORDER BY d.uygulanan_onlem SEPARATOR ', ') AS uygulanan_onlem,
+        GROUP_CONCAT(DISTINCT d.duzeldi_mi ORDER BY d.duzeldi_mi SEPARATOR ', ') AS duzeldi_mi
+    FROM (
+        SELECT
+            x.query_id, x.soru_tipi, x.citation_correct, x.claim_supported,
+            x.hata_turu, x.uygulanan_onlem, x.duzeldi_mi,
+            CASE WHEN JSON_VALID(x.ham_cikti) THEN
+                CASE WHEN JSON_TYPE(JSON_EXTRACT(x.ham_cikti, '$.generation_status')) = 'STRING'
+                    THEN JSON_UNQUOTE(JSON_EXTRACT(x.ham_cikti, '$.generation_status')) END END AS durum,
+            CASE WHEN x.claim_text IS NOT NULL THEN 1
+                 WHEN JSON_VALID(x.ham_cikti) THEN
+                    CASE WHEN JSON_TYPE(JSON_EXTRACT(x.ham_cikti, '$.evaluation.claim_index')) IN ('INTEGER', 'UNSIGNED INTEGER')
+                        THEN 1 ELSE 0 END
+                 ELSE 0 END AS iddia
+        FROM halusinasyon_degerlendirme AS x
+        WHERE x.kayit_turu = 'soru_cevap'
+    ) AS d
+    GROUP BY d.query_id
+) AS h ON h.query_id = q.query_id
+LEFT JOIN (
+    SELECT query_id, COUNT(*) AS klinik_bulgu_sayisi
+    FROM klinik_bulgular WHERE query_id IS NOT NULL GROUP BY query_id
+) AS kb ON kb.query_id = q.query_id
+LEFT JOIN (
+    SELECT query_id, COUNT(*) AS klinik_cikarim_red_sayisi
+    FROM halusinasyon_degerlendirme WHERE kayit_turu = 'klinik_cikarim' GROUP BY query_id
+) AS kc ON kc.query_id = q.query_id;
+
+
+-- Soru başına kaynaklar (bulunan bütün aday chunk'lar; used_in_context = LLM bağlamına girdi).
+CREATE OR REPLACE VIEW v_rag_kaynaklar AS
+SELECT
+    s.query_id, q.question AS soru, s.source_rank, s.used_in_context,
+    s.retrieval_score, s.rerank_score,
+    b.filename AS dosya, c.page_number AS sayfa, s.chunk_id,
+    LEFT(c.text, 200) AS chunk_baslangic
+FROM rag_sorgu_kaynaklari AS s
+JOIN rag_sorgulari AS q ON q.query_id = s.query_id
+LEFT JOIN pdf_chunks AS c ON c.chunk_id = s.chunk_id
+LEFT JOIN pdf_belgeleri AS b ON b.document_id = c.document_id;
+
+
+-- İddia başına bir satır (yalnız soru_cevap iddia satırları; olay satırları v_rag_sorgular'da).
+CREATE OR REPLACE VIEW v_rag_iddialar AS
+SELECT
+    x.query_id, q.question AS soru,
+    CASE WHEN JSON_VALID(x.ham_cikti) THEN
+        CASE WHEN JSON_TYPE(JSON_EXTRACT(x.ham_cikti, '$.evaluation.claim_index')) IN ('INTEGER', 'UNSIGNED INTEGER')
+            THEN CAST(JSON_EXTRACT(x.ham_cikti, '$.evaluation.claim_index') AS UNSIGNED) END END AS iddia_no,
+    x.claim_text, x.claim_supported, x.citation_correct,
+    b.filename AS destekleyen_dosya, c.page_number AS destekleyen_sayfa, x.supporting_chunk_id,
+    x.hata_turu, x.id AS degerlendirme_id
+FROM halusinasyon_degerlendirme AS x
+JOIN rag_sorgulari AS q ON q.query_id = x.query_id
+LEFT JOIN pdf_chunks AS c ON c.chunk_id = x.supporting_chunk_id
+LEFT JOIN pdf_belgeleri AS b ON b.document_id = c.document_id
+WHERE x.kayit_turu = 'soru_cevap'
+  AND (x.claim_text IS NOT NULL
+       OR (JSON_VALID(x.ham_cikti)
+           AND JSON_TYPE(JSON_EXTRACT(x.ham_cikti, '$.evaluation.claim_index')) IN ('INTEGER', 'UNSIGNED INTEGER')));
