@@ -8,6 +8,7 @@ MySQL şema testi (kardiyo_tam_metin).
 Gereken: proje kökünde .env (bkz. .env.example).
 """
 
+import re
 import sys
 
 from src.database import (
@@ -21,6 +22,16 @@ from src.database import (
     init_schema,
     professor_row_label,
 )
+from src.pilot_clinical import CONTEXTS, TYPES
+
+
+def _text(value):
+    return value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value
+
+
+def enum_values(column_type):
+    """"enum('a','b')" -> ['a', 'b']."""
+    return re.findall(r"'((?:[^']|'')*)'", column_type or "")
 
 
 # Hoca tablolarındaki satır sayıları: şema kurulumu bunları değiştirmemeli.
@@ -73,6 +84,11 @@ def main():
                 info = init_schema(connection)
                 added = ", ".join(info["added_makaleler_columns"]) or "-"
                 check(f"init_schema #{run}", "hatasız", f"hatasız (eklenen: {added})", True)
+                if run == 2:
+                    # İkinci çalıştırmada pilot sütunları yeniden eklenmeye çalışılmamalı.
+                    again = [c for c in info["migrated_columns"]
+                             if c.split(".")[-1] in ("bilgi_turu", "baglam", "klinik_bilgi", "klinik_bilgi_en")]
+                    check("init_schema #2: pilot sütunları tekrar eklenmedi", [], again)
             except Exception as exc:
                 check(f"init_schema #{run}", "hatasız", f"HATA: {exc}", False)
 
@@ -106,6 +122,23 @@ def main():
                 "var",
                 "var" if column in makaleler_columns else "yok",
             )
+
+        # Pilot aktarımı (import_records) için eklenen 4 sütun: tip, NULL olabilirlik,
+        # ENUM kümelerinin pilot_clinical.TYPES / CONTEXTS ile aynı olması.
+        cursor.execute(
+            "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'klinik_bulgular' "
+            "AND COLUMN_NAME IN ('bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en')")
+        pilot_columns = {_text(name): (_text(dtype), _text(ctype), _text(nullable))
+                         for name, dtype, ctype, nullable in cursor.fetchall()}
+        for column, (dtype, values) in {"bilgi_turu": ("enum", TYPES), "baglam": ("enum", CONTEXTS),
+                                        "klinik_bilgi": ("text", None), "klinik_bilgi_en": ("text", None)}.items():
+            found = pilot_columns.get(column)
+            check(f"klinik_bulgular.{column}: tip / NULL", f"{dtype} / YES",
+                  f"{found[0]} / {found[2]}" if found else "yok")
+            if values is not None:
+                check(f"klinik_bulgular.{column}: ENUM = pilot kümesi", sorted(values),
+                      sorted(enum_values(found[1])) if found else "yok")
 
         # Hoca tablolarının satır sayıları değişmemiş olmalı.
         for table, expected in EXPECTED_PROTECTED_ROWS.items():

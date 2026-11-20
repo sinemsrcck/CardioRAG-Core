@@ -71,6 +71,7 @@ CORE_TABLE_COLUMNS = {
         "ci95", "p", "yon", "kanit_sayfa", "kanit_cumle", "review_status",
         "tani_tr", "tani_en", "icd10", "kanit_turu", "kanit_sayfa_bitis",
         "birlestirme", "cikarma_yontemi", "taslak_notu", "query_id", "satir_hash",
+        "bilgi_turu", "baglam", "klinik_bilgi", "klinik_bilgi_en",
     ),
     "rag_sorgulari": (
         "query_id", "question", "answer", "llm_model", "embedding_model",
@@ -126,6 +127,13 @@ CORE_COLUMN_MIGRATIONS = {
         ("taslak_notu", "TEXT NULL"),
         ("query_id", "CHAR(36) NULL"),
         ("satir_hash", "CHAR(64) NULL"),
+        # Pilot aktarımı (src/pilot_clinical.import_records); kümeler TYPES / CONTEXTS ile aynı.
+        ("bilgi_turu", "ENUM('tani', 'semptom', 'teshis_yontemi', 'tani_kriteri', 'tedavi', 'ilac', "
+                       "'doz', 'hasta_grubu', 'klinik_sonuc', 'olcum', 'diger') NULL"),
+        ("baglam", "ENUM('study_finding', 'study_method', 'exclusion_criterion', "
+                   "'literature_background', 'recommendation') NULL"),
+        ("klinik_bilgi", "TEXT NULL"),
+        ("klinik_bilgi_en", "TEXT NULL"),
     ),
     "rag_sorgulari": (
         ("rerank_method", "VARCHAR(32) NULL"),

@@ -132,6 +132,13 @@ CREATE TABLE IF NOT EXISTS klinik_bulgular (
     query_id           CHAR(36)      NULL,
     -- Tekrar yazımda çoğaltmayı önler: kanıt + alanların SHA-256'sı.
     satir_hash         CHAR(64)      NULL,
+    -- Pilot aktarımı (src/pilot_clinical.import_records). Kümeler TYPES / CONTEXTS ile aynı.
+    bilgi_turu         ENUM('tani', 'semptom', 'teshis_yontemi', 'tani_kriteri', 'tedavi', 'ilac', 'doz',
+                            'hasta_grubu', 'klinik_sonuc', 'olcum', 'diger') NULL,
+    baglam             ENUM('study_finding', 'study_method', 'exclusion_criterion',
+                            'literature_background', 'recommendation') NULL,
+    klinik_bilgi       TEXT          NULL,
+    klinik_bilgi_en    TEXT          NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uq_klinik_bulgular_satir_hash (satir_hash),
     KEY idx_klinik_bulgular_makale (makale_id),

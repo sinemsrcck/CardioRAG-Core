@@ -10,6 +10,24 @@ from pathlib import Path
 
 TYPES = {'tani', 'semptom', 'teshis_yontemi', 'tani_kriteri', 'tedavi', 'ilac', 'doz', 'hasta_grubu', 'klinik_sonuc', 'olcum', 'diger'}
 CONTEXTS = {'study_finding', 'study_method', 'exclusion_criterion', 'literature_background', 'recommendation'}
+# import_records'un kayıtta varsa yazdığı yapılandırılmış klinik_bulgular sütunları (ör. src/pilot_tablo aktarımı).
+# hasta_sayisi bilerek yok: grup n'leri taslak_notu'da kalır.
+STRUCTURED_FIELDS = ('hasta_grubu', 'deger', 'unit', 'p', 'ci95', 'etki_turu', 'comparator', 'taslak_notu',
+                     'sonuc_olcutu_tr', 'mudahale_en', 'mudahale_turu', 'outcome_type')
+# import_records'un okuduğu temel alanlar; bunlar ve STRUCTURED_FIELDS dışındaki alanlar açık hata verir.
+INPUT_FIELDS = {'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'kanit_turu', 'review_status'}
+
+
+def _structured_key(item):
+    """Tekrar anahtarının yapılandırılmış kısmı: aynı kanıtın farklı grup/analiz satırları tekrar sayılmaz."""
+    note = item.get('taslak_notu')
+    if isinstance(note, str):
+        try:
+            note = json.loads(note)
+        except ValueError:
+            note = None
+    analysis = note.get('analiz') if isinstance(note, dict) else None
+    return item.get('hasta_grubu'), item.get('deger'), analysis
 
 
 def validate_records(records, pages):
@@ -34,9 +52,9 @@ def validate_records(records, pages):
                 raise ValueError('Kanıt cümlesi bu PDF sayfasında birebir bulunamadı')
             if not isinstance(fact, str) or not fact.strip() or fact not in quote:
                 raise ValueError('Klinik bilgi kanıt cümlesinde birebir bulunamadı; çıkarımsal/çeviri bilgi doğrulanmadı')
-            key = (page, kind, context, fact.strip().casefold())
+            key = (page, kind, context, fact.strip().casefold()) + _structured_key(item)
             if key in seen:
-                continue
+                raise ValueError('tekrar: aynı sayfa/tür/bağlam/metin ve grup/değer/analiz daha önce geldi')
             seen.add(key)
             accepted.append(item)
         except ValueError as exc:
@@ -50,12 +68,23 @@ def pdf_pages(pdf_path):
     return doc, {p['page_number']: p['text'] for p in doc['pages']}
 
 
-def import_records(doc, records):
-    """Only called with explicit --write. Never updates existing rows."""
+def import_records(doc, records, connection=None):
+    """Only called with explicit --write. Never updates existing rows.
+
+    connection verilirse onu kullanır ve commit/rollback/close yapmaz (çağıran yönetir)."""
     if not records or any(item.get('review_status') != 'verified' or item.get('baglam') not in CONTEXTS for item in records):
         raise ValueError('SQL aktarımı yalnızca bağlamı geçerli, manuel onaylı kayıtlarla yapılabilir')
-    from src.database import get_connection
-    conn = get_connection()
+    if any(item.get('bilgi_turu') not in TYPES for item in records):
+        raise ValueError('SQL aktarımı için her kayıtta geçerli bilgi_turu zorunlu')
+    unknown = sorted({key for item in records for key in item} - INPUT_FIELDS - set(STRUCTURED_FIELDS))
+    if unknown:
+        raise ValueError(f'import_records bu alanları desteklemiyor (sessizce atlanmaz): {", ".join(unknown)}')
+    own = connection is None
+    if own:
+        from src.database import get_connection
+        conn = get_connection()
+    else:
+        conn = connection
     try:
         cursor = conn.cursor()
         try:
@@ -68,6 +97,9 @@ def import_records(doc, records):
             required = {'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'document_id', 'kanit_sayfa', 'kanit_cumle', 'kanit_turu', 'satir_hash', 'review_status'}
             if not required <= columns:
                 raise ValueError('SQL klinik_bulgular sütunları eksik')
+            used = {key for item in records for key in STRUCTURED_FIELDS if item.get(key) is not None}
+            if not used <= columns:
+                raise ValueError(f'SQL klinik_bulgular sütunları eksik: {", ".join(sorted(used - columns))}')
             written = 0
             for item in records:
                 payload = {
@@ -82,23 +114,35 @@ def import_records(doc, records):
                     'review_status': 'verified',
                     'cikarma_yontemi': 'manuel',
                 }
+                for key in STRUCTURED_FIELDS:
+                    value = item.get(key)
+                    if value is not None:
+                        payload[key] = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
                 identity = [payload[k] for k in ('document_id', 'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_sayfa', 'kanit_cumle')]
-                payload['satir_hash'] = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+                # Yapılandırılmış alanlar kimliğe girer (aynı kanıtlı grup satırları ayrı kalır);
+                # yapılandırılmış alanı olmayan kayıtların hash'i öncekiyle aynıdır.
+                structured = {k: payload[k] for k in STRUCTURED_FIELDS if k in payload}
+                if structured:
+                    identity.append(structured)
+                payload['satir_hash'] = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
                 fields = list(payload)
                 cursor.execute(
                     f"INSERT IGNORE INTO klinik_bulgular ({', '.join('`'+k+'`' for k in fields)}) VALUES ({', '.join(['%s']*len(fields))})",
                     tuple(payload[k] for k in fields),
                 )
                 written += cursor.rowcount
-            conn.commit()
+            if own:
+                conn.commit()
             return written
         finally:
             cursor.close()
     except Exception:
-        conn.rollback()
+        if own:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if own:
+            conn.close()
 
 
 def main():
