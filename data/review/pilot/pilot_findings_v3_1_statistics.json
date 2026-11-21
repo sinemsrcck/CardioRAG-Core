@@ -1,0 +1,50 @@
+[
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "In statistical significance tests, p ≤ 0.05 was taken.",
+    "kanit_cumle": "In statistical significance tests, p ≤ 0.05 was taken.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The KolmogorovSmirnov test was applied to evaluate the normality of the distribution of continuous variables. Continuous variables were expressed as mean±standard deviation or median (interquartile range), and comparison was made with student t or Mann-Whitney U tests, depending on distribution.",
+    "kanit_cumle": "The KolmogorovSmirnov test was applied to evaluate the normality of the distribution of continuous variables. Continuous variables were expressed as mean±standard deviation or median (interquartile range), and comparison was made with student t or Mann-Whitney U tests, depending on distribution.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "Categorical variables were expressed as percentages and numbers and compared with the χ<sup>2</sup> test.",
+    "kanit_cumle": "Categorical variables were expressed as percentages and numbers and compared with the χ<sup>2</sup> test.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The best cut-off values of HCR were calculated by (ROC) curve analysis. In grouping HCR values as high and low, the best cut-off value obtained from the ROC curve of HCR was accepted as the cut-off value.",
+    "kanit_cumle": "The best cut-off values of HCR were calculated by (ROC) curve analysis. In grouping HCR values as high and low, the best cut-off value obtained from the ROC curve of HCR was accepted as the cut-off value.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "Variables that were significant (p<0.05) in the univariate Cox proportional regression analysis were included in the multivariate Cox proportional regression analysis.",
+    "kanit_cumle": "Variables that were significant (p<0.05) in the univariate Cox proportional regression analysis were included in the multivariate Cox proportional regression analysis.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The results of the Cox regression analysis are reported as hazard ratio (HR) and 95% confidence interval (CI).",
+    "kanit_cumle": "The results of the Cox regression analysis are reported as hazard ratio (HR) and 95% confidence interval (CI).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  }
+]
