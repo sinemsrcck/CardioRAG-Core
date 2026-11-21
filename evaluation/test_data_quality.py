@@ -6,11 +6,14 @@ Veri kalitesi işaretleri testleri.
 
 A) Veritabanı gerektirmeyenler: normalizasyon, her kontrol için pozitif/negatif
    örnek (sahte satırlar), determinizm, sürüm hash'i, satir_hash çakışması.
+   Pilot satır kontrolleri (check_pilot_row) ve --pilot sürüm ayrımı da burada.
 B) MySQL gerektirenler: kalite tabloları yoksa transaction DIŞINDA kurulur (DDL
    örtük commit yapar). Sahte klinik_bulgular satırları tek transaction'da eklenir,
    işaretler aynı bağlantıda yazılır, sonra ROLLBACK. JSONL ve --referans modları
    tabloya yazmaz. Sonda klinik_bulgular, kalite tabloları, review_status dağılımı
    ve hoca tabloları başlangıçtakiyle karşılaştırılır.
+   Pilot: import_records(connection=conn) ile seçilmiş aktarım + metin kayıtları tek
+   transaction'da yazılır, --pilot kontrolleri aynı bağlantıyla çalışır, sonra ROLLBACK.
 """
 
 import hashlib
@@ -18,10 +21,14 @@ import json
 import random
 import sys
 import tempfile
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from src.data_quality import (
+    ALL_CHECKS,
     CHECKS,
+    PILOT_CHECKS,
+    PILOT_WARNING,
     REFERENCE_LABEL,
     Options,
     QualityError,
@@ -29,6 +36,7 @@ from src.data_quality import (
     check_duplicates,
     check_group_consistency,
     check_numeric,
+    check_pilot_row,
     check_row_consistency,
     check_source,
     config_payload,
@@ -242,6 +250,90 @@ def test_determinism_and_version():
     check("sürüm: eşanlamlı listesi hash'e dahil", True, control_version(payload=payload) != base)
     check("sürüm: embedding seçeneği hash'e dahil", True, control_version(embedding=True) != base)
     check("sürüm: aynı ayar aynı sürüm", base, control_version())
+
+
+def test_pilot_unit():
+    """Pilot satır kontrolleri: pozitif/negatif örnekler (DB'siz, sahte sayfa metni)."""
+    page = ("It was observed that the HCR was higher. (1.88%) and chronic event in 20 patients (5.37%). "
+            "proportional to C-pep- in 7 patients **FIGURE 1:** ROC curve p<001 |HbA1c|7.83±1.2|6.23±1.2|<0.001|")
+    source = {"pages": {1: page}}
+
+    def pilot(**fields):
+        base = dict(bilgi_turu="olcum", baglam="study_finding", kanit_turu="metin", cikarma_yontemi="manuel",
+                    kanit_cumle="It was observed that the HCR was higher.", chunk_id=None, makale_id=None)
+        base.update(fields)
+        base.setdefault("klinik_bilgi_en", base["kanit_cumle"])
+        return make_row(**base)
+
+    def flags_of(row, src=source):
+        return check_pilot_row(row, src)
+
+    good = pilot()
+    check("pilot: temiz metin satırında işaret yok", [], [f["kontrol_kodu"] for f in flags_of(good)])
+    check("pilot_kanit_sayfada_yok [hata]: pozitif / negatif", (True, False),
+          (has(flags_of(pilot(kanit_cumle="Bu cümle sayfada yok.")), "pilot_kanit_sayfada_yok", "hata"),
+           has(flags_of(good), "pilot_kanit_sayfada_yok")))
+    check("pilot_kanit_sayfada_yok: yanlış sayfa", True,
+          has(flags_of(pilot(kanit_sayfa=2)), "pilot_kanit_sayfada_yok", "hata"))
+    check("pilot_bilgi_kanitta_yok [hata]: pozitif / negatif", (True, False),
+          (has(flags_of(pilot(klinik_bilgi_en="HCR is a marker")), "pilot_bilgi_kanitta_yok", "hata"),
+           has(flags_of(pilot(klinik_bilgi_en="the HCR was higher")), "pilot_bilgi_kanitta_yok")))
+    check("pilot_pdf_okunamadi [uyari]", True, has(flags_of(good, {"hata": "dosya yok"}), "pilot_pdf_okunamadi", "uyari"))
+    for label, quote in (("parantezle başlıyor (#106)", "(1.88%) and chronic event in 20 patients (5.37%)."),
+                         ("küçük harfle başlıyor", "proportional to C-pep- in 7 patients"),
+                         ("tireyle bitiyor", "proportional to C-pep-")):
+        check(f"pilot_sayfa_gecisi_supheli [uyari]: {label}", True,
+              has(flags_of(pilot(kanit_cumle=quote, klinik_bilgi_en=quote)), "pilot_sayfa_gecisi_supheli", "uyari"))
+    check("pilot_sayfa_gecisi_supheli: düzgün cümlede yok", False, has(flags_of(good), "pilot_sayfa_gecisi_supheli"))
+    digit = "1,225 patients with AF included in the study."
+    digit_flags = flags_of(pilot(kanit_cumle=digit, klinik_bilgi_en=digit))
+    check("pilot_sayfa_gecisi_supheli: rakamla başlıyor ('1,225 patients…') -> bilgi, uyari değil", (True, False),
+          (has(digit_flags, "pilot_sayfa_gecisi_supheli", "bilgi"), has(digit_flags, "pilot_sayfa_gecisi_supheli", "uyari")))
+    check("pilot_sayfa_gecisi_supheli: noktalamayla başlıyor ('; and …') -> uyari", True,
+          has(flags_of(pilot(kanit_cumle="; and in 20 patients.", klinik_bilgi_en="in 20 patients")),
+              "pilot_sayfa_gecisi_supheli", "uyari"))
+    nopunct = pilot(kanit_cumle="It was observed that the HCR was higher", klinik_bilgi_en="the HCR")
+    check("pilot_sayfa_gecisi_supheli [bilgi]: büyük harf, noktalamasız son", True,
+          has(flags_of(nopunct), "pilot_sayfa_gecisi_supheli", "bilgi"))
+    table = pilot(kanit_turu="tablo", kanit_cumle="|HbA1c|7.83±1.2|6.23±1.2|<0.001|", klinik_bilgi_en="HbA1c")
+    check("pilot_sayfa_gecisi_supheli: tablo satırında aranmaz", False, has(flags_of(table), "pilot_sayfa_gecisi_supheli"))
+    fig = "in 7 patients **FIGURE 1:** ROC curve"
+    check("pilot_kanitta_sekil_tablo [uyari]: pozitif / negatif", (True, False),
+          (has(flags_of(pilot(kanit_cumle=fig, klinik_bilgi_en="ROC curve")), "pilot_kanitta_sekil_tablo", "uyari"),
+           has(flags_of(good), "pilot_kanitta_sekil_tablo")))
+    check("kaynak_p_bicim_bozuk [bilgi]: 'p<001' / 'p<0.001'", (True, False),
+          (has(flags_of(pilot(kanit_cumle="ROC curve p<001", klinik_bilgi_en="ROC")), "kaynak_p_bicim_bozuk", "bilgi"),
+           has(flags_of(pilot(kanit_cumle="ROC curve p<0.001", klinik_bilgi_en="ROC")), "kaynak_p_bicim_bozuk")))
+    note = lambda n: json.dumps({"kaynak": "pilot-tablo-v1", "grup_n": n})  # noqa: E731
+    check("pilot_yuzde_uyumsuz [uyari]: 119/372 ≠ %35.00", True,
+          has(flags_of(table | {"deger": "119 (35.00)", "taslak_notu": note(372)}), "pilot_yuzde_uyumsuz", "uyari"))
+    check("pilot_yuzde_uyumsuz: kesme (31.98) ve yuvarlama (31.99) tolere edilir", (False, False),
+          (has(flags_of(table | {"deger": "119 (31.98)", "taslak_notu": note(372)}), "pilot_yuzde_uyumsuz"),
+           has(flags_of(table | {"deger": "119 (31.99)", "taslak_notu": note(372)}), "pilot_yuzde_uyumsuz")))
+    check("kaynak_ci_p_celiski [bilgi]: CI 1'i kapsıyor, p=0.002", True,
+          has(flags_of(table | {"etki_turu": "OR", "deger": "1.254", "ci95": "0.892-1.372", "p": "0.002"}),
+              "kaynak_ci_p_celiski", "bilgi"))
+    check("kaynak_ci_p_celiski: CI 1'i kapsamıyor, p<0.001 -> yok", False,
+          has(flags_of(table | {"etki_turu": "OR", "deger": "3.124", "ci95": "2.213-4.310", "p": "<0.001"}),
+              "kaynak_ci_p_celiski"))
+    check("kaynak_ci_p_celiski [bilgi]: CI 1'i kapsamıyor, p=0.679", True,
+          has(flags_of(table | {"etki_turu": "OR", "deger": "0.852", "ci95": "0.542-0.915", "p": "0.679"}),
+              "kaynak_ci_p_celiski", "bilgi"))
+    check("deger_ci_disinda [uyari]: yapay CI dışı OR", (True, False),
+          (has(check_numeric(make_row(etki_turu="OR", deger="2.500", ci95="0.542-0.915")), "deger_ci_disinda", "uyari"),
+           has(check_numeric(make_row(etki_turu="OR", deger="0.852", ci95="0.542-0.915")), "deger_ci_disinda")))
+    check("pilot_baglam_tablo [uyari]: pozitif / negatif", (True, False),
+          (has(flags_of(table | {"baglam": "literature_background"}), "pilot_baglam_tablo", "uyari"),
+           has(flags_of(table), "pilot_baglam_tablo")))
+    med = table | {"bilgi_turu": "ilac", "deger": "119 (31.98)", "taslak_notu": note(372)}
+    check("pilot_ilac_doz_oran [uyari]: pozitif / negatif", (True, False),
+          (has(flags_of(med | {"doz": "100 mg"}), "pilot_ilac_doz_oran", "uyari"), has(flags_of(med), "pilot_ilac_doz_oran")))
+    check("pilot: bütün kodlar PILOT_CHECKS'te, CHECKS ile çakışmıyor", (True, set()),
+          (all(f["kontrol_kodu"] in ALL_CHECKS for f in flags_of(pilot(kanit_cumle="x-", klinik_bilgi_en="y"))),
+           set(PILOT_CHECKS) & set(CHECKS)))
+    check("sürüm: --pilot olmadan hash ve payload değişmedi", (False, True),
+          ("pilot" in config_payload(), control_version() == control_version(pilot=False)))
+    check("sürüm: --pilot ayrı sürüm", True, control_version(pilot=True) != control_version())
 
 
 def test_collisions(tmp):
@@ -462,6 +554,154 @@ def test_database(tmp):
     check("sonda: klinik_bulgular, kalite tabloları, review_status, hoca tabloları değişmedi", before, after)
 
 
+PILOT_DIR = Path("data/review/pilot")
+PILOT_PDF = Path("data/pdfs/TK-cardiovascular36-2-1.pdf")
+PILOT_TEXT_SIRA = (6, 7, 46, 106, 107, 109, 152)  # pilot_findings_v2.json, 1 tabanlı (v2_sira)
+pilot_distribution = {}
+
+
+def pilot_test_records():
+    """Test kopyası: seçilmiş tablo aktarım kayıtları + birkaç metin kaydı, hepsi review_status='verified'.
+
+    - HbA1c ve HCR: iki grup tam; Glucose: bir grup silinmiş; Female gender: n (%) çifti.
+    - Table 2 Age: univariate aynen, multivariate OR'u yapay olarak GA dışına (2.500) çekilmiş.
+    """
+    transfer = json.loads((PILOT_DIR / "pilot_tablo_aktarim.json").read_text(encoding="utf-8"))
+    findings = json.loads((PILOT_DIR / "pilot_findings_v2.json").read_text(encoding="utf-8"))
+    picked = []
+    for item in transfer:
+        note = json.loads(item["taslak_notu"])
+        key = (note["tablo_no"], note["degisken"])
+        if key in ((1, "HbA1c"), (1, "HCR"), (1, "Female gender"), (2, "Age")):
+            picked.append(dict(item))
+        elif key == (1, "Glucose") and item["hasta_grubu"] == "Ischemic event":
+            picked.append(dict(item))  # "No ischemic event" grubu bilerek yok
+    for item in picked:
+        if item.get("etki_turu") == "OR" and json.loads(item["taslak_notu"]).get("analiz") == "multivariate":
+            item["deger"] = "2.500"  # yapay: GA 0.542-0.915 dışında
+    texts = [dict(findings[n - 1]) for n in PILOT_TEXT_SIRA]
+    return [dict(r, review_status="verified") for r in picked + texts]
+
+
+def test_pilot_database(tmp):
+    from src.database import get_connection
+    from src.pilot_clinical import import_records, pdf_pages
+
+    if not PILOT_PDF.exists():
+        check("pilot DB testi: PDF var", True, False)
+        return
+    doc, pages = pdf_pages(PILOT_PDF)
+    loader = lambda path: (doc, pages)  # noqa: E731 - PDF bir kez okunur
+    records = pilot_test_records()
+    before = db_state()
+    conn = get_connection()
+    conn.autocommit = False
+    conn.start_transaction()
+    try:
+        written = import_records(doc, records, connection=conn)
+        check("pilot DB: import_records aynı bağlantıyla yazdı", len(records), written)
+        plain, _, _ = run_quality(Options(dry_run=True, rapor_dir=Path(tmp) / "rapor"), connection=conn,
+                                  out=lambda *_: None)
+        plain_ozet = json.loads((Path(plain["rapor_dir"]) / "ozet.json").read_text(encoding="utf-8"))
+        check("pilot DB: --pilot yokken uyarı özet ve ozet.json'da", (True, True, False),
+              (PILOT_WARNING in plain.get("pilot_uyarisi", ""), PILOT_WARNING in plain_ozet.get("pilot_uyarisi", ""),
+               "pilot" in plain))
+        lines = []
+        from src.data_quality import print_summary
+        print_summary(plain, [], out=lines.append)
+        check("pilot DB: --pilot yokken uyarı ekrana yazılıyor", True, any(PILOT_WARNING in x for x in lines))
+
+        summary, flags, rows = run_quality(Options(pilot=True, rapor_dir=Path(tmp) / "rapor"), connection=conn,
+                                           out=lambda *_: None, page_loader=loader)
+        version = control_version(pilot=True)
+        stored = stored_flags(conn, version)
+        pilot_rows = [r for r in rows if r.get("bilgi_turu")]
+        pilot_hashes = {r["satir_hash"] for r in pilot_rows}
+        pilot_flags = [f for f in flags if f["satir_hash"] in pilot_hashes]
+        check("pilot DB: pilot satırları yüklendi", len(records), len(pilot_rows))
+        check("pilot DB: işaretler aynı transaction'da kalite_isaretleri'ne yazıldı", len(flags), len(stored))
+        check("pilot DB: rag satırları da kapsamda (tek sürüm)", True, len(rows) > len(pilot_rows))
+
+        by = defaultdict(set)
+        for f in pilot_flags:
+            by[f["satir_hash"]].add((f["kontrol_kodu"], f["seviye"]))
+
+        def table_rows(tablo, degisken):
+            return [r for r in pilot_rows if r.get("taslak_notu") and (lambda n: (n.get("tablo_no"), n.get("degisken"))
+                    == (tablo, degisken))(json.loads(r["taslak_notu"]))]
+
+        def text_row(sira):
+            quote = json.loads((PILOT_DIR / "pilot_findings_v2.json").read_text(encoding="utf-8"))[sira - 1]["kanit_cumle"]
+            return next(r for r in pilot_rows if r["kanit_cumle"] == quote and r.get("kanit_turu") == "metin")
+
+        def codes_of(members):
+            return {c for m in members for c, _ in by[m["satir_hash"]]}
+
+        hba1c, hcr, glucose = table_rows(1, "HbA1c"), table_rows(1, "HCR"), table_rows(1, "Glucose")
+        age2, female = table_rows(2, "Age"), table_rows(1, "Female gender")
+        check("pilot DB: HbA1c çifti tam (eksik/tutarsız yok)", (2, False, False),
+              (len(hba1c), "tablo_cift_eksik" in codes_of(hba1c), "tablo_cift_tutarsiz" in codes_of(hba1c)))
+        check("pilot DB: bir grubu silinmiş Glucose -> tablo_cift_eksik [uyari]", True,
+              ("tablo_cift_eksik", "uyari") in by[glucose[0]["satir_hash"]])
+        missing_info = [p for p in summary["pilot"]["eksik_grup_analiz"] if p["degisken"] == "Glucose"]
+        check("pilot DB: eksik grup raporda 'No ischemic event'", True,
+              bool(missing_info) and any("No ischemic event" in e for e in missing_info[0]["eksik"]))
+        multi = next(r for r in age2 if json.loads(r["taslak_notu"])["analiz"] == "multivariate")
+        uni = next(r for r in age2 if json.loads(r["taslak_notu"])["analiz"] == "univariate")
+        check("pilot DB: yapay CI dışı OR -> deger_ci_disinda [uyari] + PDF'le tutarsız [hata]", True,
+              {("deger_ci_disinda", "uyari"), ("tablo_cift_tutarsiz", "hata")} <= by[multi["satir_hash"]])
+        check("pilot DB: Age univariate CI 1'i kapsıyor ama p=0.002 -> kaynak tutarsızlığı [bilgi]", True,
+              ("kaynak_ci_p_celiski", "bilgi") in by[uni["satir_hash"]])
+        check("pilot DB: Age univariate CI içinde (deger_ci_disinda yok)", False,
+              any(c == "deger_ci_disinda" for c, _ in by[uni["satir_hash"]]))
+        check("pilot DB: Female gender n (%) yüzdeleri tutarlı", False, "pilot_yuzde_uyumsuz" in codes_of(female))
+        check("pilot DB: 'p<001' (#7, #107, #109) -> kaynak_p_bicim_bozuk [bilgi]", True,
+              all(("kaynak_p_bicim_bozuk", "bilgi") in by[text_row(n)["satir_hash"]] for n in (7, 107, 109)))
+        check("pilot DB: 'p<0.001' (#6) -> kaynak_p_bicim_bozuk yok", False,
+              any(c == "kaynak_p_bicim_bozuk" for c, _ in by[text_row(6)["satir_hash"]]))
+        hcr_dup = [f for f in pilot_flags if f["kontrol_kodu"] == "pilot_tekrar_metin_tablo"]
+        check("pilot DB: HCR metin (#6) ↔ Table 1 tekrarı tek grupta bağlı [bilgi]",
+              {text_row(6)["satir_hash"], *(r["satir_hash"] for r in hcr)},
+              {f["satir_hash"] for f in hcr_dup if f["grup_id"] == hcr_dup[0]["grup_id"]} if hcr_dup else set())
+        check("pilot DB: tekrar yalnız bilgi seviyesinde", {"bilgi"},
+              {f["seviye"] for f in pilot_flags if f["kategori"] == "tekrar"})
+        check("pilot DB: #7 ↔ #107 (özet ↔ sonuçlar ROC) metin tekrarı", True,
+              any(f["kontrol_kodu"] == "pilot_tekrar_metin_metin" and text_row(107)["satir_hash"] in f["ayrinti"]["uyeler"]
+                  for f in pilot_flags if f["satir_hash"] == text_row(7)["satir_hash"]))
+        check("pilot DB: Figure yazılı kanıt (#109) -> pilot_kanitta_sekil_tablo [uyari]", True,
+              ("pilot_kanitta_sekil_tablo", "uyari") in by[text_row(109)["satir_hash"]])
+        check("pilot DB: #106 '(1.88%) …' -> pilot_sayfa_gecisi_supheli [uyari]", True,
+              ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row(106)["satir_hash"]])
+        check("pilot DB: #46 '1,225 patients…' -> sayfa geçişi yalnız bilgi (uyari yok)", (True, False),
+              (("pilot_sayfa_gecisi_supheli", "bilgi") in by[text_row(46)["satir_hash"]],
+               ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row(46)["satir_hash"]]))
+        check("pilot DB: #152 'C-pep-' -> pilot_sayfa_gecisi_supheli [uyari]", True,
+              ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row(152)["satir_hash"]])
+        check("pilot DB: kanıtların hepsi sayfada birebir, bilgi kanıtta", False,
+              any(c in ("pilot_kanit_sayfada_yok", "pilot_bilgi_kanitta_yok", "pilot_pdf_okunamadi")
+                  for f in pilot_flags for c in [f["kontrol_kodu"]]))
+        check("pilot DB: pilot satırlarına chunk temelli kaynak kontrolü uygulanmadı", False,
+              any(f["kontrol_kodu"] in ("chunk_id_bos", "dogrulama_artik_gecmiyor") for f in pilot_flags))
+        pilot = summary["pilot"]
+        missing = {(m["tablo_no"], m["degisken"]) for item in pilot["eksiksizlik"] for m in item["eksik_satirlar"]}
+        check("pilot DB: eksiksizlik — temsil edilen 5 tablo satırı, kalanı eksik listesinde",
+              (5, pilot["pdf_tablo_satiri"] - 5, False, False),
+              (pilot["temsil_edilen"], pilot["eksik_tablo_satiri"], (1, "Glucose") in missing, (2, "Age") in missing))
+        ozet = json.loads((Path(summary["rapor_dir"]) / "ozet.json").read_text(encoding="utf-8"))
+        isaretler = json.loads((Path(summary["rapor_dir"]) / "isaretler.json").read_text(encoding="utf-8"))
+        check("pilot DB: ozet.json ve isaretler.json'da pilot bölümü", (True, True, True),
+              ("eksiksizlik" in ozet.get("pilot", {}), "pilot" in isaretler, "pilot_uyarisi" not in ozet))
+        pilot_distribution.update({"kod_seviye": Counter(f"{f['kontrol_kodu']} [{f['seviye']}]" for f in pilot_flags),
+                                   "kategori_seviye": pilot["kategori_seviye"], "satir": len(pilot_rows),
+                                   "isaret": len(pilot_flags), "eksiksizlik": [
+                                       {k: v for k, v in i.items() if k in ("dosya", "pdf_tablo_satiri", "temsil_edilen")}
+                                       for i in pilot["eksiksizlik"]]})
+    finally:
+        conn.rollback()
+        conn.close()
+    check("pilot DB: ROLLBACK sonrası tablo satır sayıları başlangıçla aynı", before, db_state())
+
+
 def test_own_transaction_after_select():
     """Gerçek DB yolu: autocommit=False bağlantıda önce SELECT, sonra write_flags(own_transaction=True).
 
@@ -533,10 +773,13 @@ def main():
     test_consistency()
     test_source()
     test_determinism_and_version()
+    test_pilot_unit()
     with tempfile.TemporaryDirectory() as tmp:
         test_collisions(tmp)
     with tempfile.TemporaryDirectory() as tmp:
         test_database(tmp)
+    with tempfile.TemporaryDirectory() as tmp:
+        test_pilot_database(tmp)
     test_own_transaction_after_select()
 
     width = max(len(r[0]) for r in results)
@@ -545,6 +788,11 @@ def main():
     for name, exp, act, passed in results:
         print(f"{name:<{width}}  {exp[:22]:<22}  {act[:40]:<40}  {'OK' if passed else 'HATA'}")
     failed = [r for r in results if not r[3]]
+    if pilot_distribution:
+        print(f"\nPilot test verisi: {pilot_distribution['satir']} satır, {pilot_distribution['isaret']} işaret; "
+              f"kategori/seviye {pilot_distribution['kategori_seviye']}; eksiksizlik {pilot_distribution['eksiksizlik']}")
+        for code, count in sorted(pilot_distribution["kod_seviye"].items()):
+            print(f"  {code:<45} {count}")
     print()
     if failed:
         print(f"BAŞARISIZ: {len(failed)}/{len(results)} kontrol geçmedi.")
