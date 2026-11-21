@@ -12,6 +12,12 @@ Kurallar:
 - Ham kanıt (tablo satırı) birebir korunur; ayrıca <br>, <sup>, ** temizlenmiş metin üretilir.
 - Bozuk başlık parçaları (ör. "Dhi f", "emograpcs eatures") düzeltilmez, rapora yazılır.
 - Hiyerarşi/alt kırılım (ör. CCB -> Dihydropyridine) tablo yapısında yazmadığı için çıkarılmaz.
+- Tablo kaydının klinik_bilgi_en'i ham tablo satırı değil, temiz satır adıdır (row_name):
+  "CAD n (%)|119 (31.98)|…" -> "CAD"; "Age (years)" -> "Age (years)" (klinik birim kalır).
+  İstatistik etiketi (n (%), mean ± SD, median (IQR) …) atılır. Ad kanıt satırının birebir alt
+  dizesidir: <sup>2</sup> gibi etiketler adda ham kalır, çünkü kanit_cumle ham satırdır ve
+  validate_records / data_quality --pilot (pilot_bilgi_kanitta_yok) birebir alt dize arar;
+  "^2" gösterimi sunum katmanında (sql/sunum_hoca v_sunum_taban evidence) üretilir.
 
 Çalıştırma:
     python -m src.pilot_tablo --pdf data/pdfs/TK-cardiovascular36-2-1.pdf
@@ -41,7 +47,8 @@ ETKI_OTHER = 'diger'
 MUDAHALE_ILAC = 'arka plan tedavisi'
 MUDAHALE_BOS_NEDENI = ('İlaç satırı değil (grup ölçümü / ilişki satırı); aktarım yolu '
                        '(pilot_clinical.import_records) mudahale_turu\'yu zorunlu tutmuyor, boş kalması sorun değil')
-# import_records'a gidecek temel (Sinem'in) alanlar; pilot kaydından aynen alınır.
+# import_records'a gidecek temel (Sinem'in) alanlar; pilot kaydından aynen alınır. Tablo kaydında
+# klinik_bilgi_en istisnadır: ham satır yerine temiz satır adı (row_name) yazılır.
 TRANSFER_BASE_FIELDS = ('bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'kanit_turu')
 OUTCOME_KULLANIM = 'uygulama oranı'
 OUTCOME_POPULASYON = 'çalışma popülasyonu'
@@ -58,6 +65,13 @@ VAL_RANGE = re.compile(r'^(-?\d+(?:\.\d+)?)\s*\(\s*(-?\d+(?:\.\d+)?)\s*[-–]\s*
 N_PCT_SUFFIX = re.compile(r'\s+n\s*\(%\)\s*$', re.IGNORECASE)
 UNIT_PAREN = re.compile(r'^(.*?)\s*\(([^()]+)\)\s*$')
 UNIT_TOKEN = re.compile(r'^[A-Za-zµ%]+(?:/[A-Za-zµ0-9^]+)+$')
+# Satır adının sonundaki istatistik etiketi (klinik birim değil): "n (%)", "n, %", "mean ± SD",
+# "mean (SD)", "median (IQR)", "median [IQR]", "median (range)", "median (Q1-Q3)"; isteğe bağlı parantez
+# ve önündeki virgül/boşlukla. "(%)" tek başına birimdir (ör. "LvEF (%)") ve kalır.
+STAT_LABEL = re.compile(
+    r'[\s,]*\(?\s*(?:n\s*\(\s*%\s*\)|n\s*,\s*%|mean\s*(?:±|\+/-|\+-)\s*s\.?d\.?|mean\s*\(\s*s\.?d\.?\s*\)'
+    r'|median\s*[(\[]\s*(?:iqr|range|q1\s*[-–,]\s*q3)\s*[)\]]|median\s*,\s*iqr)\s*\)?\s*$', re.IGNORECASE)
+BOLD_EDGE = re.compile(r'^(?:\*\*|__)+|(?:\*\*|__)+$')
 # Başlıkta tek harfin kelimeden kopması ("u nivariate"); a/I gerçek kelime olabilir.
 SPLIT_LETTER = re.compile(r'(?<![A-Za-z])[b-hj-zB-HJ-Z] [a-z]{3,}')
 
@@ -75,6 +89,23 @@ def clean(text):
     text = re.sub(r'</?[A-Za-z][^>]*>', ' ', text)
     text = text.replace('**', '').replace('__', '')
     return re.sub(r'\s+', ' ', text).strip()
+
+
+def row_name(first_cell):
+    """Tablo satırının temiz adı (klinik_bilgi_en için), ham ilk hücreden.
+
+    - <br> ile bölünmüşse son parça (öndeki parçalar bölüm başlığı kalıntısıdır; bkz. satira_yapismis_parca).
+    - Sondaki istatistik etiketi atılır (STAT_LABEL); klinik birim kalır ("Glucose (mg/dL)").
+    - Kenardaki ** / __ atılır; başka hiçbir şey değişmez (boşluk, <sup> ham kalır), böylece ad ham
+      kanıt satırının birebir alt dizesidir.
+    """
+    parts = br_parts(first_cell)
+    name = (parts[-1] if parts else '').strip()
+    previous = None
+    while name != previous:
+        previous = name
+        name = BOLD_EDGE.sub('', STAT_LABEL.sub('', name)).strip()
+    return name
 
 
 def split_cells(line):
@@ -248,6 +279,7 @@ def _parse_table(page, lines, start, end, ordinal):
             cells_map[col['anahtar']] = value
         rows.append({'satir_no': len(rows) + 1, 'sayfa': page, 'ham': raw.strip(),
                      'temiz': ' | '.join(c for c in cleaned if c), 'degisken_ham': name_raw,
+                     'ad': row_name(cells[0]),
                      'degisken': variable, 'unit': unit, 'alt_bolum': section, 'sutun_degerleri': cells_map})
     return {'tablo_no': no if no is not None else ordinal, 'sayfa': page, 'tablo_basligi': caption,
             'tablo_basligi_ham': caption_raw, 'sutun_basliklari_ham': header_raw.strip(),
@@ -334,7 +366,7 @@ def match_record(record, tables):
 def table_info(table, row):
     info = {'tablo_no': table['tablo_no'], 'tablo_basligi': table['tablo_basligi'], 'sayfa': table['sayfa'],
             'satir_no': row['satir_no'], 'alt_bolum': row['alt_bolum'], 'degisken': row['degisken'],
-            'degisken_ham': row['degisken_ham'], 'unit': row['unit'], 'sutun_degerleri': row['sutun_degerleri'],
+            'degisken_ham': row['degisken_ham'], 'ad': row['ad'], 'unit': row['unit'], 'sutun_degerleri': row['sutun_degerleri'],
             'temiz_satir': row['temiz']}
     analyses = row_analyses(table, row)
     if analyses:
@@ -401,10 +433,15 @@ def sql_preview(record, table, row, document_id=None):
     return out
 
 
-def transfer_record(record, preview_row):
+def transfer_record(record, preview_row, row=None):
     """import_records'a verilecek kayıt: pilot kaydının temel alanları + önizleme satırının dolu
-    yapılandırılmış alanları. review_status konmaz (onay sonra insan tarafından verilir)."""
+    yapılandırılmış alanları. review_status konmaz (onay sonra insan tarafından verilir).
+
+    row (eşleşen tablo satırı) verilirse klinik_bilgi_en temiz satır adıdır (row['ad']); ad kanıtta
+    birebir geçmiyorsa kayıttaki değer kalır (enrich bunu 'temiz_ad_kanitta_yok' sorunu olarak yazar)."""
     item = {key: record[key] for key in TRANSFER_BASE_FIELDS if record.get(key) is not None}
+    if row is not None and row.get('ad') and row['ad'] in (record.get('kanit_cumle') or ''):
+        item['klinik_bilgi_en'] = row['ad']
     item.update({key: preview_row[key] for key in STRUCTURED_FIELDS if preview_row.get(key) is not None})
     return item
 
@@ -426,7 +463,11 @@ def enrich(records, pages, document_id=None):
             by_row.setdefault((table['tablo_no'], row['satir_no']), []).append(record.get('v2_sira'))
             rows = sql_preview(record, table, row, document_id)
             preview.extend(rows)
-            transfer.extend(transfer_record(record, p) for p in rows)
+            transfer.extend(transfer_record(record, p, row) for p in rows)
+            if not row['ad'] or row['ad'] not in (record.get('kanit_cumle') or ''):
+                table['sorunlar'].append({'tur': 'temiz_ad_kanitta_yok', 'satir_no': row['satir_no'], 'ad': row['ad'],
+                                          'aciklama': 'Temiz satır adı kanit_cumle içinde birebir yok; '
+                                                      'klinik_bilgi_en kayıttaki değerle bırakıldı'})
         elif status == 'belirsiz':
             item['adaylar'] = row
         enriched.append(item)
@@ -538,7 +579,8 @@ def report_markdown(summary, result):
               'için "prognostik değer" uygunluğundan emin olunamadı.',
               '- `hasta_sayisi` NULL ve `comparator` n\'siz (ekip kararı): n değerleri `taslak_notu.grup_n` / `comparator_n`.',
               '- Aktarım (`pilot_tablo_aktarim.json`): önizleme satırı başına bir kayıt; pilot kaydının `bilgi_turu`, `baglam`, '
-              '`klinik_bilgi_en`, `kanit_cumle`, `sayfa`, `kanit_turu` alanları aynen + dolu yapılandırılmış alanlar '
+              '`kanit_cumle`, `sayfa`, `kanit_turu` alanları aynen, `klinik_bilgi_en` temiz satır adı (ör. "CAD", '
+              '"Age (years)"; ham tablo satırı değil) + dolu yapılandırılmış alanlar '
               '(`src.pilot_clinical.STRUCTURED_FIELDS`). `review_status` yok: manuel doğrulamadan sonra insan verir; '
               '`import_records` yalnız `verified` kayıt yazar.']
     return '\n'.join(lines) + '\n'
