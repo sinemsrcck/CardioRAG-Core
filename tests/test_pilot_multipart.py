@@ -226,5 +226,45 @@ class PilotV31Regression(unittest.TestCase):
         self.assertEqual((hcr['sayfa'], hcr['sayfa_bitis'], hcr['birlestirme']), (6, 7, 'sayfa'))
 
 
+
+V32 = Path('data/review/pilot/pilot_findings_v3_2.json')
+STATS = Path('data/review/pilot/pilot_findings_v3_1_statistics.json')
+
+
+@unittest.skipUnless(PDF.exists() and V31.exists() and V32.exists(), 'pilot PDF / v3.1 / v3.2 yok')
+class PilotV32Regression(unittest.TestCase):
+    """v3.2 = v3.1 + yalnız #6 kanıtında PDF yükleyici v4'ün geri getirdiği tire."""
+
+    @classmethod
+    def setUpClass(cls):
+        from src.pilot_clinical import pdf_pages
+        cls.doc, cls.pages = pdf_pages(PDF)
+        cls.v31 = json.loads(V31.read_text(encoding='utf-8'))
+        cls.v32 = json.loads(V32.read_text(encoding='utf-8'))
+
+    def test_all_190_valid_with_loader_v4(self):
+        self.assertTrue(self.doc['processing_version'].startswith('markdown-rotated-v4'))
+        good, errors = validate_records(self.v32, self.pages)
+        self.assertEqual((len(good), errors), (190, []))
+        self.assertFalse(any('review_status' in r for r in self.v32))
+
+    def test_only_record_6_hyphen_changed(self):
+        changed = [i for i, (a, b) in enumerate(zip(self.v31, self.v32), 1) if a != b]
+        self.assertEqual((len(self.v32), changed), (190, [6]))
+        old, new = self.v31[5], self.v32[5]
+        for field in ('kanit_cumle', 'klinik_bilgi_en'):
+            self.assertEqual(new[field], old[field].replace('0.6820.889', '0.682-0.889'))
+            self.assertIn('p<001', new[field])  # kaynak yazım hatası korunur
+        self.assertEqual({k: v for k, v in new.items() if k not in ('kanit_cumle', 'klinik_bilgi_en')},
+                         {k: v for k, v in old.items() if k not in ('kanit_cumle', 'klinik_bilgi_en')})
+        self.assertEqual(self.pages[1].count(new['kanit_cumle']), 1)
+
+    @unittest.skipUnless(STATS.exists(), 'statistics yok')
+    def test_v32_with_statistics_records(self):
+        stats = json.loads(STATS.read_text(encoding='utf-8'))
+        good, errors = validate_records(self.v32 + stats, self.pages)
+        self.assertEqual((len(good), errors), (196, []))
+
+
 if __name__ == '__main__':
     unittest.main()

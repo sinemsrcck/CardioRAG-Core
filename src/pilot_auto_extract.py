@@ -5,6 +5,7 @@ adjacent physical page boundary, sayfa..sayfa_bitis) survive.
 Manual completeness/clinical review is mandatory.
 """
 import argparse
+import copy
 import json
 import hashlib
 import os
@@ -188,37 +189,62 @@ def load_checkpoint(checkpoint, signature, task_count):
     return state
 
 
-def _screen(kind, left_page, right_page, excerpt, boundary, findings, records, rejected):
-    for item in findings:
+def _rejection(reason, item, origin, stage, **extra):
+    """Ret raporu satırı: eski alanlar (sayfa, neden[, satir]) + köken + LLM'in döndürdüğü kaydın tam kopyası.
+
+    kayit: model çıktısındaki öğe aynen (derin kopya; nesne olmayan öğeler de olduğu gibi). Böylece ret
+    sonradan yeniden çıkarım (API) gerekmeden incelenebilir ve PDF'e göre kurtarılabilir."""
+    return {'sayfa': origin['sayfa'], 'neden': reason, **extra, 'asama': stage,
+            'aday_sirasi': origin['aday_sirasi'], 'gorev_no': origin['gorev_no'],
+            'gorev_turu': origin['gorev_turu'], 'gorev_ici_sira': origin['gorev_ici_sira'],
+            'sayfa_bitis': origin['sayfa_bitis'], 'kayit': copy.deepcopy(item)}
+
+
+def _screen(kind, left_page, right_page, excerpt, boundary, findings, records, rejected,
+            *, task_no=None, origins=None, sequence=None):
+    """Görev çıktısını ön elemeden geçirir. origins verilirse records ile paralel köken listesi tutulur;
+    sequence ([sayaç]) bütün görevler boyunca 1'den başlayan aday sırasını taşır."""
+    sequence = sequence if sequence is not None else [0]
+    for position, item in enumerate(findings, 1):
+        sequence[0] += 1
+        origin = {'aday_sirasi': sequence[0], 'gorev_no': task_no, 'gorev_turu': kind,
+                  'gorev_ici_sira': position, 'sayfa': left_page,
+                  'sayfa_bitis': right_page if kind == 'boundary' else None}
+
+        def reject(reason):
+            rejected.append(_rejection(reason, item, origin, 'on_eleme'))
+
         if not isinstance(item, dict):
-            rejected.append({'sayfa': left_page, 'neden': 'Kayıt nesne değil'})
+            reject('Kayıt nesne değil')
             continue
         quote = item.get('kanit_cumle')
         if kind == 'page':
             if (item.get('sayfa') != left_page or item.get('sayfa_bitis', left_page) != left_page
                     or item.get('bilgi_turu') not in TYPES
                     or (item.get('baglam') is not None and item.get('baglam') not in CONTEXTS)):
-                rejected.append({'sayfa': left_page, 'neden': 'Sayfa veya tür geçersiz'})
+                reject('Sayfa veya tür geçersiz')
                 continue
             # Prevent accepting quotes assembled from multiple excerpts.
             if not isinstance(quote, str) or quote not in excerpt:
-                rejected.append({'sayfa': left_page, 'neden': 'Kanıt parçada bulunamadı'})
+                reject('Kanıt parçada bulunamadı')
                 continue
         else:
             if (item.get('sayfa') != left_page or item.get('sayfa_bitis') != right_page
                     or item.get('bilgi_turu') not in TYPES or item.get('baglam') not in CONTEXTS):
-                rejected.append({'sayfa': left_page, 'neden': 'Sınır kaydı sayfa veya tür geçersiz'})
+                reject('Sınır kaydı sayfa veya tür geçersiz')
                 continue
             if not isinstance(quote, str) or not quote:
-                rejected.append({'sayfa': left_page, 'neden': 'Sınır kanıtı metin değil'})
+                reject('Sınır kanıtı metin değil')
                 continue
             offset = excerpt.find(quote)
             while offset >= 0 and not (offset < boundary < offset + len(quote)):
                 offset = excerpt.find(quote, offset + 1)
             if offset < 0:
-                rejected.append({'sayfa': left_page, 'neden': 'Kanıt iki sayfa sınırını birebir geçmiyor'})
+                reject('Kanıt iki sayfa sınırını birebir geçmiyor')
                 continue
         records.append(item)
+        if origins is not None:
+            origins.append(origin)
 
 
 def extract_pages(pages, client, model, *, max_calls=60, checkpoint_path=None, source_id=None,
@@ -245,7 +271,7 @@ def extract_pages(pages, client, model, *, max_calls=60, checkpoint_path=None, s
         raise RuntimeError(f'API çağrı sınırı yetersiz: {pending} bekleyen çağrı > {max_calls}; '
                            'hiç çağrı yapılmadı, sonuç dosyası yazılmadı')
 
-    all_records, rejected, calls = [], [], 0
+    all_records, origins, rejected, calls, sequence = [], [], [], 0, [0]
     for index, (kind, left_page, right_page, excerpt, boundary) in enumerate(tasks):
         if index < len(completed):
             findings = completed[index]
@@ -264,11 +290,14 @@ def extract_pages(pages, client, model, *, max_calls=60, checkpoint_path=None, s
             completed.append(findings)
             if checkpoint:
                 save_checkpoint(checkpoint, state)
-        _screen(kind, left_page, right_page, excerpt, boundary, findings, all_records, rejected)
+        _screen(kind, left_page, right_page, excerpt, boundary, findings, all_records, rejected,
+                task_no=index + 1, origins=origins, sequence=sequence)
 
     # validate_records tekrarları (örn. örtüşen parçalardan gelen aynı kayıt) reddeder; çıktıda mükerrer kalmaz.
+    # satir: ön elemeden geçen kayıtlar içindeki 1 tabanlı sıra (eski alan korunur); köken ve kayıt eklenir.
     valid, errors = validate_records(all_records, pages)
-    rejected.extend({'sayfa': None, 'neden': e['hata'], 'satir': e['satir']} for e in errors)
+    rejected.extend(_rejection(e['hata'], all_records[e['satir'] - 1], origins[e['satir'] - 1], 'dogrulama',
+                               satir=e['satir']) for e in errors)
     return valid, rejected, calls
 
 
