@@ -1,0 +1,1602 @@
+[
+  {
+    "bilgi_turu": "tani",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Atrial fibrillation (AF) is a complex disease with irregular ventricular response and tachycardia as a result of irregular and rapid contraction of the atria.",
+    "kanit_cumle": "Atrial fibrillation (AF) is a complex disease with irregular ventricular response and tachycardia as a result of irregular and rapid contraction of the atria.",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Many life-threatening ischemic events occur in AF.",
+    "kanit_cumle": "Many life-threatening ischemic events occur in AF.",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The study was done retrospectively, and a total of 1,525 patients who were admitted to the cardiology outpatient clinic were recruited. The study's patient group with ischemic events consisted of 372 patients, and the group without ischemic events consisted of 853 patients.",
+    "kanit_cumle": "The study was done retrospectively, and a total of 1,525 patients who were admitted to the cardiology outpatient clinic were recruited. The study's patient group with ischemic events consisted of 372 patients, and the group without ischemic events consisted of 853 patients.",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The aim of our study is to evaluate the HbA1c/C-peptide ratio (HCR) in AF patients with ischemic events.",
+    "kanit_cumle": "The aim of our study is to evaluate the HbA1c/C-peptide ratio (HCR) in AF patients with ischemic events.",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "It was observed that the HCR (3.41±1.18 vs 2.15±1.01, p<0.001) was statistically significantly higher in the group with an ischemic event compared to the group without an ischemic event.",
+    "kanit_cumle": "It was observed that the HCR (3.41±1.18 vs 2.15±1.01, p<0.001) was statistically significantly higher in the group with an ischemic event compared to the group without an ischemic event.",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "In the ROC analysis, the cut-off value of the HCR score in the group with an ischemic event was found to be 79% sensitivity and 81% specificity. It was determined as 2.82 (AUC=0.821, CI95=0.682-0.889, p<001).",
+    "kanit_cumle": "In the ROC analysis, the cut-off value of the HCR score in the group with an ischemic event was found to be 79% sensitivity and 81% specificity. It was determined as 2.82 (AUC=0.821, CI95=0.682-0.889, p<001).",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "In multivariate logistic regression analysis, HCR were identified as potential independent predictors of experiencing an ischemic event.",
+    "kanit_cumle": "In multivariate logistic regression analysis, HCR were identified as potential independent predictors of experiencing an ischemic event.",
+    "sayfa": 1,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Atrial fibrillation (AF)",
+    "kanit_cumle": "Atrial fibrillation (AF) is the most common type of arrhythmia, occurring in approximately 2.3-3.4% of the population, and its prevalence is estimated to double by 2050.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "occurring in approximately 2.3-3.4% of the population, and its prevalence is estimated to double by 2050",
+    "kanit_cumle": "Atrial fibrillation (AF) is the most common type of arrhythmia, occurring in approximately 2.3-3.4% of the population, and its prevalence is estimated to double by 2050.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "AF poses a serious public health problem by increasing cardiovascular morbidity and mortality as well as the cost of healthcare services.",
+    "kanit_cumle": "AF poses a serious public health problem by increasing cardiovascular morbidity and mortality as well as the cost of healthcare services.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Glycated hemoglobin (HbA1c) is a healthy biochemical indicator of glucose control within 2-3 months and is frequently used in daily clinical practice.",
+    "kanit_cumle": "Glycated hemoglobin (HbA1c) is a healthy biochemical indicator of glucose control within 2-3 months and is frequently used in daily clinical practice.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "The relationship between HbA1c and AF has been investigated in previous studies, but the data are not clear.",
+    "kanit_cumle": "The relationship between HbA1c and AF has been investigated in previous studies, but the data are not clear.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "A study conducted in Japan found that higher HbA1c reduced the risk of AF.",
+    "kanit_cumle": "A study conducted in Japan found that higher HbA1c reduced the risk of AF.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "In another study conducted with atherosclerosis, it was shown that high HbA1c increased the risk of AF.",
+    "kanit_cumle": "In another study conducted with atherosclerosis, it was shown that high HbA1c increased the risk of AF.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Diabetes mellitus (DM)",
+    "kanit_cumle": "Diabetes mellitus (DM) is a prothrombogenic disease, and although the actions underlying the increased susceptibility to thrombosis in Type 2 DM (T2DM) have not been fully elucidated, it is assumed that it is bioactive roles of HbA1c and C-peptide may play an important role.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Diabetes mellitus (DM) is a prothrombogenic disease",
+    "kanit_cumle": "Diabetes mellitus (DM) is a prothrombogenic disease, and although the actions underlying the increased susceptibility to thrombosis in Type 2 DM (T2DM) have not been fully elucidated, it is assumed that it is bioactive roles of HbA1c and C-peptide may play an important role.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "it is assumed that it is bioactive roles of HbA1c and C-peptide may play an important role",
+    "kanit_cumle": "Diabetes mellitus (DM) is a prothrombogenic disease, and although the actions underlying the increased susceptibility to thrombosis in Type 2 DM (T2DM) have not been fully elucidated, it is assumed that it is bioactive roles of HbA1c and C-peptide may play an important role.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "these two markers can also affect important bioactive pathways in non-diabetic patients.",
+    "kanit_cumle": "However, it has been shown that these two markers can also affect important bioactive pathways in non-diabetic patients.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HbA1c is not only a diagnostic parameter of diabetes but also a predictive biomarker of cardiovascular problems for diabetics and non-diabetics.",
+    "kanit_cumle": "HbA1c is not only a diagnostic parameter of diabetes but also a predictive biomarker of cardiovascular problems for diabetics and non-diabetics.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HbA1c elevation has been shown to increase platelet activation and aggregation.",
+    "kanit_cumle": "HbA1c elevation has been shown to increase platelet activation and aggregation.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "close glycemic control, i.e. lowering HbA1c, has been shown to reduce platelet reactivity in patients with acute coronary events presenting with hyperglycemia.",
+    "kanit_cumle": "Additionally, close glycemic control, i.e. lowering HbA1c, has been shown to reduce platelet reactivity in patients with acute coronary events presenting with hyperglycemia.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide is a bioactive molecule that is transferred to the circulation equimolarly with insulin from beta cells in the pancreas by the degradation of proinsulin.",
+    "kanit_cumle": "C-peptide is a bioactive molecule that is transferred to the circulation equimolarly with insulin from beta cells in the pancreas by the degradation of proinsulin.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Beyond showing the pancreatic beta cell reserve, it has been shown to play an active role in many molecular pathways beyond the pancreatic beta cell reserve.",
+    "kanit_cumle": "Beyond showing the pancreatic beta cell reserve, it has been shown to play an active role in many molecular pathways beyond the pancreatic beta cell reserve.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "high doses of C- peptide can reduce thrombus formation.",
+    "kanit_cumle": "It has been shown that high doses of C- peptide can reduce thrombus formation.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide regulates the interactions of leukocytes, erythrocytes and platelets with the endothelium.",
+    "kanit_cumle": "C-peptide regulates the interactions of leukocytes, erythrocytes and platelets with the endothelium.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C- peptide shows positive effects on homeostasis and inflammatory processes that play a role in triggering thrombosis, a complication of atherosclerosis.",
+    "kanit_cumle": "Therefore, C- peptide shows positive effects on homeostasis and inflammatory processes that play a role in triggering thrombosis, a complication of atherosclerosis.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "in this study, we wanted to demonstrate the accuracy of this assumption in AF patients.",
+    "kanit_cumle": "In this context, in this study, we wanted to demonstrate the accuracy of this assumption in AF patients.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "This retrospective study was conducted with data from 1,525 AF patients at a local university hospital cardiology outpatient clinic between April 2020 and April 2024.",
+    "kanit_cumle": "This retrospective study was conducted with data from 1,525 AF patients at a local university hospital cardiology outpatient clinic between April 2020 and April 2024.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "A total of 300 patients were not included in the study due to lack of data. The study was completed with 1,225 patients.",
+    "kanit_cumle": "A total of 300 patients were not included in the study due to lack of data. The study was completed with 1,225 patients.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "AF patient group; Patients who experienced an ischemic event (n=372) and patients who did not experience an ischemic event (n=853) were classified into two groups, and these classified groups were evaluated based on the HCR score.",
+    "kanit_cumle": "AF patient group; Patients who experienced an ischemic event (n=372) and patients who did not experience an ischemic event (n=853) were classified into two groups, and these classified groups were evaluated based on the HCR score.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "Documented 12lead electrocardiography revealed AF",
+    "kanit_cumle": "Documented 12lead electrocardiography revealed AF (absence of distinct repetitive P waves, irregular atrial activity). A period of at least 30 seconds was determined to determine the diagnosis of AF.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "absence of distinct repetitive P waves, irregular atrial activity",
+    "kanit_cumle": "Documented 12lead electrocardiography revealed AF (absence of distinct repetitive P waves, irregular atrial activity). A period of at least 30 seconds was determined to determine the diagnosis of AF.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "A period of at least 30 seconds was determined to determine the diagnosis of AF.",
+    "kanit_cumle": "Documented 12lead electrocardiography revealed AF (absence of distinct repetitive P waves, irregular atrial activity). A period of at least 30 seconds was determined to determine the diagnosis of AF.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "In patients with AF, an ischemic event occurring after thrombus formation in any organ or vascular structure was accepted.",
+    "kanit_cumle": "Ischemic event; In patients with AF, an ischemic event occurring after thrombus formation in any organ or vascular structure was accepted.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The patients were evaluated in the echocardiography (ECO) department of our center by two experienced",
+    "klinik_bilgi": "Hastalar merkezimizin ekokardiyografi bölümünde iki deneyimli kardiyolog tarafından sol dekübit pozisyonda EPIQ 7 ECO cihazı ve 2.5-3.5 MHz transdüserle değerlendirildi.",
+    "kanit_cumle": "The patients were evaluated in the echocardiography (ECO) department of our center by two experienced",
+    "sayfa": 2,
+    "sayfa_bitis": 3,
+    "birlestirme": "sayfa",
+    "kanit_parcalari": [
+      {
+        "sayfa": 2,
+        "metin": "The patients were evaluated in the echocardiography (ECO) department of our center by two experienced"
+      },
+      {
+        "sayfa": 3,
+        "metin": "cardiologists in the left decubitus state using an EPIQ 7 ECO device (Philips, Amsterdam, Netherlands) and a 2.5-3.5 MHz transducer."
+      }
+    ],
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "Acute infection",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "sepsis",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "central venous catheter",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "left ventricular apical thrombus",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "acute heart failure (HF)",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "severe valve disease",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "moderate mitral stenosis",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "all other serious valve diseases",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "prosthetic valve disease",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "malignancy",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "coagulation disorders",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "under 18 years of age",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "storage diseases (glycogen, lipid, lysosomal, etc.)",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "acute kidney disease",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "mechanical valve",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "end-stage renal disease",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "exclusion_criterion",
+    "klinik_bilgi_en": "severe anemia",
+    "kanit_cumle": "Acute infection or sepsis, central venous catheter, left ventricular apical thrombus, acute heart failure (HF), severe valve disease (moderate mitral stenosis and all other serious valve diseases and prosthetic valve disease), malignancy, coagulation disorders, under 18 years of age, storage diseases (glycogen, lipid, lysosomal, etc.), acute kidney disease, mechanical valve, end-stage renal disease, and severe anemia were not included in the study.",
+    "sayfa": 2,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "cardiologists in the left decubitus state using an EPIQ 7 ECO device (Philips, Amsterdam, Netherlands) and a 2.5-3.5 MHz transducer.",
+    "klinik_bilgi": "Hastalar merkezimizin ekokardiyografi bölümünde iki deneyimli kardiyolog tarafından sol dekübit pozisyonda EPIQ 7 ECO cihazı ve 2.5-3.5 MHz transdüserle değerlendirildi.",
+    "kanit_cumle": "The patients were evaluated in the echocardiography (ECO) department of our center by two experienced",
+    "sayfa": 2,
+    "sayfa_bitis": 3,
+    "birlestirme": "sayfa",
+    "kanit_parcalari": [
+      {
+        "sayfa": 2,
+        "metin": "The patients were evaluated in the echocardiography (ECO) department of our center by two experienced"
+      },
+      {
+        "sayfa": 3,
+        "metin": "cardiologists in the left decubitus state using an EPIQ 7 ECO device (Philips, Amsterdam, Netherlands) and a 2.5-3.5 MHz transducer."
+      }
+    ],
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The left ventricular ejection fraction of all patients was determined by the modified Simpsons method.",
+    "kanit_cumle": "The left ventricular ejection fraction of all patients was determined by the modified Simpsons method.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "The left ventricular ejection fraction of all patients",
+    "kanit_cumle": "The left ventricular ejection fraction of all patients was determined by the modified Simpsons method.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "After the patients rested for at least thirty minutes, a 12-lead ECG (Cardiofax V; Nihon Kohden Corp., Tokyo, Japan; 10 mm/mV and 25 mm/sec) was taken by experienced technicians in the supine position under the supervision of a cardiologist.",
+    "kanit_cumle": "After the patients rested for at least thirty minutes, a 12-lead ECG (Cardiofax V; Nihon Kohden Corp., Tokyo, Japan; 10 mm/mV and 25 mm/sec) was taken by experienced technicians in the supine position under the supervision of a cardiologist.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "All patients were required to be non-smokers or fast for 8 hours before blood samples were taken.",
+    "kanit_cumle": "All patients were required to be non-smokers or fast for 8 hours before blood samples were taken.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "Biochemical parameters were evaluated with the Beckman Coulter LH-750 Hematology Analyzer (Beckman Coulter, Inc, Fullerton, California).",
+    "kanit_cumle": "Biochemical parameters were evaluated with the Beckman Coulter LH-750 Hematology Analyzer (Beckman Coulter, Inc, Fullerton, California).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "Lipid panel data obtained by standard evaluation were taken.",
+    "kanit_cumle": "Lipid panel data obtained by standard evaluation were taken.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "For the diagnosis of hypercholesterolemia, ligh densisity lipoproteine value was determined to be higher than 130 mg/dL and those who were previously diagnosed with hypercholesterolemia or were treated for hypercholesterolemia.",
+    "kanit_cumle": "For the diagnosis of hypercholesterolemia, ligh densisity lipoproteine value was determined to be higher than 130 mg/dL and those who were previously diagnosed with hypercholesterolemia or were treated for hypercholesterolemia.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "DM was defined as fasting serum glucose value ≥ 126 mg/dL, HbA1c ≥ 6.5%, or using DM medication.",
+    "kanit_cumle": "DM was defined as fasting serum glucose value ≥ 126 mg/dL, HbA1c ≥ 6.5%, or using DM medication.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "teshis_yontemi",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "intermittent systolic/diastolic blood pressure measurements were taken after thirty minutes of rest",
+    "kanit_cumle": "For the diagnosis of hypertension, intermittent systolic/diastolic blood pressure measurements were taken after thirty minutes of rest, and patients whose value was higher than 140/90 mmHg or who had previously received treatment with a diagnosis of hypertension were included.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "For the diagnosis of hypertension, intermittent systolic/diastolic blood pressure measurements were taken after thirty minutes of rest, and patients whose value was higher than 140/90 mmHg or who had previously received treatment with a diagnosis of hypertension were included.",
+    "kanit_cumle": "For the diagnosis of hypertension, intermittent systolic/diastolic blood pressure measurements were taken after thirty minutes of rest, and patients whose value was higher than 140/90 mmHg or who had previously received treatment with a diagnosis of hypertension were included.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "Patients who continued to smoke for the last six months were determined as smokers.",
+    "kanit_cumle": "Patients who continued to smoke for the last six months were determined as smokers.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "In patients with rheumatic valve disease, mild mitral stenosis was accepted as mitral valve gradient  <5 mmHg.",
+    "kanit_cumle": "In patients with rheumatic valve disease, mild mitral stenosis was accepted as mitral valve gradient  <5 mmHg.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani_kriteri",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "According to the European Society of Cardiology guideline, patients with chronic coronary syndrome were considered to have coronary artery disease (CAD).",
+    "kanit_cumle": "According to the European Society of Cardiology guideline, patients with chronic coronary syndrome were considered to have coronary artery disease (CAD).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "HCR; It was calculated by dividing HbA1c to C-peptide.",
+    "kanit_cumle": "HCR; It was calculated by dividing HbA1c to C-peptide.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "CHA2DS2-VASc (C: congestive HF or left ventricular systolic dysfunction, H: hypertension, A: ≥ 75 years, D: DM, S: previous stroke, V: vascular disease, A: 65 to 74 years, and Sc: female gender) scores of all groups were calculated.",
+    "kanit_cumle": "CHA2DS2-VASc (C: congestive HF or left ventricular systolic dysfunction, H: hypertension, A: ≥ 75 years, D: DM, S: previous stroke, V: vascular disease, A: 65 to 74 years, and Sc: female gender) scores of all groups were calculated.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "1,225 patients with AF included in the study.",
+    "kanit_cumle": "1,225 patients with AF included in the study.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "Age",
+    "kanit_cumle": "Age, diabetes, heart rate and CHA2DS2-VASc score were calculated to be higher in the group with AF diagnosed with ischemic events (Table 1).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "diabetes",
+    "kanit_cumle": "Age, diabetes, heart rate and CHA2DS2-VASc score were calculated to be higher in the group with AF diagnosed with ischemic events (Table 1).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "heart rate",
+    "kanit_cumle": "Age, diabetes, heart rate and CHA2DS2-VASc score were calculated to be higher in the group with AF diagnosed with ischemic events (Table 1).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "CHA2DS2-VASc score",
+    "kanit_cumle": "Age, diabetes, heart rate and CHA2DS2-VASc score were calculated to be higher in the group with AF diagnosed with ischemic events (Table 1).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "NT-pro BNP value was found to be higher in the group experiencing AF and ischemic events.",
+    "kanit_cumle": "NT-pro BNP value was found to be higher in the group experiencing AF and ischemic events.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "HbA1c value was found to be significantly higher in patients who experienced ischemic events when compared to patients who experienced ischemic events and patients who did not experience ischemic events.",
+    "kanit_cumle": "HbA1c value was found to be significantly higher in patients who experienced ischemic events when compared to patients who experienced ischemic events and patients who did not experience ischemic events.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "C-peptide value was found to be higher in the group that did not experience ischemic events.",
+    "kanit_cumle": "C-peptide value was found to be higher in the group that did not experience ischemic events.",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "The HCR score was found to be statistically significantly higher in patients who experienced an ischemic event than in patients who did not experience an ischemic event (Table 1).",
+    "kanit_cumle": "The HCR score was found to be statistically significantly higher in patients who experienced an ischemic event than in patients who did not experience an ischemic event (Table 1).",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "transischemic attack in 245 patients (65.86%)",
+    "kanit_cumle": "The events that occurred in patients who developed ischemic events were as follows; transischemic attack in 245 patients (65.86%), ischemic stroke in 100 patients (26.88%), mesenteric ischemia in 7 patients",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "ischemic stroke in 100 patients (26.88%)",
+    "kanit_cumle": "The events that occurred in patients who developed ischemic events were as follows; transischemic attack in 245 patients (65.86%), ischemic stroke in 100 patients (26.88%), mesenteric ischemia in 7 patients",
+    "sayfa": 3,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "mesenteric ischemia in 7 patients",
+    "klinik_bilgi": "Mezenterik iskemi: 7 hasta (%1.88).",
+    "kanit_cumle": "The events that occurred in patients who developed ischemic events were as follows; transischemic attack in 245 patients (65.86%), ischemic stroke in 100 patients (26.88%), mesenteric ischemia in 7 patients",
+    "sayfa": 3,
+    "sayfa_bitis": 5,
+    "birlestirme": "ara_blok",
+    "kanit_parcalari": [
+      {
+        "sayfa": 3,
+        "metin": "The events that occurred in patients who developed ischemic events were as follows; transischemic attack in 245 patients (65.86%), ischemic stroke in 100 patients (26.88%), mesenteric ischemia in 7 patients"
+      },
+      {
+        "sayfa": 5,
+        "metin": "(1.88%) and chronic thromboembolic event in 20 patients (5.37%)."
+      }
+    ],
+    "kanit_turu": "metin",
+    "deger": "1.88",
+    "unit": "%"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|emograpcs eatures<br>Age (years)|62±10.3|58.2±11.2|0.002|",
+    "kanit_cumle": "|emograpcs eatures<br>Age (years)|62±10.3|58.2±11.2|0.002|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Female gender n (%)<br>|189 (50.8)<br>|435 (50.99)<br>|0.289<br>|",
+    "kanit_cumle": "|Female gender n (%)<br>|189 (50.8)<br>|435 (50.99)<br>|0.289<br>|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|BMI kg/m<sup>2</sup>|29.23±4.23|28.43±3.3|0.473|",
+    "kanit_cumle": "|BMI kg/m<sup>2</sup>|29.23±4.23|28.43±3.3|0.473|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|CAD n (%)|119 (31.98)|257 (30.12)|0.243|",
+    "kanit_cumle": "|CAD n (%)|119 (31.98)|257 (30.12)|0.243|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Diabetes mellitus n (%)|167 (44.89)|341 (39.97)|0.007|",
+    "kanit_cumle": "|Diabetes mellitus n (%)|167 (44.89)|341 (39.97)|0.007|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Hypertension n (%)|156 (41.93)|358 (41.96)|0.537|",
+    "kanit_cumle": "|Hypertension n (%)|156 (41.93)|358 (41.96)|0.537|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Hyperlipidemia n (%)|85 (22.84)|196 (22.97)|0.943|",
+    "kanit_cumle": "|Hyperlipidemia n (%)|85 (22.84)|196 (22.97)|0.943|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Smoking n (%)|120 (32.25)|267 (31.30)|0.176|",
+    "kanit_cumle": "|Smoking n (%)|120 (32.25)|267 (31.30)|0.176|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|HF n (%)|81 (21.77)|180 (21.10)|0.195|",
+    "kanit_cumle": "|HF n (%)|81 (21.77)|180 (21.10)|0.195|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Heart rate (bpm)|127.68 (55-139)|102.52 (53-141)|0.003|",
+    "kanit_cumle": "|Heart rate (bpm)|127.68 (55-139)|102.52 (53-141)|0.003|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|CHA2DS2-vASc score|4.57 (0-7)|3.18 (0-7)|<0.001|",
+    "kanit_cumle": "|CHA2DS2-vASc score|4.57 (0-7)|3.18 (0-7)|<0.001|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Glucose (mg/dL)|127.23±11.43|125.18±12.21|0.437|",
+    "kanit_cumle": "|Glucose (mg/dL)|127.23±11.43|125.18±12.21|0.437|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Creatinin (mg/dL)|1.12±0.53|1.09±0.57|0.931|",
+    "kanit_cumle": "|Creatinin (mg/dL)|1.12±0.53|1.09±0.57|0.931|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|BuN (mg/dL )|25.4±11.2|26.3±11.01|0.352|",
+    "kanit_cumle": "|BuN (mg/dL )|25.4±11.2|26.3±11.01|0.352|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Sodium (mmol/L)|137.62±12.09|139.01±9.34|0.723|",
+    "kanit_cumle": "|Sodium (mmol/L)|137.62±12.09|139.01±9.34|0.723|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|<br>potassium (mmol/L)|3.55±1.31|3.78±0.85|0.837|",
+    "kanit_cumle": "|<br>potassium (mmol/L)|3.55±1.31|3.78±0.85|0.837|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Albumin (g/dL)|4.52±1.32|4.32±1.57|0.381|",
+    "kanit_cumle": "|Albumin (g/dL)|4.52±1.32|4.32±1.57|0.381|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|ALT (u/L)|28.44±1.45|29.38±1.51|0.349|",
+    "kanit_cumle": "|ALT (u/L)|28.44±1.45|29.38±1.51|0.349|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|AST (u/L)|22.63±4.17|23.57±3.68|0.553|",
+    "kanit_cumle": "|AST (u/L)|22.63±4.17|23.57±3.68|0.553|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|TSH (µIu/mL)|1.88±0.87|1.93±0.99|0.738|",
+    "kanit_cumle": "|TSH (µIu/mL)|1.88±0.87|1.93±0.99|0.738|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|T4 (µIu/mL)|1.23±0.57|1.30±0.77|0.182|",
+    "kanit_cumle": "|T4 (µIu/mL)|1.23±0.57|1.30±0.77|0.182|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Haemoglobin (g/dL)|10.21±2.26|11.20±1.38|0.340|",
+    "kanit_cumle": "|Haemoglobin (g/dL)|10.21±2.26|11.20±1.38|0.340|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|WBC count (x10<sup>3</sup>/µl)|11.96±1.27|11.23±1.53|0.473|",
+    "kanit_cumle": "|WBC count (x10<sup>3</sup>/µl)|11.96±1.27|11.23±1.53|0.473|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|platelet (x10<sup>3</sup>/µl)|358.66±21.56|366.11±23.59|0.188|",
+    "kanit_cumle": "|platelet (x10<sup>3</sup>/µl)|358.66±21.56|366.11±23.59|0.188|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|LDL-cholesterol (mg/dL)|131.26±21.33|130.61±22.53|0.364|",
+    "kanit_cumle": "|LDL-cholesterol (mg/dL)|131.26±21.33|130.61±22.53|0.364|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|HDL-cholesterol(mg/dL)|32.64±4.77|31.62±5.73|0.281|",
+    "kanit_cumle": "|HDL-cholesterol(mg/dL)|32.64±4.77|31.62±5.73|0.281|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Triglyceride, (mg/dL)|231.13±11.57|229.14±12.55|0.137|",
+    "kanit_cumle": "|Triglyceride, (mg/dL)|231.13±11.57|229.14±12.55|0.137|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|NT-pro BNp(pg/mL)|593.28±57.63|420.36±53.46|0.015|",
+    "kanit_cumle": "|NT-pro BNp(pg/mL)|593.28±57.63|420.36±53.46|0.015|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|HbA1c|7.83±1.2|6.23±1.2|<0.001|",
+    "kanit_cumle": "|HbA1c|7.83±1.2|6.23±1.2|<0.001|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|C-peptide|2.23±0.8|3.76±0.78|<0.001|",
+    "kanit_cumle": "|C-peptide|2.23±0.8|3.76±0.78|<0.001|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|HCR|3.41±1.18|2.15±1.01|<0.001|",
+    "kanit_cumle": "|HCR|3.41±1.18|2.15±1.01|<0.001|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|LvEF (%)|50.12±5.34|51.43±5.47|0.453|",
+    "kanit_cumle": "|LvEF (%)|50.12±5.34|51.43±5.47|0.453|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|LA size (mm)|48.52±9.53|43.28±8.52|0.032|",
+    "kanit_cumle": "|LA size (mm)|48.52±9.53|43.28±8.52|0.032|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|LvDD (mm)|48.22±2.2|47.43±2.1|0.266|",
+    "kanit_cumle": "|LvDD (mm)|48.22±2.2|47.43±2.1|0.266|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|LvDS (mm)|34.61±2.8|35.44±2.78|0.519|",
+    "kanit_cumle": "|LvDS (mm)|34.61±2.8|35.44±2.78|0.519|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|IvSD (mm)|10.62±2.4|10.43±2.1|0.599|",
+    "kanit_cumle": "|IvSD (mm)|10.62±2.4|10.43±2.1|0.599|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|<br>E/e'|13.83±2.7|13.79±3.1|0.239|",
+    "kanit_cumle": "|<br>E/e'|13.83±2.7|13.79±3.1|0.239|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Mild mitral stenosis n (%)|55 (14.78)|127 (14.88)|0.979|",
+    "kanit_cumle": "|Mild mitral stenosis n (%)|55 (14.78)|127 (14.88)|0.979|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Acetylsalicylic acid n (%)|18 (4.83)|41 (4.80)|0.539|",
+    "kanit_cumle": "|Acetylsalicylic acid n (%)|18 (4.83)|41 (4.80)|0.539|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|ACE I, ARB n (%)|189 (50.80)|418 (49)|0.161|",
+    "kanit_cumle": "|ACE I, ARB n (%)|189 (50.80)|418 (49)|0.161|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Beta bloker n (%)|297 (79.83)|682 (79.95)|0.637|",
+    "kanit_cumle": "|Beta bloker n (%)|297 (79.83)|682 (79.95)|0.637|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Statin n (%)|186 (50)|435 (50.99)|0.527|",
+    "kanit_cumle": "|Statin n (%)|186 (50)|435 (50.99)|0.527|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Calcium channel blokers n (%)|111 (29.83)|255 (29.89)|0.681|",
+    "kanit_cumle": "|Calcium channel blokers n (%)|111 (29.83)|255 (29.89)|0.681|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Dihydropyridine|40 (10.75)|93 (10.90)|0.791|",
+    "kanit_cumle": "|Dihydropyridine|40 (10.75)|93 (10.90)|0.791|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Nondihydropyridine|82 (22.04)|187 (21.92)|0.837|",
+    "kanit_cumle": "|Nondihydropyridine|82 (22.04)|187 (21.92)|0.837|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Anticoagulant medication n (%)|358 (96.23)|812 (95.19)|0.561|",
+    "kanit_cumle": "|Anticoagulant medication n (%)|358 (96.23)|812 (95.19)|0.561|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|<br>Warfarin|<br>21 (5.64)|<br>42 (4.92)|0.781|",
+    "kanit_cumle": "|<br>Warfarin|<br>21 (5.64)|<br>42 (4.92)|0.781|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Apixaban|102 (27.41)|238 (27.90)|0.697|",
+    "kanit_cumle": "|Apixaban|102 (27.41)|238 (27.90)|0.697|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Rivaroxaban|115 (30.91)|264 (30.94)|0.738|",
+    "kanit_cumle": "|Rivaroxaban|115 (30.91)|264 (30.94)|0.738|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Edoxaban|99 (26.61)|223 (26.14)|0.957|",
+    "kanit_cumle": "|Edoxaban|99 (26.61)|223 (26.14)|0.957|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Dabigatran|21 (5.64)|45 (5.27)|0.473|",
+    "kanit_cumle": "|Dabigatran|21 (5.64)|45 (5.27)|0.473|",
+    "sayfa": 4,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "chronic thromboembolic event in 20 patients (5.37%).",
+    "kanit_cumle": "(1.88%) and chronic thromboembolic event in 20 patients (5.37%).",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "the cut-off value of the HCR value in patients experiencing AF and ischemic events was found to be 2.82, with 79% sensitivity and 81% specificity (AUC=0.821, CI95=0.682–0.889, p<001)",
+    "kanit_cumle": "In the ROC analysis, the cut-off value of the HCR value in patients experiencing AF and ischemic events was found to be 2.82, with 79% sensitivity and 81% specificity (AUC=0.821, CI95=0.682–0.889, p<001) (Figure 1).",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "the cut-off value of the HbA1c value in patients experiencing AF and ischemic events was found to be 6.82, with 71% sensitivity and 70% specificity (AUC=0.712, CI95=0.542-0.763, p<001)",
+    "kanit_cumle": "In the ROC analysis, the cut-off value of the HbA1c value in patients experiencing AF and ischemic events was found to be 6.82, with 71% sensitivity and 70% specificity (AUC=0.712, CI95=0.542-0.763, p<001) (Figure 1).",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "the cut-off value of the C peptide value in patients experiencing AF and ischemic events was found to be 2.72, with 70% sensitivity and 68%",
+    "klinik_bilgi": "C-peptid için ROC analizinde cut-off 2.72; duyarlılık %70, özgüllük %68 (AUC=0.692, CI95=0.512-0.753).",
+    "kanit_cumle": "In the ROC analysis, the cut-off value of the C peptide value in patients experiencing AF and ischemic events was found to be 2.72, with 70% sensitivity and 68%",
+    "sayfa": 5,
+    "sayfa_bitis": 5,
+    "birlestirme": "ara_blok",
+    "kanit_parcalari": [
+      {
+        "sayfa": 5,
+        "metin": "In the ROC analysis, the cut-off value of the C peptide value in patients experiencing AF and ischemic events was found to be 2.72, with 70% sensitivity and 68%"
+      },
+      {
+        "sayfa": 5,
+        "metin": "specificity (AUC=0.692, CI95=0.512-0.753, p<001) (Figure 1)."
+      }
+    ],
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "specificity (AUC=0.692, CI95=0.512-0.753, p<001)",
+    "klinik_bilgi": "C-peptid için ROC analizinde cut-off 2.72; duyarlılık %70, özgüllük %68 (AUC=0.692, CI95=0.512-0.753).",
+    "kanit_cumle": "In the ROC analysis, the cut-off value of the C peptide value in patients experiencing AF and ischemic events was found to be 2.72, with 70% sensitivity and 68%",
+    "sayfa": 5,
+    "sayfa_bitis": 5,
+    "birlestirme": "ara_blok",
+    "kanit_parcalari": [
+      {
+        "sayfa": 5,
+        "metin": "In the ROC analysis, the cut-off value of the C peptide value in patients experiencing AF and ischemic events was found to be 2.72, with 70% sensitivity and 68%"
+      },
+      {
+        "sayfa": 5,
+        "metin": "specificity (AUC=0.692, CI95=0.512-0.753, p<001) (Figure 1)."
+      }
+    ],
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "diabetes, CHA2DS2-VASc score, LA size, HCR were determined to be independent potential predictors of experiencing AF and experiencing an ischemic event",
+    "kanit_cumle": "In multivariate logistic regression analysis, diabetes, CHA2DS2-VASc score, LA size, HCR were determined to be independent potential predictors of experiencing AF and experiencing an ischemic event (Table 2).",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "we found that there is a significant relationship between ischemic events and HCR in AF patients.",
+    "kanit_cumle": "As a result of our study, we found that there is a significant relationship between ischemic events and HCR in AF patients.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "A previous study found a significant positive relationship between HbA1c values and AF duration, indicating that impaired glucose metabolism is associated with increased AF burden.",
+    "kanit_cumle": "A previous study found a significant positive relationship between HbA1c values and AF duration, indicating that impaired glucose metabolism is associated with increased AF burden.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "DM",
+    "kanit_cumle": "Considering that DM increases the thromboembolic risk in AF and further exacerbates arrhythmia, HbA1c values may be a useful tool in strategies aimed at reducing the burden of AF and associated pathologies.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "recommendation",
+    "klinik_bilgi_en": "HbA1c values may be a useful tool in strategies aimed at reducing the burden of AF and associated pathologies.",
+    "kanit_cumle": "Considering that DM increases the thromboembolic risk in AF and further exacerbates arrhythmia, HbA1c values may be a useful tool in strategies aimed at reducing the burden of AF and associated pathologies.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HbA1c is directly related to the risk of stroke",
+    "kanit_cumle": "Supporting this idea, a study showed that HbA1c is directly related to the risk of stroke and that HbA1c assessment increases the accuracy of predicting stroke in patients diagnosed with DM with AF.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HbA1c assessment increases the accuracy of predicting stroke in patients diagnosed with DM with AF.",
+    "kanit_cumle": "Supporting this idea, a study showed that HbA1c is directly related to the risk of stroke and that HbA1c assessment increases the accuracy of predicting stroke in patients diagnosed with DM with AF.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "high HbA1c values may increase the risk of AF in patients diagnosed with DM.",
+    "kanit_cumle": "Another publication showed that high HbA1c values may increase the risk of AF in patients diagnosed with DM.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Poor glycemic control demonstrated by increased HbA1c values is an independent risk factor for AF.",
+    "kanit_cumle": "Poor glycemic control demonstrated by increased HbA1c values is an independent risk factor for AF.",
+    "sayfa": 5,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Age|1.254 (0.892-1.372)|0.002|0.852 (0.542-0.915)|0.679|",
+    "kanit_cumle": "|Age|1.254 (0.892-1.372)|0.002|0.852 (0.542-0.915)|0.679|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Diabetes mellitus|**1.851 (1.032-1.984)**|**0.007**|**1.472 (1.120-1.823)**|**0.031**|",
+    "kanit_cumle": "|Diabetes mellitus|**1.851 (1.032-1.984)**|**0.007**|**1.472 (1.120-1.823)**|**0.031**|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|Heart rate|1.185 (0.136-1.788)|0.003|0.941 (0.781-1.120)|0.329|",
+    "kanit_cumle": "|Heart rate|1.185 (0.136-1.788)|0.003|0.941 (0.781-1.120)|0.329|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|CHA2DS2-vASc score|**1.286 (0.650-1.824)**|**<0.001**|**1.324 (1.012-1.565)**|**<0.001**|",
+    "kanit_cumle": "|CHA2DS2-vASc score|**1.286 (0.650-1.824)**|**<0.001**|**1.324 (1.012-1.565)**|**<0.001**|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|NT-pro BNp(pg/mL)|1.583 (1.012-1.812)|0.015|0.991 (0.831-1.103)|0.451|",
+    "kanit_cumle": "|NT-pro BNp(pg/mL)|1.583 (1.012-1.812)|0.015|0.991 (0.831-1.103)|0.451|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|LA size (mm)|**1.273 (0.963-1.521)**|**0.032**|**1.251 (0.845-1.423)**|**0.030**|",
+    "kanit_cumle": "|LA size (mm)|**1.273 (0.963-1.521)**|**0.032**|**1.251 (0.845-1.423)**|**0.030**|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "|HCR|**3.124 (2.213-4.310)**|**<0.001**|**3.216 (2.334-4.365)**|**<0.001**|",
+    "kanit_cumle": "|HCR|**3.124 (2.213-4.310)**|**<0.001**|**3.216 (2.334-4.365)**|**<0.001**|",
+    "sayfa": 5,
+    "kanit_turu": "tablo"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "High HbA1c values have been associated not only with long-term damage to glycolipid metabolism but also with low-grade systematic inflammation and progression of atherosclerotic diseases.",
+    "kanit_cumle": "High HbA1c values have been associated not only with long-term damage to glycolipid metabolism but also with low-grade systematic inflammation and progression of atherosclerotic diseases.<sup>22</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "high HbA1c values were associated with markers of systemic inflammation such as D-dimer, C-reactive protein, white blood cell count, uric acid and fibrinogen.",
+    "kanit_cumle": "In a community study, high HbA1c values were associated with markers of systemic inflammation such as D-dimer, C-reactive protein, white blood cell count, uric acid and fibrinogen.<sup>23</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "excessive secretion of collagen proteins may increase atrial activation time and cycle length, and reduce atrial voltage, which creates a substrate for the development and maintenance of AF.",
+    "kanit_cumle": "Additionally, excessive secretion of collagen proteins may increase atrial activation time and cycle length, and reduce atrial voltage, which creates a substrate for the development and maintenance of AF.<sup>25</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "high HbA1c values may be related to inflammatory events in the pathophysiology of AF.",
+    "kanit_cumle": "Therefore, high HbA1c values may be related to inflammatory events in the pathophysiology of AF.",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "tani",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "DM",
+    "kanit_cumle": "DM is a prothrombotic disease that creates a hypercoagulable state.<sup>6</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "It contributes to this condition mainly by increasing endothelial dysfunction and platelet activation and aggregation.",
+    "kanit_cumle": "It contributes to this condition mainly by increasing endothelial dysfunction and platelet activation and aggregation.<sup>26</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "highly glycosylated hemoglobin plays an important role in these patients.",
+    "kanit_cumle": "Although various mechanisms are involved in platelet hyperactivation and aggregation in these patients, highly glycosylated hemoglobin plays an important role in these patients.<sup>10</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HbA1c has also been shown to be an important prognostic marker in non-diabetics.",
+    "kanit_cumle": "HbA1c has also been shown to be an important prognostic marker in non-diabetics.<sup>7</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HbA1c contributes to this interaction by inhibiting platelet activation and nitric oxide (NO) production; this prevents platelets from adhering to the vascular endothelial region by increasing the amount of cytoplasmic cyclic guanosine monophosphate present in platelets or mediated by peripheral β -adrenoceptors.",
+    "kanit_cumle": "It has been suggested that HbA1c contributes to this interaction by inhibiting platelet activation and nitric oxide (NO) production; this prevents platelets from adhering to the vascular endothelial region by increasing the amount of cytoplasmic cyclic guanosine monophosphate present in platelets or mediated by peripheral β -adrenoceptors.<sup>9</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Lowering HbA1c has also been shown to negatively affect platelet hyperactivity in patients experiencing acute coronary syndrome with poor glycemic values.",
+    "kanit_cumle": "Lowering HbA1c has also been shown to negatively affect platelet hyperactivity in patients experiencing acute coronary syndrome with poor glycemic values.<sup>10</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide is a marker of the pancreatic reserve state",
+    "kanit_cumle": "C-peptide is a marker of the pancreatic reserve state, which is secreted from pancreatic beta cells in equimolar amounts with insulin upon the breakdown of proinsulin and plays a bioactive role in many molecular pathways.<sup>12</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "it is a useful and frequently used marker used in clinics today to find the cause of hypoglycemia, regulate diabetes treatment, and evaluate the distinction between T1DM and T2DM when diagnosed.",
+    "kanit_cumle": "Since its half-life is longer than insulin, it is a useful and frequently used marker used in clinics today to find the cause of hypoglycemia, regulate diabetes treatment, and evaluate the distinction between T1DM and T2DM when diagnosed.",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "excessive amounts of C-peptide may reduce thrombus formation.",
+    "kanit_cumle": "It has been determined that excessive amounts of C-peptide may reduce thrombus formation.<sup>13</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide-induced NO formation may be beneficial in cardiovascular events by preventing the interaction of erythrocytes and leukocytes with the endothelium in vitro.",
+    "kanit_cumle": "It has been determined that C-peptide-induced NO formation may be beneficial in cardiovascular events by preventing the interaction of erythrocytes and leukocytes with the endothelium in vitro.<sup>14</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "It has been shown to increase the amount of skin microvascular blood flow in DM patients by stimulating Na+, K+-ATPase activity and NO formation.",
+    "kanit_cumle": "It has been shown to increase the amount of skin microvascular blood flow in DM patients by stimulating Na+, K+-ATPase activity and NO formation.<sup>29</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide has been shown to improve erythrocyte deformation by increasing Na+, K+-ATPase activity.",
+    "kanit_cumle": "In contrast to HbA1c, C-peptide has been shown to improve erythrocyte deformation by increasing Na+, K+-ATPase activity.<sup>30</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide could inhibit the adhesion of platelets to the endothelium in the presence of erythrocytes.",
+    "kanit_cumle": "In an in vitro study with immobilized endothelial cells, it was shown that C-peptide could inhibit the adhesion of platelets to the endothelium in the presence of erythrocytes.<sup>31</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide was shown to induce NO formation in both endothelium and platelets by stimulating the formation of adenosine triphosphate (ATP) in erythrocytes.",
+    "kanit_cumle": "In another study, C-peptide was shown to induce NO formation in both endothelium and platelets by stimulating the formation of adenosine triphosphate (ATP) in erythrocytes.<sup>32</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide has been found in many studies to reverse the consequences of NO depletion and deficiency in many tissues.",
+    "kanit_cumle": "C-peptide has been found in many studies to reverse the consequences of NO depletion and deficiency in many tissues.<sup>33</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "Endothelial dysfunction is associated with decreased NO production and increased reactive oxygen samples (ROS) production, leading to obstruction of blood flow and predisposition to atherogenesis and thrombosis in vessels.",
+    "kanit_cumle": "Endothelial dysfunction is associated with decreased NO production and increased reactive oxygen samples (ROS) production, leading to obstruction of blood flow and predisposition to atherogenesis and thrombosis in vessels.<sup>34</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide has been shown to inhibit endothelial apoptosis due to hyperglycemia and reduce NADPH oxidase-induced production of ROS in the human aorta.",
+    "kanit_cumle": "C-peptide has been shown to inhibit endothelial apoptosis due to hyperglycemia and reduce NADPH oxidase-induced production of ROS in the human aorta.<sup>35</sup>",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "C-peptide has been found to reduce ROS production through AMPK (activated protein kinase) activation and vascular endothelial growth factor inhibition.",
+    "kanit_cumle": "Additionally, C-peptide has been found to reduce ROS production through AMPK (activated protein kinase) activation and vascular endothelial growth factor inhibition.",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "ROS production increases in chronic hyperglycemic states as determined by HbA1c.",
+    "kanit_cumle": "In contrast to C-peptide, ROS production increases in chronic hyperglycemic states as determined by HbA1c.",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "HbA1c was higher and C-peptide value was lower in AF patients who experienced ischemic events.",
+    "kanit_cumle": "In our study, HbA1c was higher and C-peptide value was lower in AF patients who experienced ischemic events.",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "AF patients are prone to ischemic events, but high HbA1c and low c peptide further increase this situation.",
+    "kanit_cumle": "AF patients are prone to ischemic events, but high HbA1c and low c peptide further increase this situation.",
+    "sayfa": 6,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "HCR rate is directly proportional to HbA1c value and inversely proportional to C-pep-",
+    "klinik_bilgi": "HCR, HbA1c değeriyle doğru, C-peptid düzeyiyle ters orantılıdır.",
+    "kanit_cumle": "HCR rate is directly proportional to HbA1c value and inversely proportional to C-pep-",
+    "sayfa": 6,
+    "sayfa_bitis": 7,
+    "birlestirme": "sayfa",
+    "kanit_parcalari": [
+      {
+        "sayfa": 6,
+        "metin": "HCR rate is directly proportional to HbA1c value and inversely proportional to C-pep-"
+      },
+      {
+        "sayfa": 7,
+        "metin": "tide level."
+      }
+    ],
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "the HCR rate was found to be higher in patients with ischemic events",
+    "kanit_cumle": "For this reason, the HCR rate was found to be higher in patients with ischemic events, and in statistical analysis, it was found to be an independent predictor of ischemic events in patients diagnosed with AF.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "klinik_sonuc",
+    "baglam": "study_finding",
+    "klinik_bilgi_en": "it was found to be an independent predictor of ischemic events in patients diagnosed with AF",
+    "kanit_cumle": "For this reason, the HCR rate was found to be higher in patients with ischemic events, and in statistical analysis, it was found to be an independent predictor of ischemic events in patients diagnosed with AF.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "recommendation",
+    "klinik_bilgi_en": "HCR rate is an important parameter that should be used in the diagnosis and follow-up of AF patients",
+    "kanit_cumle": "Therefore, HCR rate is an important parameter that should be used in the diagnosis and follow-up of AF patients.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "ilac",
+    "baglam": "recommendation",
+    "klinik_bilgi_en": "choosing anticoagulants and keeping close follow-up in patients with high HCR rates",
+    "kanit_cumle": "Care should be taken in choosing anticoagulants and keeping close follow-up in patients with high HCR rates.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "this study was designed retrospectively",
+    "kanit_cumle": "Since this study was designed retrospectively, full control over the data could not be achieved, and the limitations of our study include potential gaps in patient records.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "the generalizability of the study results is limited due to the inability to access patient records from other centers",
+    "kanit_cumle": "Additionally, the generalizability of the study results is limited due to the inability to access patient records from other centers.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "additional control over potential confounding effects related to the presence of DM could not be achieved",
+    "kanit_cumle": "Since our study is a retrospective analysis, additional control over potential confounding effects related to the presence of DM could not be achieved.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "recommendation",
+    "klinik_bilgi_en": "using methods such as Propensity Score Matching to equalize groups with and without DM in larger sample sizes would be beneficial for enhancing comparability",
+    "kanit_cumle": "In future studies, using methods such as Propensity Score Matching to equalize groups with and without DM in larger sample sizes would be beneficial for enhancing comparability.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "hasta_grubu",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "patients with AF who had an ischemic attack",
+    "kanit_cumle": "Our study was planned among patients with AF who had an ischemic attack.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "literature_background",
+    "klinik_bilgi_en": "HCR has previously been found to be high in patients with CAD with extensive thrombus",
+    "kanit_cumle": "Although HCR has previously been found to be high in patients with CAD with extensive thrombus, no study has yet been con-",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "olcum",
+    "baglam": "study_method",
+    "klinik_bilgi_en": "HCR calculated from biochemical samples taken easily and cheaply in patients with AF and ischemic attack",
+    "kanit_cumle": "HCR calculated from biochemical samples taken easily and cheaply in patients with AF and ischemic attack is the first study in this field and we believe that it will lead to other studies.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  },
+  {
+    "bilgi_turu": "diger",
+    "baglam": "recommendation",
+    "klinik_bilgi_en": "It needs to be supported by other multi-center studies with a larger number of patients",
+    "kanit_cumle": "Within the limitations of our study, it seems to be single-centered. It needs to be supported by other multi-center studies with a larger number of patients.",
+    "sayfa": 7,
+    "kanit_turu": "metin"
+  }
+]

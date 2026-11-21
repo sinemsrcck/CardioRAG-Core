@@ -9,7 +9,15 @@ import pymupdf4llm
 
 PDF_DIR = Path("data/pdfs")
 # v3: yan yatırılmış (döndürülmüş) tablo sayfaları bellek içinde düzeltilerek okunur.
-PDF_PROCESSING_VERSION = "markdown-rotated-v3"
+# v4: satır sonunda bölünen sayısal aralıkların tiresi korunur ("0.682-0.889"; v3'te
+#     "0.6820.889"). Metin değiştiği için v3 ile kaydedilmiş belgeler yeniden ingest
+#     edilmeden v4 metniyle karıştırılmaz (article_metadata sürüm kontrolü açık hata verir).
+PDF_PROCESSING_VERSION = "markdown-rotated-v4"
+
+# pymupdf4llm satır sonu tiresini heceleme sayıp siler; iki tarafı da sayı olan bir
+# satır sonu tiresi heceleme olamaz (aralık veya eksi), PDF'teki glif korunmalıdır.
+NUMERIC_LINE_END = re.compile(r"(\d+(?:[.,]\d+)*)-[ \t]*$")
+NUMERIC_LINE_START = re.compile(r"^[ \t]*(\d+(?:[.,]\d+)*)")
 
 # Bir sayfanın metninin (karakter bazında) en az bu kadarı aynı yönde döndürülmüşse
 # sayfa yan yatırılmış sayılır ve düzeltilerek okunur. Kenar bantları ("Author
@@ -221,6 +229,45 @@ def recover_rotated_footnotes(page, page_text):
     return page_text, recovered
 
 
+def numeric_line_break_pairs(raw_text):
+    """Ham PDF metninde satır sonunda tireyle bölünmüş sayı çiftleri: [("0.682", "0.889"), ...]."""
+    lines = raw_text.splitlines() if isinstance(raw_text, str) else []
+    pairs = []
+    for current, following in zip(lines, lines[1:]):
+        left, right = NUMERIC_LINE_END.search(current), NUMERIC_LINE_START.match(following)
+        if left and right:
+            pairs.append((left.group(1), right.group(1)))
+    return pairs
+
+
+def restore_numeric_hyphens(page_text, raw_text):
+    """
+    Markdown dönüşümünde silinen sayısal satır sonu tiresini geri koyar.
+
+    Yalnızca ham metinde "sol-<satır sonu>sağ" olarak görülen ve markdown metninde
+    birleşik "solsağ" biçiminde, ham metindeki geçiş sayısıyla birebir aynı sayıda bulunan
+    çiftler düzeltilir; belirsiz durumda metne dokunulmaz. Rakamlar değişmez, yalnızca
+    PDF'te var olan tire geri gelir. Döndürür: (metin, [{"kind", "text"}]).
+    """
+    restored = []
+    for (left, right), count in _counts(numeric_line_break_pairs(raw_text)).items():
+        joined = re.compile(rf"(?<![\d.,]){re.escape(left)}(?={re.escape(right)}(?!\d|[.,]\d))")
+        matches = list(joined.finditer(page_text))
+        if not matches or len(matches) != count:
+            continue
+        for match in reversed(matches):
+            page_text = page_text[:match.end()] + "-" + page_text[match.end():]
+        restored.extend({"kind": "numeric_hyphen", "text": f"{left}-{right}"} for _ in matches)
+    return page_text, restored
+
+
+def _counts(items):
+    counts = {}
+    for item in items:
+        counts[item] = counts.get(item, 0) + 1
+    return counts
+
+
 def load_pdf(pdf_path):
     """PDF'yi sayfa bazında markdown olarak okuyup yapılandırılmış veri döndürür."""
     pdf_path = Path(pdf_path)
@@ -257,6 +304,7 @@ def load_pdf(pdf_path):
             direction = rotated_page_direction(pdf[page_index])
             if direction is not None:
                 page_text = _join_caption_labels(_derotated_markdown(pdf, page_index, direction))
+            page_text, restored = restore_numeric_hyphens(page_text, pdf[page_index].get_text("text"))
             text = recover_rotated_captions(
                 pdf[page_index],
                 page_text,
@@ -267,6 +315,7 @@ def load_pdf(pdf_path):
                 "page_number": page_index + 1,
                 "text": text,
                 "recovered_pdf_spans": recovered,
+                "restored_numeric_hyphens": restored,
             })
 
     return document

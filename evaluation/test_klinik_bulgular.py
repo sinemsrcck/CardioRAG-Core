@@ -33,6 +33,21 @@ PROFESSOR_TABLES = ("makaleler", "tani_tedavi", "sonuclar", "semptom_iliskileri"
 EXPECTED_PROFESSOR_ROWS = {"makaleler": 5, "tani_tedavi": 392, "sonuclar": 632,
                            "semptom_iliskileri": 18, "icd10_who": 43, "tkd_kurallari": 15}
 
+# Bozuk satırların bağlanacağı üst RAG kaydı. save_rag_result sözleşmesi: çalıştırmanın sabit,
+# kanonik UUID query_id'si ve tam retrieval/reranker listeleri zorunlu. Kanıt yetersiz, LLM
+# çağrılmamış bir sorgu: aday chunk yok (boş ama eksiksiz listeler), kaynak tablosuna satır yazılmaz.
+# UUID sabittir (uuid5, NAMESPACE_URL, "cardiorag-core/evaluation/test_klinik_bulgular"); yazım
+# transaction içinde yapılıp geri alındığı için her çalıştırmada aynı değer kullanılabilir.
+TEST_QUERY_ID = "57c31d7c-3a03-52ea-9006-f9c7c9a451fc"
+TEST_RAG_RESULT = {
+    "query_id": TEST_QUERY_ID,
+    "answer": None, "llm_enabled": False, "embedding_model": "minilm",
+    "evidence_check": {"sufficient": False, "reason": "test"},
+    "response_time_seconds": 0, "rerank_method": "test",
+    "retrieved_count": 0, "sources": [],
+    "debug": {"retrieved_hits": [], "reranked_hits": []},
+}
+
 
 def table_hash(cursor, table, order_by):
     cursor.execute(f"SELECT * FROM `{table}` ORDER BY {order_by}")
@@ -98,11 +113,11 @@ def main():
               scalar(cur, "SELECT COUNT(*) FROM v_tani_tedavi WHERE kaynak = 'hoca' AND review_status IS NULL"))
 
         # 3) Bilerek bozulmuş satırlar -> halusinasyon_degerlendirme
-        query_id = save_rag_result(
-            {"answer": None, "llm_enabled": False, "embedding_model": "minilm",
-             "evidence_check": {"sufficient": False, "reason": "test"},
-             "response_time_seconds": 0, "rerank_method": "test"},
-            "TEST: klinik bulgu çıkarımı", connection=conn)
+        query_id = save_rag_result(copy.deepcopy(TEST_RAG_RESULT), "TEST: klinik bulgu çıkarımı",
+                                   connection=conn)
+        check("RAG üst kaydı: sabit query_id döner", TEST_QUERY_ID, query_id)
+        check("RAG üst kaydı: kaynak satırı yok", 0,
+              scalar(cur, "SELECT COUNT(*) FROM rag_sorgu_kaynaklari WHERE query_id = %s", (query_id,)))
 
         base = next(r for r in rows if r["kanit_turu"] == "metin" and not r["birlestirme"]
                     and "75" not in r["kanit_cumle"] and not r["doz"])
