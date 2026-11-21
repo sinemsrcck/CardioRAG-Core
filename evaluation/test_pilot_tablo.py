@@ -17,6 +17,10 @@ Kontroller:
 - mudahale_turu yalnız ilaç satırlarında ("arka plan tedavisi"); diğerleri boş (aktarım yolu zorunlu tutmuyor).
 - Aktarım (import_records girdisi): 116 kayıt, izinli alanlar, review_status yok; validate_records
   grup/analiz satırlarını tekrar saymıyor, gerçek tekrarı "tekrar" hatasıyla yakalıyor.
+- Temiz satır adı (row_name): istatistik etiketi (n (%), mean ± SD, median (IQR) …) atılır, klinik birim
+  ve <sup> ham kalır, <br> öncesi parça ve kenar ** atılır; ad kanıtta birebir. Aktarımda tablo
+  kaydının klinik_bilgi_en'i temiz ad; zehra_dogrulanmis_v3_3.json'daki 116 tablo kaydıyla birebir
+  aynı, diğer alanlar (taslak_notu.inceleme_notu hariç) da aynı.
 - Veritabanı: gerçek modüller yüklenir (mysql-connector-python gerekli), ama bağlantı fonksiyonları
   çağrılınca hata veren sarmalayıcılarla değiştirilir; hiç çağrılmamalı.
 """
@@ -65,6 +69,80 @@ def note(row):
     return json.loads(row['taslak_notu'])
 
 
+V33 = Path('data/review/pilot/zehra_dogrulanmis_v3_3.json')
+
+
+def transfer_key(record):
+    n = json.loads(record['taslak_notu'])
+    return n['tablo_no'], n['satir_no'], n.get('sutun'), n.get('analiz')
+
+
+def check_row_name_rules():
+    """row_name kuralları (sentetik hücreler; PDF gerekmez)."""
+    cases = [
+        ('CAD n (%)', 'CAD'),                                  # istatistik etiketi atılır
+        ('Female gender, n (%)', 'Female gender'),             # önündeki virgülle
+        ('Smoking n(%)', 'Smoking'),
+        ('Age (years)', 'Age (years)'),                        # klinik birim kalır
+        ('Glucose (mg/dL)', 'Glucose (mg/dL)'),
+        ('LvEF (%)', 'LvEF (%)'),                              # "(%)" tek başına birimdir
+        ('BMI kg/m<sup>2</sup>', 'BMI kg/m<sup>2</sup>'),      # <sup> ham kalır (kanıtta birebir)
+        ('Age, mean ± SD', 'Age'),
+        ('Age (mean ± SD)', 'Age'),
+        ('Weight (kg), mean±SD', 'Weight (kg)'),
+        ('CRP, median (IQR)', 'CRP'),
+        ('CRP (mg/L) median [IQR]', 'CRP (mg/L)'),
+        ('Duration, median (range)', 'Duration'),
+        ('**Hypertension** n (%)', 'Hypertension'),            # kenar ** atılır
+        ('<br>Warfarin', 'Warfarin'),                          # <br> öncesi boş parça
+        ('emograpcs eatures<br>Age (years)', 'Age (years)'),   # <br> öncesi bölüm kalıntısı
+        ('BuN (mg/dL )', 'BuN (mg/dL )'),                      # iç boşluk değişmez (kanıtta birebir)
+        ("E/e'", "E/e'"),
+    ]
+    got = [(cell, pt.row_name(cell)) for cell, _ in cases]
+    check('row_name: istatistik etiketi atılır, birim / <sup> kalır', cases, got)
+    check('row_name: ad ham hücrenin birebir alt dizesi (<br>/kenar ** hariç)', True,
+          all(want in cell for cell, want in cases))
+
+
+def check_clean_names(transfer, tables, real):
+    """Aktarımda klinik_bilgi_en = temiz satır adı; kanıtta birebir; v3_3 ile birebir eşleşme."""
+    rows = {(t['tablo_no'], r['satir_no']): r for t in tables for r in t['satirlar']}
+    names = [(r['klinik_bilgi_en'], rows[transfer_key(r)[:2]]['ad']) for r in transfer]
+    check('aktarım: klinik_bilgi_en = tablo satırının temiz adı', len(transfer), sum(a == b for a, b in names))
+    check('aktarım: klinik_bilgi_en ham tablo satırı değil (| yok, " n (%)" yok)', [],
+          [a for a, _ in names if '|' in a or pt.STAT_LABEL.search(a)][:3])
+    check('aktarım: temiz ad kanit_cumle içinde birebir', len(transfer),
+          sum(r['klinik_bilgi_en'] in r['kanit_cumle'] for r in transfer))
+    check('aktarım: temiz_ad_kanitta_yok sorunu yok', [],
+          [s for t in tables for s in t['sorunlar'] if s['tur'] == 'temiz_ad_kanitta_yok'])
+    examples = {name: next((r['klinik_bilgi_en'] for r in transfer if rows[transfer_key(r)[:2]]['degisken'] == name), None)
+                for name in ('CAD', 'Female gender', 'Age', 'BMI', 'WBC count', 'Warfarin', 'HCR')}
+    check('aktarım örnekleri', {'CAD': 'CAD', 'Female gender': 'Female gender', 'Age': 'Age (years)',
+                                'BMI': 'BMI kg/m<sup>2</sup>', 'WBC count': 'WBC count (x10<sup>3</sup>/µl)',
+                                'Warfarin': 'Warfarin', 'HCR': 'HCR'}, examples)
+    if not (real and V33.exists()):
+        check('v3_3: zehra_dogrulanmis_v3_3.json var (gerçek girdi)', True, False)
+        return
+    v33 = {transfer_key(r): r for r in json.loads(V33.read_text(encoding='utf-8')) if r.get('kanit_turu') == 'tablo'}
+    mine = {transfer_key(r): r for r in transfer}
+    check('v3_3: 116 tablo kaydı, aynı anahtarlar (tablo, satır, sütun, analiz)', (116, True),
+          (len(v33), set(v33) == set(mine)))
+    differ = [(k, mine[k]['klinik_bilgi_en'], v33[k]['klinik_bilgi_en']) for k in v33
+              if k in mine and mine[k]['klinik_bilgi_en'] != v33[k]['klinik_bilgi_en']]
+    check('v3_3: klinik_bilgi_en 116/116 birebir', [], differ[:5])
+
+    def note_without_review(record):
+        note = json.loads(record['taslak_notu'])
+        note.pop('inceleme_notu', None)  # v3_3'te elle eklenmiş inceleme notu; kod üretmez
+        return note
+
+    other = sorted({f for k in v33 if k in mine for f in set(v33[k]) | set(mine[k])
+                    if f not in ('review_status', 'klinik_bilgi_en', 'taslak_notu') and v33[k].get(f) != mine[k].get(f)}
+                   | {'taslak_notu' for k in v33 if k in mine and note_without_review(v33[k]) != note_without_review(mine[k])})
+    check('v3_3: diğer alanlar aynı (review_status ve taslak_notu.inceleme_notu hariç)', [], other)
+
+
 def main():
     if not PDF.exists():
         print(f'PDF bulunamadı: {PDF}')
@@ -73,6 +151,8 @@ def main():
     tables = pt.parse_tables(pages)
     t1 = next(t for t in tables if t['tablo_no'] == 1)
     t2 = next(t for t in tables if t['tablo_no'] == 2)
+
+    check_row_name_rules()
 
     # --- Tablolar ve başlıklar ---
     check('tablo sayısı / sayfalar', [(1, 4), (2, 5)], [(t['tablo_no'], t['sayfa']) for t in tables])
@@ -212,10 +292,12 @@ def main():
           sorted({k for r in transfer for k in r} - allowed))
     check('aktarımda review_status / hasta_sayisi yok', (0, 0),
           (sum('review_status' in r for r in transfer), sum('hasta_sayisi' in r for r in transfer)))
-    check('aktarımda Sinem alanları pilot kaydıyla aynı', True, all(
+    # klinik_bilgi_en bilerek farklı: tablo kaydında ham satır yerine temiz satır adı (aşağıda ayrıca sınanır).
+    check('aktarımda Sinem alanları pilot kaydıyla aynı (klinik_bilgi_en hariç)', True, all(
         all(r[k] == records[json.loads(r['taslak_notu'])['pilot_v2_sira'] - 1][k]
-            for k in ('bilgi_turu', 'baglam', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'kanit_turu'))
+            for k in ('bilgi_turu', 'baglam', 'kanit_cumle', 'sayfa', 'kanit_turu'))
         for r in transfer) if real else True)
+    check_clean_names(transfer, result['tablolar'], real)
     hb_t = [r for r in transfer if r.get('sonuc_olcutu_tr') == 'HbA1c' and json.loads(r['taslak_notu'])['tablo_no'] == 1]
     check('aktarım HbA1c: aynı kanıt, iki grup', (2, 1, ['Ischemic event', 'No ischemic event']),
           (len(hb_t), len({r['kanit_cumle'] for r in hb_t}), [r['hasta_grubu'] for r in hb_t]))
