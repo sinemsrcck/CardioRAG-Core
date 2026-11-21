@@ -11,7 +11,7 @@ Kontroller:
 - Satırlar: HbA1c, Female gender (<br>), Warfarin (<br>'li satır), Table 2 HCR (univariate/multivariate OR, CI, p).
 - Başlık bozulması ("Dhi f" / "emograpcs eatures") raporlanıyor, ad uydurulmuyor; sentetik bozuk başlık da.
 - Ham kanıt sayfa metninde birebir; birim ayırma; eşleşmeyen ve belirsiz kayıt.
-- Zenginleştirme: pilot_findings_v2.json varsa tüm tablo kayıtları eşleşiyor, bilgi_turu/baglam değişmiyor.
+- Zenginleştirme: pilot_tablo.DEFAULT_JSON (v3.2, yoksa v2) varsa tüm tablo kayıtları eşleşiyor, bilgi_turu/baglam değişmiyor.
 - SQL önizleme: grup/analiz başına satır; küme alanları src.clinical_validation kümelerinde;
   validate_row'un sayı ve tablo-kanıt kontrolleri (saf fonksiyonlar) geçiyor.
 - mudahale_turu yalnız ilaç satırlarında ("arka plan tedavisi"); diğerleri boş (aktarım yolu zorunlu tutmuyor).
@@ -155,7 +155,7 @@ def main():
     before = {r['v2_sira']: (r.get('bilgi_turu'), r.get('baglam')) for r in records}
     result = pt.enrich(records, pages, doc['document_id'])
     summary = pt.summarize(result, 'test')
-    check(f'girdi ({"pilot_findings_v2.json" if real else "sentetik"}): tablo kaydı', 58, summary['tablo_kaydi'])
+    check(f'girdi ({pt.DEFAULT_JSON.name if real else "sentetik"}): tablo kaydı', 58, summary['tablo_kaydi'])
     check('eşleşen / eşleşmeyen / belirsiz', (58, 0, 0), (summary['eslesen'], summary['eslesmeyen'], summary['belirsiz']))
     check('pilot kaydında yok', 0, summary['pilot_kaydinda_yok'])
     check('bilgi_turu/baglam değişmedi', True,

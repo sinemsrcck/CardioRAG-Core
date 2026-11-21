@@ -579,7 +579,13 @@ ORDER BY kalite_hata DESC, kalite_uyari DESC, bulgu_id;
 - **Grup ve analiz:** Table 1 satırları grup başına ayrıdır (`hasta_grubu`, `comparator`, `grup_n`, `comparator_n`; aynı satırın p'si iki grupta da aynıdır). Table 2 satırları analiz başına ayrıdır (`analiz` = univariate / multivariate, `etki_turu` = OR, `ci95`). İlaç satırlarında ilaç adı `ilac` sütunundadır, `degisken` "kullanım oranı"dır.
 - **Türkçe etiketler** ek sütunlardır; asıl değerler yanında durur. `bilgi_turu_tr`: tani → Tanı, semptom → Semptom, teshis_yontemi → Teşhis yöntemi, tani_kriteri → Tanı kriteri, tedavi → Tedavi, ilac → İlaç, doz → Doz, hasta_grubu → Hasta grubu, klinik_sonuc → Klinik sonuç, olcum → Ölçüm, diger → Diğer. `baglam_tr`: study_finding → Çalışmanın bulgusu, study_method → Çalışmanın yöntemi, exclusion_criterion → Dışlama kriteri, literature_background → Literatür bilgisi, recommendation → Öneri. `kanit_turu_tr`: metin → Metin, tablo → Tablo.
 - **Kalite sütunları** `v_kalite_bulgu`'dan gelir ve yalnız **en son kalite koşusunun** sürümünü gösterir. Son koşu `--pilot` olmadan yapıldıysa pilot satırlarının işaretleri görünmez (`data_quality` bu durumda uyarı verir).
-- VIEW yalnızca bugünkü sütunlara dayanır. Çok parçalı kanıt (`kanit_parcalari`, pilot v3.1) geldiğinde ayrı bir VIEW ya da yeni sütunlar eklenir; mevcut sütunlar değişmez.
+- **Çok parçalı kanıt** (pilot v3.1+; sayfa sonu, tablo sayfası ya da şekil/tablo başlığıyla bölünmüş tek cümle): `import_records` bitiş sayfasını `kanit_sayfa_bitis`'e, birleşme türünü (`sayfa` / `ara_blok`) `birlestirme`'ye, parçaları `taslak_notu.kanit_parcalari`'ya yazar; `kanit_cumle` ilk parçadır. VIEW'ın sonundaki sütunlar: `kanit_sayfa_bitis`, `birlestirme`, `kanit_parca_sayisi` (parçasız kayıtta 1) ve `kanit_gosterim`. **`kanit_gosterim` yalnız gösterim içindir, birleştirilmiş alıntı değildir**: parçaları `[s.N] metin` işaretiyle sırayla yan yana yazar (parçasız kayıtta `kanit_cumle`). Birebir kanıt `kanit_cumle` ve parçaların kendisidir. `python -m src.data_quality --pilot` her parçayı kendi sayfasında arar; doğrulanan kayıt `pilot_cok_parcali_cozuldu` (bilgi), tutarsız parça `pilot_parca_tutarsiz` (hata) alır.
+
+```sql
+-- Çok parçalı kanıtlı pilot bulgular (parçalar sayfa işaretiyle)
+SELECT bulgu_id, kanit_sayfa, kanit_sayfa_bitis, birlestirme, kanit_parca_sayisi, klinik_bilgi_en, kanit_gosterim
+FROM v_pilot_bulgular WHERE kanit_parca_sayisi > 1 ORDER BY filename, kanit_sayfa, bulgu_id;
+```
 
 ## Bilinen sınırlar
 

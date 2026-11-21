@@ -1,6 +1,7 @@
 """kanit_parcalari (çok parçalı kanıt) ve v3.1 regresyon testleri.
 
 API çağrısı ve veritabanı bağlantısı yoktur. Gerçek PDF/v3 testleri dosyalar yoksa atlanır."""
+import hashlib
 import json
 import unittest
 from collections import Counter
@@ -110,19 +111,109 @@ class RejectedParts(unittest.TestCase):
         self.assertRejected(single, 'yalnızca kanit_parcalari ile')
 
 
-class ImportUnchanged(unittest.TestCase):
-    """import_records değişmedi: çok parçalı kayıtlar veritabanına bağlanmadan açık hatayla durur."""
+class FakeCursor:
+    """import_records'un SQL çağrılarını yakalar (gerçek veritabanı yok)."""
+    COLUMNS = ('bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'document_id', 'kanit_sayfa',
+               'kanit_sayfa_bitis', 'birlestirme', 'kanit_cumle', 'kanit_turu', 'satir_hash', 'review_status',
+               'cikarma_yontemi', 'taslak_notu', 'deger', 'unit', 'p')
 
-    def test_multi_part_records_blocked_before_db(self):
+    def __init__(self, inserts):
+        self.inserts, self.rowcount, self._result = inserts, 0, None
+
+    def execute(self, sql, params=()):
+        if sql.startswith('SELECT filename'):
+            self._result = [('x.pdf',)]
+        elif sql.startswith('SHOW COLUMNS'):
+            self._result = [(c,) for c in self.COLUMNS]
+        else:
+            columns = [c.strip('`') for c in sql.split('(', 1)[1].split(')', 1)[0].split(', ')]
+            self.inserts.append(dict(zip(columns, params)))
+            self.rowcount = 1
+
+    def fetchone(self):
+        return self._result[0]
+
+    def fetchall(self):
+        return self._result
+
+    def close(self):
+        pass
+
+
+class FakeConnection:
+    def __init__(self):
+        self.inserts = []
+
+    def cursor(self):
+        return FakeCursor(self.inserts)
+
+
+class ImportMultipart(unittest.TestCase):
+    """import_records çok parçalı/çok sayfalı kaydı yazar (eski ImportUnchanged yerine).
+
+    Önceki test "SQL'e aktarılmaz" bekliyordu: SQL uyumu yokken bu kayıtlar bilerek durduruluyordu.
+    Uyum eklendi (kanit_sayfa_bitis / birlestirme sütunları, parçalar taslak_notu'da); artık kayıt
+    yazımdan önce validate_records ile aynı kurallarla denetleniyor. Tutarsız kayıt ve sayfası
+    verilmemiş çok parçalı kayıt hâlâ veritabanına bağlanmadan durur."""
+    DOC = {'document_id': 'a' * 64, 'filename': 'x.pdf'}
+
+    def write(self, records, **kw):
+        conn = FakeConnection()
+        self.assertEqual(import_records(self.DOC, records, connection=conn, **kw), len(records))
+        return conn.inserts
+
+    def test_multi_part_written_with_parts_in_note(self):
+        note = json.dumps({'kaynak': 'test', 'analiz': 'x'})
+        [row] = self.write([rec(HYPHEN, 'C-pep-', review_status='verified', taslak_notu=note)], pages=PAGES)
+        self.assertEqual((row['kanit_sayfa'], row['kanit_sayfa_bitis'], row['birlestirme']), (2, 3, 'sayfa'))
+        self.assertEqual(row['kanit_cumle'], HYPHEN[0]['metin'])  # ilk parça; birleştirilmiş alıntı yok
+        stored = json.loads(row['taslak_notu'])
+        self.assertEqual(stored, {'kaynak': 'test', 'analiz': 'x', 'kanit_parcalari': HYPHEN})
+        [same_page] = self.write([rec(FIGURE, 'AUC=0.692', review_status='verified')], pages=PAGES)
+        self.assertEqual((same_page['kanit_sayfa'], same_page['kanit_sayfa_bitis'], same_page['birlestirme']),
+                         (5, 5, 'ara_blok'))
+
+    def test_pages_from_pdf_pages_doc(self):
+        doc = dict(self.DOC, pages=[{'page_number': n, 'text': t} for n, t in PAGES.items()])
+        conn = FakeConnection()
+        import_records(doc, [rec(ECHO, 'two experienced', review_status='verified')], connection=conn)
+        self.assertEqual(conn.inserts[0]['kanit_sayfa_bitis'], 2)
+
+    def test_hash_includes_parts_single_page_hash_unchanged(self):
+        a, b = (self.write([rec(ECHO, 'two experienced', review_status='verified', **kw)], pages=PAGES)[0]
+                for kw in ({}, {'klinik_bilgi_en': 'two experienced'}))
+        self.assertEqual(a['satir_hash'], b['satir_hash'])
+        single = dict(bilgi_turu='tani', baglam='study_finding', klinik_bilgi_en='Intro', kanit_cumle='Intro text.',
+                      sayfa=1, review_status='verified')
+        identity = [self.DOC['document_id'], 'tani', 'study_finding', None, 'Intro', 1, 'Intro text.']
+        expected = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        for record in (single, dict(single, sayfa_bitis=1)):
+            [row] = self.write([record])  # sayfa gerekmez: tek sayfalı yol değişmedi
+            self.assertEqual(row['satir_hash'], expected)
+            self.assertNotIn('kanit_sayfa_bitis', row)
+        multi = self.write([rec(FIGURE, 'AUC=0.692', review_status='verified')], pages=PAGES)[0]
+        other = self.write([rec(FIGURE, 'AUC=0.692', review_status='verified',
+                                kanit_parcalari=[FIGURE[0], {'sayfa': 5, 'metin': 'specificity (AUC=0.692)'}])],
+                           pages=PAGES)[0]
+        self.assertNotEqual(multi['satir_hash'], other['satir_hash'])  # parçalar kimlikte
+
+    def test_inconsistent_or_unverifiable_blocked_before_db(self):
         fake = ModuleType('src.database')
         fake.get_connection = lambda: self.fail('Veritabanına bağlanılmamalı')
+        good = rec(ECHO, 'two experienced', review_status='verified')
+        cases = [
+            (dict(good, kanit_cumle=ECHO[0]['metin'] + ' ' + ECHO[1]['metin']), PAGES, 'ilk kanıt parçası'),
+            (dict(good, birlestirme='ara_blok'), PAGES, "'sayfa' olmalı"),
+            (dict(good, sayfa_bitis=1), PAGES, 'sayfa_bitis'),
+            (dict(good, kanit_parcalari=[ECHO[0], {'sayfa': 2, 'metin': 'metinde yok'}]), PAGES, 's.2 metninde'),
+            (good, None, 'PDF sayfaları gerekli'),
+            (dict(good, review_status=None), PAGES, 'manuel onaylı'),
+            (dict(good, taslak_notu='bozuk {json'), PAGES, 'taslak_notu JSON değil'),
+        ]
         with patch.dict('sys.modules', {'src.database': fake}):
-            with self.assertRaisesRegex(ValueError, 'Çok sayfalı kanıt'):
-                import_records({'document_id': 'a' * 64, 'filename': 'x.pdf'},
-                               [rec(ECHO, 'two experienced', review_status='verified')])
-            with self.assertRaisesRegex(ValueError, 'kanit_parcalari'):
-                import_records({'document_id': 'a' * 64, 'filename': 'x.pdf'},
-                               [rec(FIGURE, 'AUC=0.692', review_status='verified')])
+            for record, pages, needle in cases:
+                with self.assertRaisesRegex(ValueError, needle):
+                    import_records(self.DOC, [record], pages=pages)
 
 
 PDF = Path('data/pdfs/TK-cardiovascular36-2-1.pdf')

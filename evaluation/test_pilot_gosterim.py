@@ -22,6 +22,9 @@ TABLES = ("klinik_bulgular", "kalite_isaretleri", "kalite_calistirmalari", "cika
           "pdf_belgeleri", "makaleler", "tani_tedavi", "sonuclar", "semptom_iliskileri", "icd10_who", "tkd_kurallari")
 JSON_COLUMNS = ("tablo_no", "satir_no", "alt_bolum", "analiz", "grup_n", "comparator_n", "deger_bicimi")
 TEXT_SIRA = {6: "study_finding", 1: "literature_background"}  # pilot_findings_v2.json, 1 tabanlı
+# Çok parçalı (pilot_findings_v3_2.json): ekokardiyografi s.2→3 ve "C-pep-" / "tide level." s.6→7.
+MULTI_PICK = (lambda r: "kanit_parcalari" in r and r["sayfa"] == 2, lambda r: "kanit_parcalari" in r and r["sayfa"] == 6)
+NEW_COLUMNS = ("kanit_sayfa_bitis", "birlestirme", "kanit_parca_sayisi", "kanit_gosterim")
 
 results = []
 
@@ -49,7 +52,8 @@ def db_counts():
 
 
 def test_records():
-    """HbA1c iki grup, Table 2 HCR univariate + multivariate, bir ilaç satırı, iki metin kaydı."""
+    """HbA1c iki grup, Table 2 HCR univariate + multivariate, bir ilaç satırı, iki metin kaydı,
+    iki çok parçalı kayıt (v3.2)."""
     transfer = json.loads((PILOT_DIR / "pilot_tablo_aktarim.json").read_text(encoding="utf-8"))
     findings = json.loads((PILOT_DIR / "pilot_findings_v2.json").read_text(encoding="utf-8"))
     picked = []
@@ -60,7 +64,9 @@ def test_records():
                                                   and item["hasta_grubu"] == "Ischemic event"):
             picked.append(dict(item))
     texts = [dict(findings[n - 1]) for n in TEXT_SIRA]
-    return [dict(r, review_status="verified") for r in picked + texts]
+    v32 = json.loads((PILOT_DIR / "pilot_findings_v3_2.json").read_text(encoding="utf-8"))
+    multi = [dict(next(r for r in v32 if wanted(r))) for wanted in MULTI_PICK]
+    return [dict(r, review_status="verified") for r in picked + texts + multi]
 
 
 def rows_as_dicts(cursor):
@@ -108,13 +114,13 @@ def test_view():
         cursor.execute("SELECT COUNT(*) FROM v_pilot_bulgular")
         existing = cursor.fetchone()[0]
         written = import_records(doc, records, connection=conn)
-        check("import_records aynı bağlantıyla yazdı (7 kayıt)", (7, 7), (len(records), written))
+        check("import_records aynı bağlantıyla yazdı (9 kayıt; 2'si çok parçalı)", (9, 9), (len(records), written))
 
         cursor.execute("SELECT * FROM v_pilot_bulgular WHERE bulgu_id > %s", (last_id,))
         view = rows_as_dicts(cursor)
         cursor.execute("SELECT COUNT(*) FROM v_pilot_bulgular")
         total = cursor.fetchone()[0]
-        check("VIEW: pilot satır başına bir satır (7 yeni, toplam = önceki + 7)", (7, existing + 7), (len(view), total))
+        check("VIEW: pilot satır başına bir satır (9 yeni, toplam = önceki + 9)", (9, existing + 9), (len(view), total))
         check("VIEW: PDF adı ve makale başlığı dolu", (True, {doc["filename"]}),
               (all(r["makale_basligi"] for r in view), {r["filename"] for r in view}))
 
@@ -148,7 +154,7 @@ def test_view():
                 "n (%)", 372, 1)],
               [(r["ilac"], r["degisken"], r["mudahale_turu"], r["bilgi_turu_tr"], r["alt_bolum"], r["deger"],
                 r["deger_bicimi"], r["grup_n"], r["tablo_no"]) for r in drug])
-        texts = [r for r in view if r["kanit_turu"] == "metin"]
+        texts = [r for r in view if r["kanit_turu"] == "metin" and r["kanit_parca_sayisi"] == 1]
         check("iki bağlam aynı listede (filtre yok), Türkçe etiketleri doğru",
               {("literature_background", "Literatür bilgisi"), ("study_finding", "Çalışmanın bulgusu")},
               {(r["baglam"], r["baglam_tr"]) for r in texts})
@@ -162,10 +168,36 @@ def test_view():
             r["filename"], r["kanit_sayfa"], -1 if r["tablo_no"] is None else r["tablo_no"], r["bulgu_id"]))]
         check("sıralama: dosya, sayfa, tablo_no (metin önce), kayıt sırası", expected_order, order)
 
+        # Çok parçalı kanıt sütunları (sona eklendi; mevcut sütunların adı/sırası aynı).
+        cursor.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+                       "AND TABLE_NAME = 'v_pilot_bulgular' ORDER BY ORDINAL_POSITION")
+        columns = [r[0] for r in cursor.fetchall()]
+        check("yeni sütunlar sonda, mevcut 36 sütun yerinde", (40, NEW_COLUMNS, "bulgu_id", "kalite_kontrolleri"),
+              (len(columns), tuple(columns[-4:]), columns[0], columns[35]))
+        multi_src = [r for r in records if "kanit_parcalari" in r]
+        multi = sorted((r for r in view if r["kanit_parca_sayisi"] > 1), key=lambda r: r["kanit_sayfa"])
+        check("çok parçalı: kanit_sayfa / kanit_sayfa_bitis / birlestirme / kanit_parca_sayisi",
+              [(2, 3, "sayfa", 2), (6, 7, "sayfa", 2)],
+              [(r["kanit_sayfa"], r["kanit_sayfa_bitis"], r["birlestirme"], r["kanit_parca_sayisi"]) for r in multi])
+        check("çok parçalı: kanit_cumle ilk parça (birleştirilmiş alıntı değil)", True,
+              all(r["kanit_cumle"] == s["kanit_parcalari"][0]["metin"] for r, s in zip(multi, multi_src)))
+        expected_show = [" ".join(f"[s.{p['sayfa']}] {p['metin']}" for p in s["kanit_parcalari"]) for s in multi_src]
+        check("kanit_gosterim: parçalar '[s.N]' işaretiyle sırayla (yalnız gösterim)", expected_show,
+              [r["kanit_gosterim"] for r in multi])
+        check("kanit_gosterim C-pep örneği", "[s.6] HCR rate is directly proportional to HbA1c value and inversely "
+              "proportional to C-pep- [s.7] tide level.", multi[1]["kanit_gosterim"])
+        single = [r for r in view if r["kanit_parca_sayisi"] == 1]
+        check("parçasız kayıtlar: kanit_gosterim = kanit_cumle, parça sayısı 1, bitiş/birleşme NULL",
+              (7, True, {None}, {None}),
+              (len(single), all(r["kanit_gosterim"] == r["kanit_cumle"] for r in single),
+               {r["kanit_sayfa_bitis"] for r in single}, {r["birlestirme"] for r in single}))
+
         cursor.callproc("kaynak_bul", ("HbA1c",))
         found = {r[0] for res in cursor.stored_results() for r in res.fetchall()}
-        check("kaynak_bul pilot satırlarını da buluyor ('HbA1c' -> iki HbA1c tablo satırı)",
-              {r["bulgu_id"] for r in hba1c}, found & {r["bulgu_id"] for r in view if "HbA1c" in r["kanit_cumle"]})
+        with_term = {r["bulgu_id"] for r in view if "hba1c" in r["kanit_cumle"].casefold()}
+        check("kaynak_bul pilot satırlarını da buluyor ('HbA1c' -> iki HbA1c tablo satırı + 'C-pep-' parçalı kaydı)",
+              (with_term, True, 3), (found & {r["bulgu_id"] for r in view},
+                                     {r["bulgu_id"] for r in hba1c} <= found, len(with_term)))
         cursor.callproc("kaynak_bul", ("Acetylsalicylic",))
         found = {r[0] for res in cursor.stored_results() for r in res.fetchall()}
         check("kaynak_bul: ilaç adıyla pilot ilaç satırı", {r["bulgu_id"] for r in drug},

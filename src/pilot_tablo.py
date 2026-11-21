@@ -25,7 +25,10 @@ from pathlib import Path
 from src.pilot_clinical import STRUCTURED_FIELDS
 
 PILOT_DIR = Path('data/review/pilot')
-DEFAULT_JSON = PILOT_DIR / 'pilot_findings_v2.json'
+# Güncel pilot çıktısı (PDF yükleyici v4 ile 190/190 geçerli); yoksa eski v2. --findings ile başka girdi verilir.
+# Not: taslak_notu.pilot_v2_sira adı geriye uyum için korunur; değeri girdi dosyasındaki 1 tabanlı sıradır.
+DEFAULT_JSON = next((p for p in (PILOT_DIR / 'pilot_findings_v3_2.json', PILOT_DIR / 'pilot_findings_v2.json')
+                     if p.exists()), PILOT_DIR / 'pilot_findings_v3_2.json')
 DEFAULT_CSV = PILOT_DIR / '02_zehra_klinik_incelemesi.csv'
 DEFAULT_OUTPUT = PILOT_DIR / 'pilot_tablo_zengin.json'
 VERSION = 'pilot-tablo-v1'
@@ -554,7 +557,8 @@ def run(pdf, findings=None):
 def main():
     parser = argparse.ArgumentParser(description='Pilot tablo kayıtlarını başlıklarla eşle (deterministik, SQL yazmaz)')
     parser.add_argument('--pdf', required=True)
-    parser.add_argument('--findings', help='Varsayılan: pilot_findings_v2.json, yoksa 02_zehra_klinik_incelemesi.csv')
+    parser.add_argument('--findings', help='Varsayılan: pilot_findings_v3_2.json, yoksa pilot_findings_v2.json, yoksa '
+                             '02_zehra_klinik_incelemesi.csv')
     parser.add_argument('--output', default=str(DEFAULT_OUTPUT))
     parser.add_argument('--overwrite', action='store_true', help='Mevcut çıktıların üzerine yaz')
     args = parser.parse_args()
