@@ -12,12 +12,16 @@ B) MySQL gerektirenler: sunum şeması yoksa transaction DIŞINDA kurulur (DDL �
    commit yapar). Bütün yazımlar transaction içinde ve ROLLBACK ile biter; --mock
    kendi ROLLBACK'ini yapar. Sonda klinik_bulgular, cikarim_reddedilenler, kalite
    tabloları, halusinasyon_degerlendirme ve hoca tabloları başlangıçtakiyle aynı.
+   Veriden bağımsızlık: red kayıtları ve --mock teste özgü bir pipeline_version kullanır
+   (aynı sürümle kayıtlı gerçek koşu INSERT IGNORE sayaçlarını sıfırlamasın);
+   hasta_sayisi için f00bddb hasta seçimi kuralını geçen ilk gerçek aday seçilir.
 """
 
 import json
 import re
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -240,8 +244,8 @@ def tx_connection():
     return conn
 
 
-def find_span(to_send, pattern, prefer=None):
-    """(item, span, intervention_field, intervention) — müdahale + desen aynı güvenli parçada."""
+def iter_spans(to_send, pattern):
+    """Sırayla (item, span, intervention_field, intervention, value) — müdahale + desen aynı güvenli parçada."""
     for item in to_send:
         if item["candidate"]["kaynak_turu"] != "metin":
             continue
@@ -253,8 +257,18 @@ def find_span(to_send, pattern, prefer=None):
                 hit = regex.search(span)
                 if hit:
                     field = "procedure" if category == "girişimsel" else "drug"
-                    return item, span, field, hit.group(0), m.group(0)
-    return None
+                    yield item, span, field, hit.group(0), m.group(0)
+                    break
+
+
+def find_span(to_send, pattern, prefer=None):
+    """İlk uygun parça (iter_spans ile aynı sıra) ya da None."""
+    return next(iter_spans(to_send, pattern), None)
+
+
+# f00bddb (Sinem): müdahale + hasta seçimi/kayıt cümlesi gözlenmiş ilişki değil -> insan incelemesi.
+RELATIONSHIP_REVIEW = ("clinical_relationship_uncertain", "clinical_relationship_contradicted")
+SELECTION_SENTENCE = r"In this (?:retrospective|prospective) (?:case-control|cohort) study, \d{2,4} patients\b"
 
 
 def test_database(tmp):
@@ -296,15 +310,52 @@ def test_database(tmp):
         "hasta_sayisi": (r"\b\d{2,4} patients\b", "sample_size", "hasta_sayisi"),
         "etki_turu": (r"\bHR\b", "effect_measure", "etki_turu"),
     }
-    for label, (pattern, field, column) in cases.items():
-        found = find_span(to_send, pattern)
-        if not found:
-            check(f"yeni alan {label}: uygun aday bulundu", True, False)
-            continue
+    def attempt(found, field):
         item, span, ifield, intervention, value = found
         rows, rejected, _ = process_response(findings_json({**BLANK, ifield: intervention, field: value,
                                                             "evidence_quote": span}), item, sources, model="m")
         passed, failed = preview_rows(rows, item, sources)
+        return rows, rejected, passed, failed
+
+    def relationship_only(rows, rejected, failed):
+        """Red yalnız ilişki kuralından mı (ayrıştırma/kanıt/sütun hatası değil)?"""
+        return (len(rows) == 1 and not rejected and len(failed) == 1
+                and failed[0]["hata_turu"] == "deger_kumesi_disi"
+                and str(failed[0]["aciklama"]).startswith(RELATIONSHIP_REVIEW))
+
+    for label, (pattern, field, column) in cases.items():
+        if label == "hasta_sayisi":
+            # f00bddb sonrası ilk parça (hasta seçimi cümlesi) bilerek insan incelemesine düşüyor;
+            # ilk GEÇEN parça kullanılır, atlananların yalnız ilişki kuralıyla reddedildiği doğrulanır.
+            found, skipped = None, []
+            for option in iter_spans(to_send, pattern):
+                rows, rejected, passed, failed = attempt(option, field)
+                if passed:
+                    found = option
+                    break
+                skipped.append((option[4], relationship_only(rows, rejected, failed),
+                                failed[0]["aciklama"].split(":")[0] if failed else (rejected or ["?"])[0]))
+            # f00bddb (Sinem) hasta seçimi kuralını belgeler: "In this retrospective case-control study,
+            # 189 patients …" + müdahale -> clinical_relationship_uncertain (yalnız bu kural; başka hata değil).
+            # Aynı kontrol, ilk geçen parçadan önce atlanan her parçanın yalnız ilişki kuralıyla düştüğünü de ister.
+            selection = next((o for o in iter_spans(to_send, pattern) if re.search(SELECTION_SENTENCE, o[1])), None)
+            sel_rows, sel_rejected, sel_passed, sel_failed = attempt(selection, field) if selection else ([], [], [], [])
+            check("f00bddb (Sinem) hasta seçimi kuralı: '189 patients' seçim cümlesi -> "
+                  "clinical_relationship_uncertain; atlanan parçalar yalnız ilişki kuralıyla reddedildi",
+                  ("189 patients", 0, "clinical_relationship_uncertain", True, True),
+                  (selection[4] if selection else None, len(sel_passed),
+                   str(sel_failed[0]["aciklama"]).split(":")[0] if sel_failed else None,
+                   relationship_only(sel_rows, sel_rejected, sel_failed), [s[1:] for s in skipped]),
+                  bool(selection) and selection[4] == "189 patients" and not sel_passed
+                  and str(sel_failed[0]["aciklama"]).startswith("clinical_relationship_uncertain")
+                  and relationship_only(sel_rows, sel_rejected, sel_failed) and all(ok for _, ok, _ in skipped))
+        else:
+            found = find_span(to_send, pattern)
+        if not found:
+            check(f"yeni alan {label}: uygun aday bulundu", True, False)
+            continue
+        item, span, ifield, intervention, value = found
+        rows, rejected, passed, failed = attempt(found, field)
         stored = passed[0][column] if passed else None
         expected = (int(re.match(r"\d+", value).group(0)) if label == "hasta_sayisi"
                     else "HR" if label == "etki_turu" else value)
@@ -331,32 +382,38 @@ def test_database(tmp):
     else:
         check("ICD: uygun aday bulundu", True, False)
 
-    # Reddedilenler: gerçek mod + sahte istemci, dış transaction (ROLLBACK)
+    # Reddedilenler: gerçek mod + sahte istemci, dış transaction (ROLLBACK).
+    # Teste özgü pipeline_version: red satir_hash'i sürümü içerir; veritabanında aynı sürümle kayıtlı
+    # gerçek koşu varsa INSERT IGNORE 0 ekler ve sayaçlar ölçülemez. Benzersiz sürümle tablo boş da
+    # dolu da olsa ilk koşu gerçekten yazar, ikinci koşu gerçekten atlar.
+    test_pv = f"{PIPELINE_VERSION}-test-{uuid.uuid4().hex[:8]}"
+
     def responder(user, kwargs):
         good = json.loads(MockLLMClient()._create(**kwargs).choices[0].message.content)["findings"]
         bad = [{**BLANK, "drug": "uydurma", "evidence_quote": "metinde olmayan alıntı"}]
         return make_response(json.dumps({"findings": good + bad}, ensure_ascii=False))
     conn = tx_connection()
     try:
-        options = Options(base_dir=Path(tmp) / "b1", limit=4, max_consecutive_errors=50)
+        options = Options(base_dir=Path(tmp) / "b1", limit=4, max_consecutive_errors=50, pipeline_version=test_pv)
         first = run_batch(options, client=ScriptedClient(responder), connection=conn, prepared=prepared, out=quiet)
         cursor = conn.cursor()
         cursor.execute("SELECT asama, COUNT(*) FROM cikarim_reddedilenler WHERE pipeline_version = %s GROUP BY asama",
-                       (PIPELINE_VERSION,))
+                       (test_pv,))
         by_stage = dict(cursor.fetchall())
         cursor.execute("SELECT satir_hash FROM cikarim_reddedilenler WHERE pipeline_version = %s ORDER BY satir_hash",
-                       (PIPELINE_VERSION,))
+                       (test_pv,))
         hashes = [r[0] for r in cursor.fetchall()]
-        second = run_batch(Options(base_dir=Path(tmp) / "b1b", limit=4, max_consecutive_errors=50),
+        second = run_batch(Options(base_dir=Path(tmp) / "b1b", limit=4, max_consecutive_errors=50,
+                                   pipeline_version=test_pv),
                            client=ScriptedClient(responder), connection=conn, prepared=prepared, out=quiet)
         cursor.execute("SELECT satir_hash FROM cikarim_reddedilenler WHERE pipeline_version = %s ORDER BY satir_hash",
-                       (PIPELINE_VERSION,))
+                       (test_pv,))
         hashes_again = [r[0] for r in cursor.fetchall()]
         write_rejections(conn, {"aday_id": "test-aday", "dosya": "t.pdf", "cumle": "c"},
                          [{"asama": "validate_row", "hata_turu": "yeni_kod", "aciklama": "test"}],
-                         pipeline_version=PIPELINE_VERSION, model="m")
+                         pipeline_version=test_pv, model="m")
         cursor.execute("SELECT hata_turu, halusinasyon_turu, uygulanan_onlem, yakalanan, sonuc, ornek_aday "
-                       "FROM v_halusinasyon_onlemleri WHERE pipeline_version = %s", (PIPELINE_VERSION,))
+                       "FROM v_halusinasyon_onlemleri WHERE pipeline_version = %s", (test_pv,))
         view = {r[0]: r for r in cursor.fetchall()}
         cursor.close()
     finally:
@@ -380,8 +437,8 @@ def test_database(tmp):
     with patch("src.sunum.schema_ready", lambda _c: False):
         conn = tx_connection()
         try:
-            stopped = run_batch(Options(base_dir=Path(tmp) / "b2", limit=1), client=ScriptedClient(responder),
-                                connection=conn, prepared=prepared, out=quiet)
+            stopped = run_batch(Options(base_dir=Path(tmp) / "b2", limit=1, pipeline_version=test_pv),
+                                client=ScriptedClient(responder), connection=conn, prepared=prepared, out=quiet)
         finally:
             conn.rollback()
             conn.close()
@@ -390,10 +447,11 @@ def test_database(tmp):
 
     # --mock ve --no-save kalıcı yazmaz
     mid = db_counts()
-    mock = run_batch(Options(base_dir=Path(tmp) / "b3", mock=True, limit=5), prepared=prepared, out=quiet)
+    mock = run_batch(Options(base_dir=Path(tmp) / "b3", mock=True, limit=5, pipeline_version=test_pv),
+                     prepared=prepared, out=quiet)
     check("--mock: transaction içinde red yazdı", True, mock["sayaclar"].get("red_tablosu_on_eleme", 0) == 64)
     check("--mock: sonra veritabanı aynı", mid, db_counts())
-    run_batch(Options(base_dir=Path(tmp) / "b4", no_save=True, limit=3, force=True),
+    run_batch(Options(base_dir=Path(tmp) / "b4", no_save=True, limit=3, force=True, pipeline_version=test_pv),
               client=ScriptedClient(responder), prepared=prepared, out=quiet)
     check("--no-save: veritabanına yazmaz", mid, db_counts())
 

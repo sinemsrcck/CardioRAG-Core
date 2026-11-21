@@ -6,6 +6,7 @@ Klinik bulgularda tekilleştirme ve veri kalitesi işaretleri.
     python -m src.data_quality                           # kalite_isaretleri'ni yeniler
     python -m src.data_quality --jsonl runs/X/would_save.jsonl
     python -m src.data_quality --referans --dry-run      # doğrulanmamış referans taslak
+    python -m src.data_quality --pilot                   # + bilgi_turu dolu pilot satırları (pdf_pages kontrolleri)
 
 klinik_bulgular'a yalnızca SELECT atılır; hiçbir satır silinmez/değişmez,
 review_status'a dokunulmaz. İşaretler türetilmiş veridir: kimlik satir_hash'tir
@@ -56,6 +57,27 @@ CHECKS = {
     "ci_p_celiskisi": "sayisal", "kategorik_p_yeniden_uretilemedi": "tutarsizlik",
     "surekli_p_supheli": "tutarsizlik", "model_etki_olcusu_celiskisi": "tutarsizlik",
 }
+# Pilot (bilgi_turu dolu) satırların SQL sonrası kontrolleri. Ayrı sözlük: --pilot verilmeyen
+# çalıştırmaların sürüm hash'i değişmesin. Kategoriler mevcut ENUM'un elemanları (şema değişmez).
+PILOT_CHECKS = {
+    "pilot_pdf_okunamadi": "kaynak", "pilot_kanit_sayfada_yok": "kaynak", "pilot_bilgi_kanitta_yok": "kaynak",
+    "pilot_sayfa_gecisi_supheli": "kaynak", "pilot_kanitta_sekil_tablo": "kaynak",
+    "tablo_cift_eksik": "tutarsizlik", "tablo_cift_tutarsiz": "tutarsizlik",
+    "pilot_yuzde_uyumsuz": "sayisal",
+    "kaynak_p_bicim_bozuk": "tutarsizlik", "kaynak_ci_p_celiski": "tutarsizlik",
+    "pilot_tekrar_metin_tablo": "tekrar", "pilot_tekrar_metin_metin": "tekrar", "pilot_tekrar_belirsiz": "tekrar",
+    "pilot_baglam_tablo": "tutarsizlik", "pilot_ilac_doz_oran": "tutarsizlik",
+}
+ALL_CHECKS = {**CHECKS, **PILOT_CHECKS}
+PILOT_JACCARD = 0.3          # metin ↔ metin tekrarında anahtar kelime örtüşmesi
+PILOT_MIN_SHARED_NUMBERS = 2  # metin ↔ metin tekrarında ortak anlamlı sayı
+PILOT_SIGNIFICANCE = 0.05
+# r2: rakamla başlayan kanıt sayfa geçişi şüphesinde bilgi (parantez/noktalama uyari kalır).
+# r3: kaynak_ci_p_celiski ortak ci_p_assessment kuralını kullanır (AUC dahil; '<001' gibi belirsiz p atlanır).
+PILOT_RULES_REVISION = 3
+DEFAULT_PDF_DIR = Path("data/pdfs")
+PILOT_WARNING = ("pilot satırlar var ama --pilot verilmedi; v_kalite_ozet son sürümü gösterdiği için "
+                 "pilot işaretleri görünmeyecek")
 LEVEL_ORDER = {"hata": 0, "uyari": 1, "bilgi": 2}
 
 # Müdahale eşanlamlıları: YALNIZCA kesin eşdeğerler (sürüm hash'ine dahil).
@@ -95,7 +117,9 @@ EMBEDDING_THRESHOLD = 0.92
 # eşikler ve eşanlamlılar zaten hash'e kendiliğinden girer.
 # r2: boşluklu eksi işareti ("− 4.4") negatif sayılır; "0.5 - 0.9" aralık kalır.
 # r3: istatistiksel tutarlılık kontrolleri (GA–p, kategorik/sürekli p yeniden hesaplama, model terimi).
-RULES_REVISION = 3
+# r4: kaynak tutarsızlıkları en fazla "uyari" (ci_p_celiskisi); --pilot'ta pilot satırların GA–p ve
+#     yüzde aritmetiği yalnız pilot kodlarıyla (kaynak_ci_p_celiski, pilot_yuzde_uyumsuz) işaretlenir.
+RULES_REVISION = 4
 # GA–p çelişkisinde en yakın GA sınırının boş değere (oranlar için 1, log ölçeği; AUC için 0.5)
 # uzaklığı bu eşiğin altındaysa farklı GA/test yöntemleri sapma üretebilir: "uyari"; üstünde "hata".
 CI_P_SINIR_MARJI = 0.05
@@ -106,15 +130,20 @@ SUREKLI_T_ALT = 1.0
 SUREKLI_MIN_N = 30
 
 
-def config_payload(embedding=False, embedding_threshold=EMBEDDING_THRESHOLD):
-    return {"checks": CHECKS, "esanlamli": MUDAHALE_ESANLAMLI, "birim": UNIT_REPLACEMENTS,
-            "jaccard": JACCARD_THRESHOLD, "embedding": embedding,
-            "embedding_esik": embedding_threshold if embedding else None,
-            "kurallar": f"kalite-v1-r{RULES_REVISION}"}
+def config_payload(embedding=False, embedding_threshold=EMBEDDING_THRESHOLD, pilot=False):
+    payload = {"checks": CHECKS, "esanlamli": MUDAHALE_ESANLAMLI, "birim": UNIT_REPLACEMENTS,
+               "jaccard": JACCARD_THRESHOLD, "embedding": embedding,
+               "embedding_esik": embedding_threshold if embedding else None,
+               "kurallar": f"kalite-v1-r{RULES_REVISION}"}
+    if pilot:  # yalnız --pilot: pilot'suz çalıştırmaların hash'i aynı kalır
+        payload["pilot"] = {"checks": PILOT_CHECKS, "jaccard": PILOT_JACCARD,
+                            "ortak_sayi": PILOT_MIN_SHARED_NUMBERS, "anlamlilik": PILOT_SIGNIFICANCE,
+                            "kurallar": f"pilot-r{PILOT_RULES_REVISION}"}
+    return payload
 
 
-def control_version(embedding=False, embedding_threshold=EMBEDDING_THRESHOLD, payload=None):
-    payload = payload or config_payload(embedding, embedding_threshold)
+def control_version(embedding=False, embedding_threshold=EMBEDDING_THRESHOLD, payload=None, pilot=False):
+    payload = payload or config_payload(embedding, embedding_threshold, pilot)
     digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
     return "kalite-v1-" + digest.hexdigest()[:12]
 
@@ -251,7 +280,7 @@ def group_id(code, hashes):
 
 def _flag(row, code, level, explanation, group="", detail=None):
     return {"satir_hash": row["satir_hash"], "klinik_bulgu_id": row.get("id"), "kontrol_kodu": code,
-            "kategori": CHECKS[code], "seviye": level, "grup_id": group, "aciklama": explanation,
+            "kategori": ALL_CHECKS[code], "seviye": level, "grup_id": group, "aciklama": explanation,
             "ayrinti": detail or {}}
 
 
@@ -605,35 +634,52 @@ def _normal_p(z):
     return math.erfc(abs(z) / math.sqrt(2))
 
 
-def check_ci_p(row):
-    """OR/RR/HR/IRR ve AUC: %95 GA boş değeri içeriyorsa p ≥ 0.05, içermiyorsa p < 0.05 olmalı."""
+def ci_p_assessment(row):
+    """Ortak GA–p değerlendirmesi (ci_p_celiskisi ve pilot kaynak_ci_p_celiski aynı kuralı kullanır).
+
+    OR/RR/HR/IRR ve AUC: %95 GA boş değeri (1; AUC için 0.5) içeriyorsa p ≥ 0.05, içermiyorsa p < 0.05
+    olmalı. Çelişki yoksa veya p belirsizse ('<001', '<0.10') None; varsa ayrıntı sözlüğü."""
     etki = (row.get("etki_turu") or "").strip()
     if etki not in RATIO_TYPES and etki != AUC_TYPE:
-        return []
+        return None
     ci = [n["value"] for n in parse_numbers(row.get("ci95")) if n["value"] is not None]
     bound = parse_p(row.get("p"))
     if len(ci) != 2 or bound is None or ci[0] > ci[1]:
-        return []
+        return None
     significant = _p_significant(bound)
     low, high = ci
     if significant is None or (etki in RATIO_TYPES and low <= 0):
-        return []
+        return None
     null = 0.5 if etki == AUC_TYPE else 1.0
     includes = low <= null <= high
     if includes != significant:
-        return []
+        return None
     if etki == AUC_TYPE:
         margin = min(abs(low - null), abs(high - null))
     else:
         margin = min(abs(math.log(low)), abs(math.log(high)))
-    level = "hata" if margin >= CI_P_SINIR_MARJI else "uyari"
-    side = "içeriyor" if includes else "içermiyor"
+    return {"etki": etki, "low": low, "high": high, "null": null, "includes": includes,
+            "significant": significant, "margin": round(margin, 4)}
+
+
+def _ci_p_detail(row, conflict):
+    return {"ci95": row.get("ci95"), "p": row.get("p"), "bos_deger": conflict["null"],
+            "sinir_marji": conflict["margin"], "kaynak_tutarsizligi": True,
+            "varsayim": "GA ve p aynı modelden; marj küçükse farklı GA/test yöntemi sapması mümkün"}
+
+
+def check_ci_p(row):
+    """Kaynak tutarsızlığıdır, çıkarım hatası değil: belirgin marjda 'uyari', sınırda 'bilgi'."""
+    conflict = ci_p_assessment(row)
+    if conflict is None:
+        return []
+    level = "uyari" if conflict["margin"] >= CI_P_SINIR_MARJI else "bilgi"
+    side = "içeriyor" if conflict["includes"] else "içermiyor"
     return [_flag(row, "ci_p_celiskisi", level,
-                  f"{etki} %95 GA [{low}, {high}] boş değeri ({null:g}) {side} ama p '{row.get('p')}' "
-                  f"{'anlamlı' if significant else 'anlamsız'}",
-                  detail={"ci95": row.get("ci95"), "p": row.get("p"), "bos_deger": null,
-                          "sinir_marji": round(margin, 4),
-                          "varsayim": "GA ve p aynı modelden; marj küçükse farklı GA/test yöntemi sapması mümkün"})]
+                  f"KAYNAK TUTARSIZLIĞI: {conflict['etki']} %95 GA [{conflict['low']}, {conflict['high']}] "
+                  f"boş değeri ({conflict['null']:g}) {side} ama p '{row.get('p')}' "
+                  f"{'anlamlı' if conflict['significant'] else 'anlamsız'}",
+                  detail=_ci_p_detail(row, conflict))]
 
 
 def _group_pairs(rows):
@@ -675,8 +721,11 @@ def _chi2_2x2_p(x1, n1, x2, n2, yates):
     return math.erfc(math.sqrt(chi2 / 2))
 
 
-def check_statistical_groups(rows):
-    """Grup tablosu satır çiftleri: kategorik n (%) ve ortalama±SS için bildirilen p'nin yeniden hesabı."""
+def check_statistical_groups(rows, pilot=False):
+    """Grup tablosu satır çiftleri: kategorik n (%) ve ortalama±SS için bildirilen p'nin yeniden hesabı.
+
+    pilot=True (--pilot akışı): pilot satırların yüzde aritmetiği pilot_yuzde_uyumsuz ile raporlanır;
+    burada ikinci kez işaretlenmez (yalnız ki-kare atlanır)."""
     flags = []
     for a, na, b, nb in _group_pairs(rows):
         bound = parse_p(a.get("p"))
@@ -687,13 +736,14 @@ def check_statistical_groups(rows):
         cat_a, cat_b = CATEGORICAL_VALUE.match(a.get("deger") or ""), CATEGORICAL_VALUE.match(b.get("deger") or "")
         mean_a, mean_b = MEAN_SD_VALUE.match(a.get("deger") or ""), MEAN_SD_VALUE.match(b.get("deger") or "")
         if cat_a and cat_b:
-            flags += _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes)
+            report_percent = not (pilot and (is_pilot(a) or is_pilot(b)))
+            flags += _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes, report_percent)
         elif mean_a and mean_b and min(n1, n2) >= SUREKLI_MIN_N:
             flags += _check_continuous(a, b, mean_a, mean_b, n1, n2, bound, hashes)
     return flags
 
 
-def _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes):
+def _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes, report_percent=True):
     code = "kategorik_p_yeniden_uretilemedi"
     gid = group_id(code, hashes)
     x1, x2 = int(cat_a.group(1)), int(cat_b.group(1))
@@ -708,6 +758,9 @@ def _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes):
         if x > n or abs(100 * x / n - float(match.group(2))) > 10 ** -decimals + 1e-9:
             mismatched.append(f"{x}/{n}={100 * x / n:.2f}% ≠ {match.group(2)}%")
     if mismatched:
+        # Paydalar doğrulanamadı: ki-kare hesaplanmaz. --pilot akışında pilot_yuzde_uyumsuz zaten raporlar.
+        if not report_percent:
+            return []
         return [_flag(row, code, "uyari", "yüzde, grup n'si ile tutmuyor (eksik veri olabilir): " + "; ".join(mismatched),
                       gid, detail) for row in (a, b)]
     p_plain, p_yates = _chi2_2x2_p(x1, n1, x2, n2, False), _chi2_2x2_p(x1, n1, x2, n2, True)
@@ -787,6 +840,442 @@ def check_model_terminology(rows):
                                f"belgede Cox/HR ({len(cox)} kayıt) ve lojistik/OR ({len(logit)} kayıt) birlikte; "
                                f"sonuçlarda raporlanan etki ölçüsü: {reported}", gid, detail))
     return flags
+# e) Pilot satırları (bilgi_turu dolu; src.pilot_clinical.import_records aktarımı)
+# ---------------------------------------------------------------------------
+
+PILOT_LOW_CONTEXTS = {"literature_background", "recommendation"}
+PILOT_MED_TURU = "arka plan tedavisi"
+_SUP = re.compile(r"<sup>.*?</sup>", re.IGNORECASE | re.DOTALL)
+_P_EXPR = re.compile(r"\bp\s*(?:-?\s*value\s*)?[<=>≤≥]\s*[\d.,]+", re.IGNORECASE)
+_P_BROKEN = re.compile(r"\bp\s*[<=>≤≥]\s*0\d+", re.IGNORECASE)
+_FIGURE_TABLE = re.compile(r"\*\*\s*(?:FIGURE|TABLE)\s*\d+", re.IGNORECASE)
+_N_PCT = re.compile(r"^\s*(\d+)\s*\(\s*(\d+(?:\.\d+)?)\s*%?\s*\)\s*$")
+_STOPWORDS = {"with", "that", "this", "were", "which", "from", "have", "been", "than", "also", "there", "their",
+              "these", "those", "into", "between", "after", "before", "found", "study", "patients", "group",
+              "value", "values", "was", "and", "the"}
+
+
+def is_pilot(row):
+    return bool(row.get("bilgi_turu"))
+
+
+def pilot_table_key(row):
+    """(document_id, tablo_no, satir_no) — pilot_tablo aktarımından gelen satırlar için; yoksa None."""
+    note = _note(row) or {}
+    if str(note.get("kaynak") or "").startswith("pilot-tablo") and note.get("tablo_no") is not None \
+            and note.get("satir_no") is not None:
+        return row.get("document_id"), int(note["tablo_no"]), int(note["satir_no"])
+    return None
+
+
+def _num_text(text):
+    text = unicodedata.normalize("NFKC", str(text or "")).translate(_DASHES).replace("·", ".")
+    return _SUP.sub(" ", text)
+
+
+def _canon(raw):
+    return str(float(raw))
+
+
+def numbers_in(text):
+    """Metindeki bütün sayılar (kanonik dize). <sup> kaynak numaraları hariç."""
+    return {_canon(m) for m in re.findall(r"(?<![\d.])\d+(?:\.\d+)?", _num_text(text))}
+
+
+def significant_numbers(text):
+    """Metin ↔ metin tekrarı için: ondalıklı sayılar ve %'li tam sayılar; p ifadeleri ve kaynak no'ları hariç."""
+    text = _P_EXPR.sub(" ", _num_text(text))
+    out = set()
+    for m in re.finditer(r"(?<![\d.])(\d+)(\.\d+)?(\s*%)?", text):
+        if m.group(2) or m.group(3):
+            out.add(_canon(m.group(1) + (m.group(2) or "")))
+    return out
+
+
+def keywords(text):
+    return {w for w in re.findall(r"[^\W\d_][\w-]{3,}", norm_text(_SUP.sub(" ", str(text or ""))))
+            if w not in _STOPWORDS}
+
+
+def _contains_term(text, term):
+    term = norm_text(term)
+    return bool(term) and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", norm_text(text)) is not None
+
+
+def check_pilot_row(row, source):
+    """Tek pilot satırının kanıt / biçim / bağlam kontrolleri. source: {'pages': {...}} veya {'hata': ...}."""
+    flags = []
+    quote = row.get("kanit_cumle") or ""
+    pages = (source or {}).get("pages")
+    if pages is None:
+        flags.append(_flag(row, "pilot_pdf_okunamadi", "uyari",
+                           f"PDF metni okunamadı: {(source or {}).get('hata', 'belge yok')}; kanıt kontrolü yapılmadı"))
+    else:
+        page = row.get("kanit_sayfa")
+        text = pages.get(int(page)) if page not in (None, "") else None
+        if not quote or text is None or quote not in text:
+            flags.append(_flag(row, "pilot_kanit_sayfada_yok", "hata",
+                               f"kanit_cumle PDF'in {page}. sayfasında (pdf_pages) birebir yok"))
+    fact = row.get("klinik_bilgi_en") or row.get("klinik_bilgi")
+    if not fact or fact not in quote:
+        flags.append(_flag(row, "pilot_bilgi_kanitta_yok", "hata", "klinik_bilgi_en kanıt cümlesinin içinde değil"))
+
+    if row.get("kanit_turu") != "tablo" and quote.strip():
+        start = re.sub(r"^[\s*_#>]+", "", quote)
+        end = re.sub(r"(?:<sup>[^<]*</sup>|[\s*_])+$", "", quote)
+        strong, weak = [], []  # strong -> uyari; yalnız weak -> bilgi
+        first = start[:1]
+        if first.isalpha() and first.islower():
+            strong.append("küçük harfle başlıyor")
+        elif first.isdigit():
+            weak.append(f"rakamla başlıyor ('{first}')")  # "1,225 patients…" gibi normal cümleler olabilir
+        elif first and not first.isalpha():
+            strong.append(f"parantez/noktalama ile başlıyor ('{first}')")
+        if re.search(r"[^\W\d_]-$", end):
+            strong.append("tire/kesik kelimeyle bitiyor")
+        if not strong and end and end[-1] not in ".!?:;)\"'%]":
+            weak.append("bitiş noktalaması yok")
+        reasons, level = strong + weak, "uyari" if strong else "bilgi"
+        if reasons:
+            flags.append(_flag(row, "pilot_sayfa_gecisi_supheli", level,
+                               "sayfa/sütun geçişi şüphesi: " + ", ".join(reasons)))
+    if _FIGURE_TABLE.search(quote):
+        flags.append(_flag(row, "pilot_kanitta_sekil_tablo", "uyari",
+                           f"kanıtta şekil/tablo yazısı var: '{_FIGURE_TABLE.search(quote).group(0)}'"))
+    if _P_BROKEN.search(quote):
+        flags.append(_flag(row, "kaynak_p_bicim_bozuk", "bilgi",
+                           f"KAYNAK TUTARSIZLIĞI: kanıtta bozuk p biçimi '{_P_BROKEN.search(quote).group(0)}' "
+                           "(ondalık nokta eksik; kanıt kaynaktan birebir)"))
+
+    note = _note(row) or {}
+    match = _N_PCT.match(str(row.get("deger") or ""))
+    group_n = note.get("grup_n")
+    if match and isinstance(group_n, int) and group_n > 0:
+        count, reported = int(match.group(1)), match.group(2)
+        decimals = len(reported.split(".")[1]) if "." in reported else 0
+        computed = 100 * count / group_n
+        unit = 10 ** -decimals
+        truncated = int(computed * 10 ** decimals + 1e-9) / 10 ** decimals
+        ok = (abs(round(computed, decimals) - float(reported)) < 1e-9 or abs(truncated - float(reported)) < 1e-9
+              or abs(computed - float(reported)) <= unit + 1e-9)
+        if not ok:
+            flags.append(_flag(row, "pilot_yuzde_uyumsuz", "uyari",
+                               f"{count}/{group_n} = %{computed:.{decimals + 1}f}, bildirilen %{reported} "
+                               f"(tolerans: yuvarlama/kesme veya ±{unit:g})",
+                               detail={"n": count, "grup_n": group_n, "hesaplanan": round(computed, 4),
+                                       "bildirilen": float(reported)}))
+
+    # GA–p: ci_p_celiskisi ile aynı kural (ci_p_assessment; AUC ve belirsiz p dahil). --pilot akışında
+    # pilot satırlar yalnız bu kodu alır (run_checks onları ci_p_celiskisi'nden çıkarır).
+    conflict = ci_p_assessment(row)
+    if conflict is not None:
+        flags.append(_flag(row, "kaynak_ci_p_celiski", "bilgi",
+                           f"KAYNAK TUTARSIZLIĞI: {conflict['etki']} %95 GA [{conflict['low']}, {conflict['high']}] "
+                           f"{conflict['null']:g}'i {'kapsıyor' if conflict['includes'] else 'kapsamıyor'} "
+                           f"ama p={row.get('p')}", detail=_ci_p_detail(row, conflict)))
+
+    if row.get("baglam") in PILOT_LOW_CONTEXTS and row.get("kanit_turu") == "tablo":
+        flags.append(_flag(row, "pilot_baglam_tablo", "uyari",
+                           f"baglam '{row.get('baglam')}' ama kanit_turu=tablo (tablo çalışmanın kendi verisi)"))
+    medication = row.get("bilgi_turu") == "ilac" or row.get("mudahale_turu") == PILOT_MED_TURU
+    if medication and str(row.get("doz") or "").strip() and match:
+        flags.append(_flag(row, "pilot_ilac_doz_oran", "uyari",
+                           f"ilaç satırında doz dolu ('{row.get('doz')}') ama değer n (%) kullanım oranı"))
+    return flags
+
+
+def _pdf_row(tables, key):
+    _, tablo_no, satir_no = key
+    for table in tables:
+        if table["tablo_no"] == tablo_no:
+            for row in table["satirlar"]:
+                if row["satir_no"] == satir_no:
+                    return table, row
+    return None, None
+
+
+def _same(a, b):
+    return str(a or "").strip() == str(b or "").strip()
+
+
+def check_table_groups(pilot_rows, sources):
+    """Aynı tablo satırının beklenen grup/analiz satırları SQL'de tam mı ve PDF hücreleriyle tutarlı mı."""
+    from src.pilot_tablo import _needle, row_analyses, row_groups
+
+    flags, partial = [], []
+    groups = defaultdict(list)
+    for row in pilot_rows:
+        key = pilot_table_key(row)
+        if key:
+            groups[key].append(row)
+    for key, members in sorted(groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1], kv[0][2])):
+        members = sorted(members, key=lambda r: r["satir_hash"])
+        hashes = [m["satir_hash"] for m in members]
+        tables = (sources.get(key[0]) or {}).get("tables")
+        if tables is None:
+            continue  # PDF okunamadı: pilot_pdf_okunamadi zaten işaretli
+        table, pdf_row = _pdf_row(tables, key)
+        if pdf_row is None:
+            gid = group_id("tablo_cift_tutarsiz", hashes)
+            for m in members:
+                flags.append(_flag(m, "tablo_cift_tutarsiz", "hata",
+                                   f"Table {key[1]} satır {key[2]} PDF'te bulunamadı", gid, {"uyeler": hashes}))
+            continue
+        analyses = row_analyses(table, pdf_row)
+        if analyses:
+            expected = {a["analiz"]: a for a in analyses}
+            unit_of = lambda m: (_note(m) or {}).get("analiz")  # noqa: E731
+        else:
+            expected = {g["sutun"]: g for g in row_groups(table, pdf_row)}
+            unit_of = lambda m: (_note(m) or {}).get("sutun")  # noqa: E731
+        present = {unit_of(m) for m in members}
+        missing = sorted(set(expected) - present)
+        info = {"tablo_no": key[1], "satir_no": key[2], "degisken": pdf_row["degisken"], "uyeler": hashes,
+                "beklenen": sorted(expected), "mevcut": sorted(u for u in present if u), "eksik": missing}
+        if missing:
+            partial.append(dict(info, sayfa=table["sayfa"]))
+            gid = group_id("tablo_cift_eksik", hashes)
+            for m in members:
+                flags.append(_flag(m, "tablo_cift_eksik", "uyari",
+                                   f"Table {key[1]} '{pdf_row['degisken']}': eksik {'analiz' if analyses else 'grup'} "
+                                   f"{missing} (mevcut {info['mevcut']})", gid, info))
+        problems = defaultdict(list)
+        for m in members:
+            cell = expected.get(unit_of(m))
+            if cell is None:
+                problems[m["satir_hash"]].append(f"beklenmeyen grup/analiz '{unit_of(m)}'")
+                continue
+            if _needle(m.get("kanit_cumle")) not in pdf_row["ham"]:
+                problems[m["satir_hash"]].append("kanıt bu tablo satırı değil")
+            checks = [("deger", "deger"), ("p", "p")] + (
+                [("ci95", "ci95")] if analyses else [("hasta_grubu", "grup"), ("comparator", "comparator")])
+            for column, cell_key in checks:
+                if not _same(m.get(column), cell.get(cell_key)):
+                    problems[m["satir_hash"]].append(f"{column} '{m.get(column)}' ≠ PDF '{cell.get(cell_key)}'")
+        if not analyses and len(members) > 1:
+            if len({str(m.get("p") or "").strip() for m in members}) > 1:
+                for m in members:
+                    problems[m["satir_hash"]].append("çiftte p değerleri farklı")
+            if len(members) == 2:
+                a, b = members
+                if not (_same(a.get("comparator"), b.get("hasta_grubu")) and _same(b.get("comparator"), a.get("hasta_grubu"))):
+                    for m in members:
+                        problems[m["satir_hash"]].append("comparator ↔ hasta_grubu karşılıklı değil")
+        if problems:
+            gid = group_id("tablo_cift_tutarsiz", hashes)
+            for m in members:
+                if m["satir_hash"] in problems:
+                    flags.append(_flag(m, "tablo_cift_tutarsiz", "hata",
+                                       f"Table {key[1]} '{pdf_row['degisken']}': " + "; ".join(problems[m["satir_hash"]]),
+                                       gid, dict(info, sorunlar={h[:12]: p for h, p in problems.items()})))
+    return flags, partial
+
+
+def check_pilot_duplicates(pilot_rows):
+    """Metin ↔ tablo ve metin ↔ metin anlamsal tekrar önerileri (yalnız bilgi; silme yok)."""
+    flags, pairs = [], {"metin_tablo": [], "metin_metin": [], "belirsiz": []}
+    texts = sorted((r for r in pilot_rows if r.get("kanit_turu") != "tablo"), key=lambda r: r["satir_hash"])
+    tables = defaultdict(list)
+    for row in pilot_rows:
+        key = pilot_table_key(row)
+        if key:
+            tables[key].append(row)
+
+    def emit(code, members, explanation, detail, bucket):
+        hashes = sorted(m["satir_hash"] for m in members)
+        gid = group_id(code, hashes)
+        for m in members:
+            flags.append(_flag(m, code, "bilgi", explanation, gid, dict(detail, uyeler=hashes)))
+        pairs[bucket].append(dict(detail, grup_id=gid, uyeler=hashes))
+
+    for key, members in sorted(tables.items(), key=lambda kv: (kv[0][0] or "", kv[0][1], kv[0][2])):
+        members = sorted(members, key=lambda r: r["satir_hash"])
+        values = [" ".join(str(m.get(c) or "") for c in ("deger", "ci95")).strip() for m in members]
+        value_numbers = [numbers_in(v) for v in values]
+        variable = (_note(members[0]) or {}).get("degisken") or members[0].get("sonuc_olcutu_tr") or ""
+        for text_row in texts:
+            if text_row.get("document_id") != key[0]:
+                continue
+            quote = text_row.get("kanit_cumle") or ""
+            available = numbers_in(quote)
+            matched = [v for v, nums in zip(values, value_numbers) if nums and nums <= available]
+            named = _contains_term(quote, variable)
+            detail = {"tablo_no": key[1], "satir_no": key[2], "degisken": variable, "eslesen_degerler": matched,
+                      "metin_sayfa": text_row.get("kanit_sayfa")}
+            if len(matched) == len(values) and len(values) >= 2 and named:
+                emit("pilot_tekrar_metin_tablo", [text_row, *members],
+                     f"metin (s.{text_row.get('kanit_sayfa')}) Table {key[1]} '{variable}' değerlerini aynen taşıyor: "
+                     f"{matched}", detail, "metin_tablo")
+            elif matched and (len(matched) == len(values) or named) and \
+                    any(len(n) >= 2 for v, n in zip(values, value_numbers) if v in matched):
+                emit("pilot_tekrar_belirsiz", [text_row, *members],
+                     f"olası metin ↔ tablo tekrarı (Table {key[1]} '{variable}'; eşleşen {matched}, "
+                     f"değişken adı {'var' if named else 'yok'})", dict(detail, tur="metin_tablo"), "belirsiz")
+
+    numbers = {r["satir_hash"]: significant_numbers(r.get("kanit_cumle")) for r in texts}
+    words = {r["satir_hash"]: keywords(r.get("kanit_cumle")) for r in texts}
+    for i, a in enumerate(texts):
+        for b in texts[i + 1:]:
+            if a.get("document_id") != b.get("document_id") or _same(a.get("kanit_cumle"), b.get("kanit_cumle")):
+                continue
+            shared = numbers[a["satir_hash"]] & numbers[b["satir_hash"]]
+            union = words[a["satir_hash"]] | words[b["satir_hash"]]
+            score = len(words[a["satir_hash"]] & words[b["satir_hash"]]) / len(union) if union else 0.0
+            detail = {"ortak_sayilar": sorted(shared, key=float), "jaccard": round(score, 3),
+                      "sayfalar": [a.get("kanit_sayfa"), b.get("kanit_sayfa")]}
+            if len(shared) >= PILOT_MIN_SHARED_NUMBERS and score >= PILOT_JACCARD:
+                emit("pilot_tekrar_metin_metin", [a, b],
+                     f"metin kayıtları aynı içeriği taşıyor (ortak sayı {detail['ortak_sayilar']}, "
+                     f"Jaccard {detail['jaccard']})", detail, "metin_metin")
+            elif (len(shared) >= PILOT_MIN_SHARED_NUMBERS) or (len(shared) == 1 and score >= PILOT_JACCARD):
+                emit("pilot_tekrar_belirsiz", [a, b],
+                     f"olası metin ↔ metin tekrarı (ortak sayı {detail['ortak_sayilar']}, Jaccard {detail['jaccard']})",
+                     dict(detail, tur="metin_metin"), "belirsiz")
+    return flags, pairs
+
+
+def pilot_completeness(pilot_rows, sources):
+    """PDF'teki her tablo veri satırı en az bir pilot SQL satırıyla temsil ediliyor mu (belge başına)."""
+    from src.pilot_tablo import _needle
+
+    out = []
+    by_doc = defaultdict(list)
+    for row in pilot_rows:
+        by_doc[row.get("document_id")].append(row)
+    for doc in sorted(d for d in by_doc if d):
+        source = sources.get(doc) or {}
+        rows = by_doc[doc]
+        item = {"document_id": doc, "dosya": source.get("dosya"), "pilot_satir": len(rows),
+                "metin_satir": sum(r.get("kanit_turu") != "tablo" for r in rows),
+                "tablo_satir": sum(r.get("kanit_turu") == "tablo" for r in rows)}
+        if source.get("tables") is None:
+            item["hata"] = source.get("hata", "PDF okunamadı")
+            out.append(item)
+            continue
+        keys = {pilot_table_key(r) for r in rows}
+        table_rows = [r for r in rows if r.get("kanit_turu") == "tablo"]
+        per_table, missing = [], []
+        for table in source["tables"]:
+            represented = 0
+            for pdf_row in table["satirlar"]:
+                hit = (doc, table["tablo_no"], pdf_row["satir_no"]) in keys or any(
+                    int(r.get("kanit_sayfa") or 0) == table["sayfa"] and _needle(r.get("kanit_cumle"))
+                    and _needle(r.get("kanit_cumle")) in pdf_row["ham"] for r in table_rows)
+                if hit:
+                    represented += 1
+                else:
+                    missing.append({"tablo_no": table["tablo_no"], "sayfa": table["sayfa"],
+                                    "satir_no": pdf_row["satir_no"], "alt_bolum": pdf_row["alt_bolum"],
+                                    "degisken": pdf_row["degisken"], "ham": pdf_row["ham"]})
+            per_table.append({"tablo_no": table["tablo_no"], "sayfa": table["sayfa"],
+                              "tablo_basligi": table["tablo_basligi"], "pdf_satir": len(table["satirlar"]),
+                              "temsil_edilen": represented, "eksik": len(table["satirlar"]) - represented})
+        pages = Counter(int(r.get("kanit_sayfa") or 0) for r in rows if r.get("kanit_turu") != "tablo")
+        item.update(tablolar=per_table, pdf_tablo_satiri=sum(t["pdf_satir"] for t in per_table),
+                    temsil_edilen=sum(t["temsil_edilen"] for t in per_table), eksik_satirlar=missing,
+                    sayfa_basina_metin_kaydi={str(p): pages.get(p, 0) for p in sorted(source["pages"])})
+        out.append(item)
+    return out
+
+
+def load_pilot_sources(conn, document_ids, pdf_dir=DEFAULT_PDF_DIR, page_loader=None):
+    """{document_id: {dosya, pages, tables} | {dosya, hata}}. PDF hash'i document_id ile tutmalı."""
+    from src.pilot_tablo import parse_tables
+
+    if page_loader is None:
+        from src.pilot_clinical import pdf_pages as page_loader
+    document_ids = sorted(d for d in document_ids if d)
+    names = {}
+    if document_ids:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT document_id, filename FROM pdf_belgeleri WHERE document_id IN ("
+                           + ", ".join(["%s"] * len(document_ids)) + ")", document_ids)
+            names = {_text(d): _text(f) for d, f in cursor.fetchall()}
+        finally:
+            cursor.close()
+    sources = {}
+    for doc in document_ids:
+        name = names.get(doc)
+        if not name:
+            sources[doc] = {"dosya": None, "hata": "document_id pdf_belgeleri'de yok"}
+            continue
+        path = Path(pdf_dir) / name
+        if not path.exists():
+            sources[doc] = {"dosya": name, "hata": f"PDF dosyası yok: {path}"}
+            continue
+        try:
+            loaded, pages = page_loader(path)
+        except Exception as exc:  # noqa: BLE001 - okunamayan PDF kontrolü düşürmemeli
+            sources[doc] = {"dosya": name, "hata": f"{type(exc).__name__}: {exc}"}
+            continue
+        if loaded.get("document_id") != doc:
+            sources[doc] = {"dosya": name, "hata": "PDF hash'i document_id ile uyuşmuyor"}
+            continue
+        sources[doc] = {"dosya": name, "pages": pages, "tables": parse_tables(pages)}
+    return sources
+
+
+def run_pilot_checks(rows, sources):
+    """(işaretler, rapor). Yalnız bilgi_turu dolu satırlar; mevcut kontrollerden bağımsız."""
+    pilot_rows = sorted((r for r in rows if is_pilot(r)), key=lambda r: r["satir_hash"])
+    flags = []
+    for row in pilot_rows:
+        flags += check_pilot_row(row, sources.get(row.get("document_id")))
+    group_flags, partial = check_table_groups(pilot_rows, sources)
+    duplicate_flags, pairs = check_pilot_duplicates(pilot_rows)
+    flags += group_flags + duplicate_flags
+    report = {"eksiksizlik": pilot_completeness(pilot_rows, sources), "eksik_grup_analiz": partial,
+              "tekrar": pairs, "pilot_satir": len(pilot_rows)}
+    return merge_flags(flags), report
+
+
+def pilot_summary(flags, rows, report, examples=3):
+    pilot_hashes = {r["satir_hash"] for r in rows if is_pilot(r)}
+    by_hash = {r["satir_hash"]: r for r in rows}
+    pilot_flags = [f for f in flags if f["satir_hash"] in pilot_hashes]
+    codes = Counter(f["kontrol_kodu"] for f in pilot_flags)
+    samples = defaultdict(list)
+    for f in pilot_flags:
+        if len(samples[f["kontrol_kodu"]]) < examples:
+            row = by_hash[f["satir_hash"]]
+            samples[f["kontrol_kodu"]].append({
+                "satir_hash": f["satir_hash"][:12], "klinik_bulgu_id": f["klinik_bulgu_id"], "seviye": f["seviye"],
+                "kanit_sayfa": row.get("kanit_sayfa"), "kanit_turu": row.get("kanit_turu"),
+                "bilgi_turu": row.get("bilgi_turu"), "klinik_bilgi_en": (row.get("klinik_bilgi_en") or "")[:120],
+                "aciklama": f["aciklama"][:300]})
+    complete = report["eksiksizlik"]
+    return {
+        "eksiksizlik": complete,
+        "pdf_tablo_satiri": sum(i.get("pdf_tablo_satiri", 0) for i in complete),
+        "temsil_edilen": sum(i.get("temsil_edilen", 0) for i in complete),
+        "eksik_tablo_satiri": sum(len(i.get("eksik_satirlar", [])) for i in complete),
+        "eksik_grup_analiz": report["eksik_grup_analiz"],
+        "pilot_satir": report["pilot_satir"], "pilot_isaret": len(pilot_flags),
+        "pilot_isaretli_satir": len({f["satir_hash"] for f in pilot_flags}),
+        "kategori_seviye": {c: dict(Counter(f["seviye"] for f in pilot_flags if f["kategori"] == c))
+                            for c in sorted({f["kategori"] for f in pilot_flags})},
+        "kontrol_kodu": dict(sorted(codes.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "tekrar": {"metin_tablo": len(report["tekrar"]["metin_tablo"]),
+                   "metin_metin": len(report["tekrar"]["metin_metin"]),
+                   "belirsiz": len(report["tekrar"]["belirsiz"]),
+                   "ayrinti": report["tekrar"]},
+        "ornekler": dict(sorted(samples.items())),
+    }
+
+
+def pilot_row_count(conn):
+    """bilgi_turu dolu satır sayısı (sütun yoksa 0)."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+                       "AND TABLE_NAME = 'klinik_bulgular' AND COLUMN_NAME = 'bilgi_turu'")
+        if not cursor.fetchone()[0]:
+            return 0
+        cursor.execute("SELECT COUNT(*) FROM klinik_bulgular WHERE bilgi_turu IS NOT NULL")
+        return int(cursor.fetchone()[0])
+    finally:
+        cursor.close()
 
 
 # ---------------------------------------------------------------------------
@@ -835,15 +1324,22 @@ def state_collision_hint(batch_dir):
 # Tüm kontroller
 # ---------------------------------------------------------------------------
 
-def run_checks(rows, ctx=None, *, collisions=None, embedder=None, embedding_threshold=EMBEDDING_THRESHOLD):
+def run_checks(rows, ctx=None, *, collisions=None, embedder=None, embedding_threshold=EMBEDDING_THRESHOLD,
+               source_filter=None, pilot=False):
+    """source_filter: verilirse chunk temelli kaynak kontrolü yalnız filter(row) doğru olan satırlarda
+    (--pilot: pilot satırları kendi pdf_pages kontrollerini alır).
+
+    pilot=True (--pilot): pilot satırların GA–p ve yüzde aritmetiği run_pilot_checks'te
+    (kaynak_ci_p_celiski, pilot_yuzde_uyumsuz) raporlanır; burada ikinci kez işaretlenmez."""
     rows = sorted(rows, key=lambda r: r["satir_hash"])
     flags = []
     flags += check_duplicates(rows, embedder, embedding_threshold)
     for row in rows:
         flags += check_numeric(row)
-        flags += check_ci_p(row)
+        if not (pilot and is_pilot(row)):
+            flags += check_ci_p(row)
         flags += check_row_consistency(row)
-        if ctx is not None:
+        if ctx is not None and (source_filter is None or source_filter(row)):
             flags += check_source(row, ctx)
         if collisions and row["satir_hash"] in collisions:
             variants = collisions[row["satir_hash"]]
@@ -851,7 +1347,7 @@ def run_checks(rows, ctx=None, *, collisions=None, embedder=None, embedding_thre
                                f"aynı satir_hash ile {len(variants)} farklı bulgu üretildi; yalnızca biri kaydedilebilir",
                                detail={"varyantlar": variants}))
     flags += check_group_consistency(rows)
-    flags += check_statistical_groups(rows)
+    flags += check_statistical_groups(rows, pilot=pilot)
     flags += check_model_terminology(rows)
     return merge_flags(flags)
 
@@ -882,11 +1378,11 @@ def _row_from_db(columns, values):
     return row
 
 
-def load_db_rows(conn, *, hepsi=False, makale=()):
+def load_db_rows(conn, *, hepsi=False, makale=(), pilot=False):
     sql = "SELECT * FROM klinik_bulgular"
     where, params = [], []
     if not hepsi:
-        where.append("cikarma_yontemi = 'rag'")
+        where.append("(cikarma_yontemi = 'rag' OR bilgi_turu IS NOT NULL)" if pilot else "cikarma_yontemi = 'rag'")
     if makale:
         where.append("makale_id IN (" + ", ".join(["%s"] * len(makale)) + ")")
         params += list(makale)
@@ -1057,7 +1553,7 @@ def write_flags(conn, flags, rows, version, scope, *, own_transaction, delete_ol
 
 CSV_COLUMNS = ("veri_etiketi", "seviye", "kategori", "kontrol_kodu", "grup_id", "satir_hash", "klinik_bulgu_id",
                "makale_id", "dosya", "kanit_sayfa", "kanit_turu", "mudahale", "doz", "deger", "unit",
-               "hasta_grubu", "sonuc", "aciklama", "kanit_cumle")
+               "hasta_grubu", "sonuc", "aciklama", "kanit_cumle", "bilgi_turu", "baglam")
 
 
 def summarize(flags, rows, version, *, label=None, collisions=None, state_hint=None, source_checked=True, kapsam=""):
@@ -1098,9 +1594,13 @@ def write_reports(report_dir, flags, rows, summary, label=None):
                 "kanit_turu": row.get("kanit_turu"), "mudahale": mudahale_of(row), "doz": row.get("doz"),
                 "deger": row.get("deger"), "unit": row.get("unit"), "hasta_grubu": row.get("hasta_grubu"),
                 "sonuc": outcome_of(row), "aciklama": f["aciklama"], "kanit_cumle": (row.get("kanit_cumle") or "")[:300],
+                "bilgi_turu": row.get("bilgi_turu") or "", "baglam": row.get("baglam") or "",
             })
-    (report_dir / "isaretler.json").write_text(json.dumps(
-        {"veri_etiketi": label, "isaretler": flags}, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    payload = {"veri_etiketi": label, "isaretler": flags}
+    if summary.get("pilot"):
+        payload["pilot"] = summary["pilot"]
+    (report_dir / "isaretler.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1, default=str),
+                                               encoding="utf-8")
     groups = defaultdict(list)
     for f in flags:
         if f["grup_id"]:
@@ -1132,23 +1632,29 @@ class Options:
     esik: float = EMBEDDING_THRESHOLD
     eski_surumleri_sil: bool = False
     rapor_dir: Path = DEFAULT_REPORT_DIR
+    pilot: bool = False
+    pdf_dir: Path = DEFAULT_PDF_DIR
 
 
 class QualityError(Exception):
     pass
 
 
-def run_quality(opts, *, connection=None, embedder=None, out=print):
-    """İşaretleri hesaplar; DB modunda (dry-run değilse) kalite_isaretleri'ni yeniler."""
+def run_quality(opts, *, connection=None, embedder=None, out=print, page_loader=None):
+    """İşaretleri hesaplar; DB modunda (dry-run değilse) kalite_isaretleri'ni yeniler.
+
+    page_loader: pdf yolu -> (doc, {sayfa: metin}); varsayılan src.pilot_clinical.pdf_pages (yalnız --pilot)."""
     if opts.referans and not opts.dry_run:
         raise QualityError("--referans yalnızca rapor modunda çalışır: --dry-run zorunlu.")
     if opts.referans and opts.jsonl:
         raise QualityError("--referans ve --jsonl birlikte kullanılamaz.")
     if opts.offline and not opts.jsonl:
         raise QualityError("--offline yalnızca --jsonl ile kullanılır.")
+    if opts.pilot and (opts.referans or opts.offline):
+        raise QualityError("--pilot, --referans / --offline ile kullanılamaz (PDF ve veritabanı gerekir).")
     mode = "referans" if opts.referans else "jsonl" if opts.jsonl else "db"
     label = REFERENCE_LABEL if opts.referans else None
-    version = control_version(opts.embedding, opts.esik)
+    version = control_version(opts.embedding, opts.esik, pilot=opts.pilot)
     if opts.embedding and embedder is None:
         from src.embeddings import embed_documents
         embedder = lambda texts: embed_documents(texts, model_name="minilm")  # noqa: E731
@@ -1164,23 +1670,36 @@ def run_quality(opts, *, connection=None, embedder=None, out=print):
         elif mode == "jsonl":
             rows = load_jsonl_rows(opts.jsonl)
             if opts.jsonl_ile_db and conn is not None:
-                rows += load_db_rows(conn, hepsi=opts.hepsi, makale=opts.makale)
+                rows += load_db_rows(conn, hepsi=opts.hepsi, makale=opts.makale, pilot=opts.pilot)
         else:
-            rows = load_db_rows(conn, hepsi=opts.hepsi, makale=opts.makale)
+            rows = load_db_rows(conn, hepsi=opts.hepsi, makale=opts.makale, pilot=opts.pilot)
         if opts.makale:
             rows = [r for r in rows if r.get("makale_id") in opts.makale]
         rows = dedupe_identical(rows)
         ctx = load_source_context(conn) if conn is not None else None
         collisions = hash_collisions(rows, opts.batch_dir)
-        flags = run_checks(rows, ctx, collisions=collisions, embedder=embedder, embedding_threshold=opts.esik)
+        flags = run_checks(rows, ctx, collisions=collisions, embedder=embedder, embedding_threshold=opts.esik,
+                           source_filter=(lambda r: not is_pilot(r)) if opts.pilot else None, pilot=opts.pilot)
+        pilot_report = None
+        if opts.pilot:
+            sources = load_pilot_sources(conn, {r.get("document_id") for r in rows if is_pilot(r)},
+                                         opts.pdf_dir, page_loader)
+            pilot_flags, pilot_report = run_pilot_checks(rows, sources)
+            flags = merge_flags(flags + pilot_flags)
         if label:
             for f in flags:
                 f["veri_etiketi"] = label
         kapsam = (mode if mode == "referans" else f"{mode}; {'hepsi' if opts.hepsi else 'rag'}") + (
-            f"; makale={sorted(opts.makale)}" if opts.makale else "")
+            "; pilot" if opts.pilot else "") + (f"; makale={sorted(opts.makale)}" if opts.makale else "")
         summary = summarize(flags, rows, version, label=label, collisions=collisions,
                             state_hint=state_collision_hint(opts.batch_dir) if opts.batch_dir else None,
                             source_checked=ctx is not None, kapsam=kapsam)
+        if pilot_report is not None:
+            summary["pilot"] = pilot_summary(flags, rows, pilot_report)
+        elif conn is not None and mode != "referans":
+            waiting = pilot_row_count(conn)
+            if waiting:
+                summary["pilot_uyarisi"] = f"{waiting} {PILOT_WARNING}"
         if reference_info:
             summary["referans"] = {**reference_info, "satira_donusen": len(rows),
                                    "not": "aday cümlesiyle tam 1 eşleşmesi olmayan satırlar rapora girmez"}
@@ -1205,6 +1724,8 @@ def run_quality(opts, *, connection=None, embedder=None, out=print):
 def print_summary(summary, flags, out=print):
     if summary.get("veri_etiketi"):
         out(f"*** {summary['veri_etiketi']} ***")
+    if summary.get("pilot_uyarisi"):
+        out(f"UYARI: {summary['pilot_uyarisi']}")
     out(f"Kontrol sürümü: {summary['kontrol_surumu']}   mod: {summary['mod']}   kapsam: {summary['kapsam']}")
     out(f"Satır: {summary['satir_sayisi']}   işaret: {summary['isaret_sayisi']}   işaretli satır: "
         f"{summary['isaretli_satir']}   tekrar grubu: {summary['tekrar_grubu']}   "
@@ -1213,6 +1734,29 @@ def print_summary(summary, flags, out=print):
     for category, levels in summary["kategori_seviye"].items():
         out(f"{category:<12} {levels.get('hata', 0):>5} {levels.get('uyari', 0):>6} {levels.get('bilgi', 0):>6}")
     out("En sık kontroller: " + ", ".join(f"{k} ({v})" for k, v in list(summary["kontrol_kodu"].items())[:5]))
+    pilot = summary.get("pilot")
+    if pilot and not pilot["pilot_satir"]:
+        out("PİLOT EKSİKSİZLİK: SQL'de bilgi_turu dolu satır yok; PDF'e göre eksiksizlik hesaplanamadı "
+            "(önce src.pilot_clinical.import_records ile aktarım)")
+    elif pilot:
+        out(f"PİLOT EKSİKSİZLİK: PDF tablo veri satırı {pilot['pdf_tablo_satiri']}, SQL'de temsil edilen "
+            f"{pilot['temsil_edilen']}, eksik {pilot['eksik_tablo_satiri']}; grubu/analizi eksik satır "
+            f"{len(pilot['eksik_grup_analiz'])}")
+        for item in pilot["eksiksizlik"]:
+            if item.get("hata"):
+                out(f"  {item.get('dosya') or item['document_id'][:12]}: PDF okunamadı ({item['hata']})")
+                continue
+            out(f"  {item['dosya']}: pilot satır {item['pilot_satir']} (metin {item['metin_satir']}, "
+                f"tablo {item['tablo_satir']}); " + ", ".join(
+                    f"Table {t['tablo_no']} {t['temsil_edilen']}/{t['pdf_satir']}" for t in item["tablolar"]))
+            for m in item["eksik_satirlar"][:10]:
+                out(f"    eksik: Table {m['tablo_no']} satır {m['satir_no']} {m['degisken']}")
+            if len(item["eksik_satirlar"]) > 10:
+                out(f"    … +{len(item['eksik_satirlar']) - 10} satır (ozet.json)")
+        out(f"Pilot: {pilot['pilot_satir']} satır, {pilot['pilot_isaret']} işaret; tekrar metin↔tablo "
+            f"{pilot['tekrar']['metin_tablo']}, metin↔metin {pilot['tekrar']['metin_metin']}, "
+            f"belirsiz {pilot['tekrar']['belirsiz']}")
+        out("Pilot kontrolleri: " + ", ".join(f"{k} ({v})" for k, v in pilot["kontrol_kodu"].items()))
     out(f"Veritabanına yazıldı: {'evet' if summary['veritabanina_yazildi'] else 'hayır'}   rapor: {summary['rapor_dir']}")
 
 
@@ -1232,6 +1776,9 @@ def parse_args(argv=None):
     parser.add_argument("--esik", type=float, default=EMBEDDING_THRESHOLD, help="embedding cosine eşiği (varsayılan 0.92)")
     parser.add_argument("--eski-surumleri-sil", action="store_true", help="diğer kontrol sürümlerinin işaretlerini sil")
     parser.add_argument("--rapor-dir", type=Path, default=DEFAULT_REPORT_DIR)
+    parser.add_argument("--pilot", action="store_true",
+                        help="bilgi_turu dolu (pilot) satırları da al ve pdf_pages'e göre pilot kontrollerini çalıştır")
+    parser.add_argument("--pdf-dir", type=Path, default=DEFAULT_PDF_DIR, help="--pilot: PDF klasörü (varsayılan data/pdfs)")
     return parser.parse_args(argv)
 
 
@@ -1249,7 +1796,7 @@ def main(argv=None):
     opts = Options(hepsi=args.hepsi, makale=args.makale, jsonl=args.jsonl, jsonl_ile_db=args.jsonl_ile_db,
                    offline=args.offline, referans=args.referans, batch_dir=args.batch_dir, dry_run=args.dry_run,
                    embedding=args.embedding, esik=args.esik, eski_surumleri_sil=args.eski_surumleri_sil,
-                   rapor_dir=args.rapor_dir)
+                   rapor_dir=args.rapor_dir, pilot=args.pilot, pdf_dir=args.pdf_dir)
     try:
         summary, flags, _ = run_quality(opts)
     except QualityError as exc:
