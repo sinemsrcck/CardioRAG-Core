@@ -10,12 +10,16 @@ sql/sunum_hoca/*.sql içindeki {{KAYNAK_DB}} ve {{SUNUM_DB}} yer tutucuları kur
 
 Dosyalar ADA GÖRE sırayla çalışır (00_ortak.sql önce); klasöre sonradan eklenen dosyalar
 (ör. Sinem'in 20_diseases.sql, 21_diagnostics.sql, 22_symptoms.sql) otomatik alınır.
-Her ifade CREATE OR REPLACE VIEW olduğu için kurulum tekrar çalıştırılabilir. Kaynak
-veritabanındaki tablolara ve view'lara yazılmaz.
+Her ifade CREATE OR REPLACE VIEW / DROP VIEW IF EXISTS olduğu için kurulum tekrar çalıştırılabilir.
+
+Ortak taban view (v_sunum_taban) KAYNAK veritabanında kurulur; sunum veritabanında yalnız hocaya
+gösterilen view'lar kalır (eski iç view _findings_base kurulumda silinir). Kaynak veritabanındaki
+tablolara ve diğer view'lara (v_pilot_bulgular vb.) dokunulmaz.
 
 Gereken yetkiler (kurulumu yapan MySQL kullanıcısı):
   - CREATE           : sunum veritabanını ilk kez oluşturmak için (CREATE DATABASE)
-  - CREATE VIEW, DROP: sunum veritabanında (CREATE OR REPLACE VIEW)
+  - CREATE VIEW, DROP: sunum veritabanında (CREATE OR REPLACE VIEW, eski _findings_base için DROP VIEW)
+  - CREATE VIEW, DROP: kaynak veritabanında yalnız v_sunum_taban için (CREATE OR REPLACE VIEW)
   - SELECT, SHOW VIEW: kaynak veritabanında okunan tablo/view'larda (v_pilot_bulgular ve onun okuduğu tablolar)
 Hocanın kullanıcısı için yalnız: GRANT SELECT ON kardiyo_sunum.* TO <HOCA_KULLANICI>;
 View'lar SQL SECURITY DEFINER ile oluşur; mysqldump ile başka sunucuya taşınmamalı (DEFINER
@@ -41,7 +45,9 @@ MIN_GROUPS = 2
 TECHNICAL_COLUMNS = {"bulgu_id", "id", "document_id", "satir_hash", "taslak_notu", "chunk_id", "makale_id",
                      "review_status", "cikarma_yontemi", "row_key", "page_sort", "kanit_turu", "bilgi_turu",
                      "baglam", "tablo_no", "satir_no", "filename"}
-# Kullanıcıya açık view'ların beklenen sütunları (iç view'lar '_' ile başlar).
+BASE_VIEW = "v_sunum_taban"  # kaynak veritabanında; sunum veritabanına konmaz
+OLD_BASE_VIEW = "_findings_base"  # eski yer (sunum veritabanı); kurulum siler
+# Kullanıcıya açık view'ların beklenen sütunları.
 EXPECTED_COLUMNS = {
     "measurements_by_group": ["parameter", "group_order", "group_name", "group_value", "unit", "p_value",
                               "evidence", "source", "page"],
@@ -90,12 +96,12 @@ def database_names(conn):
     return source, target
 
 
-def max_group_count(conn, target):
-    """_findings_base'te Table 1 satırı başına en fazla grup (kayıt) sayısı."""
+def max_group_count(conn, source):
+    """Kaynaktaki v_sunum_taban'da Table 1 satırı başına en fazla grup (kayıt) sayısı."""
     cursor = conn.cursor()
     try:
-        cursor.execute(f"SELECT COALESCE(MAX(n), 0) FROM (SELECT COUNT(*) AS n FROM `{target}`.`_findings_base` "
-                       f"WHERE tablo_no = 1 GROUP BY row_key) AS g")
+        cursor.execute(f"SELECT COALESCE(MAX(n), 0) FROM (SELECT COUNT(*) AS n FROM `{source}`.`{BASE_VIEW}` "
+                       f"WHERE kanit_turu = 'tablo' AND tablo_no = 1 GROUP BY row_key) AS g")
         return int(cursor.fetchone()[0])
     finally:
         cursor.close()
@@ -114,10 +120,11 @@ def _explain(exc, target, source):
     errno = getattr(exc, "errno", None)
     if errno in (1044, 1045):
         return (f"Yetki yok ({errno}). Kurulumu yapan kullanıcıda gerekenler: CREATE (veritabanı oluşturma), "
-                f"`{target}` üzerinde CREATE VIEW ve DROP, `{source}` üzerinde SELECT ve SHOW VIEW.")
+                f"`{target}` üzerinde CREATE VIEW ve DROP, `{source}` üzerinde SELECT, SHOW VIEW ve "
+                f"({BASE_VIEW} için) CREATE VIEW ve DROP.")
     if errno in (1142, 1143):
         return (f"Tablo/view yetkisi yok ({errno}). `{target}` üzerinde CREATE VIEW / DROP, `{source}` tablo ve "
-                f"view'larında SELECT gerekir.")
+                f"view'larında SELECT, `{source}`.{BASE_VIEW} için CREATE VIEW / DROP gerekir.")
     if errno == 1146:
         return (f"Kaynak nesne bulunamadı ({errno}): `{source}`.v_pilot_bulgular kurulu mu? Önce: python -m src.sunum --kur")
     return None
@@ -156,7 +163,7 @@ def install(conn=None, *, min_groups=MIN_GROUPS, out=print):
                 statements = _split_sql_statements(path.read_text(encoding="utf-8"))
                 values = {"KAYNAK_DB": source, "SUNUM_DB": target}
                 if any("{{" + GROUP_PLACEHOLDER + "}}" in s for s in statements):
-                    n_groups = max(min_groups, max_group_count(conn, target))
+                    n_groups = max(min_groups, max_group_count(conn, source))
                     conn.rollback()
                     values[GROUP_PLACEHOLDER] = measurement_columns(n_groups)
                 for statement in statements:
