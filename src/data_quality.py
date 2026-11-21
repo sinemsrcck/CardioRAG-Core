@@ -68,6 +68,7 @@ PILOT_CHECKS = {
     "pilot_tekrar_metin_tablo": "tekrar", "pilot_tekrar_metin_metin": "tekrar", "pilot_tekrar_belirsiz": "tekrar",
     "pilot_baglam_tablo": "tutarsizlik", "pilot_ilac_doz_oran": "tutarsizlik",
     "pilot_parca_tutarsiz": "kaynak", "pilot_cok_parcali_cozuldu": "kaynak",
+    "pilot_tablo_bos_deger": "sayisal",
 }
 ALL_CHECKS = {**CHECKS, **PILOT_CHECKS}
 PILOT_JACCARD = 0.3          # metin ↔ metin tekrarında anahtar kelime örtüşmesi
@@ -77,7 +78,9 @@ PILOT_SIGNIFICANCE = 0.05
 # r3: kaynak_ci_p_celiski ortak ci_p_assessment kuralını kullanır (AUC dahil; '<001' gibi belirsiz p atlanır).
 # r4: çok parçalı kanıt (taslak_notu.kanit_parcalari) her parça kendi sayfasında aranır; doğrulanan
 #     parçalı / sayfa sınırlı kanıta sayfa geçişi ve şekil/tablo uyarısı verilmez.
-PILOT_RULES_REVISION = 4
+# r5: boş ya da rakamsız değerli tablo kaydı (pilot_tablo_bos_deger; ör. ara başlık "n (%)" ya da başlığı
+#     boş etiket sütunundan üretilmiş kayıt).
+PILOT_RULES_REVISION = 5
 DEFAULT_PDF_DIR = Path("data/pdfs")
 PILOT_WARNING = ("pilot satırlar var ama --pilot verilmedi; v_kalite_ozet son sürümü gösterdiği için "
                  "pilot işaretleri görünmeyecek")
@@ -1048,6 +1051,14 @@ def check_pilot_row(row, source):
     if row.get("baglam") in PILOT_LOW_CONTEXTS and row.get("kanit_turu") == "tablo":
         flags.append(_flag(row, "pilot_baglam_tablo", "uyari",
                            f"baglam '{row.get('baglam')}' ama kanit_turu=tablo (tablo çalışmanın kendi verisi)"))
+    if row.get("kanit_turu") == "tablo":
+        value = str(row.get("deger") or "").strip()
+        if not value:
+            flags.append(_flag(row, "pilot_tablo_bos_deger", "uyari",
+                               "tablo kaydında deger boş (boş grup / etiket sütunu kaydı olabilir)"))
+        elif not any(ch.isdigit() for ch in value):
+            flags.append(_flag(row, "pilot_tablo_bos_deger", "uyari",
+                               f"tablo kaydında deger sayı içermiyor ('{value}'; ara başlık / biçim etiketi olabilir)"))
     medication = row.get("bilgi_turu") == "ilac" or row.get("mudahale_turu") == PILOT_MED_TURU
     if medication and str(row.get("doz") or "").strip() and match:
         flags.append(_flag(row, "pilot_ilac_doz_oran", "uyari",

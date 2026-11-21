@@ -17,6 +17,14 @@ Kontroller:
 - mudahale_turu yalnız ilaç satırlarında ("arka plan tedavisi"); diğerleri boş (aktarım yolu zorunlu tutmuyor).
 - Aktarım (import_records girdisi): 116 kayıt, izinli alanlar, review_status yok; validate_records
   grup/analiz satırlarını tekrar saymıyor, gerçek tekrarı "tekrar" hatasıyla yakalıyor.
+- Pilot çıktısı main'deki kodla birebir (sabit parmak izleri): parse_tables satırları ve sütunları,
+  sql_onizleme, aktarım, table_info ve satir_hash listesi (import_records kimliğiyle).
+- Genel tablo kuralları (sentetik tablo, PDF'siz): Roma rakamlı başlık, dipnot satırı, ara başlık / biçim
+  satırı (bölüm kapsamını bitirir), başlığı boş etiket sütunu ve birleşik hücre adı, <br> alt satırları,
+  test / post-hoc işaretleri, "(A)" etiketi, "±SE", karmaşık tablo -> elle inceleme, boş değerli kayıt yok.
+- Troponin PDF'i (who-J-Coll-…pdf, varsa): 3 tablo; Table III elle inceleme, kayıt yok; boş / çöp kayıt yok.
+- Girdi: findings zorunlu; başka belgenin findings'i (içerik ya da document_id) reddedilir; başka belgenin
+  çıktısının üzerine --overwrite ile bile yazılmaz.
 - Temiz satır adı (row_name): istatistik etiketi (n (%), mean ± SD, median (IQR) …) atılır, klinik birim
   ve <sup> ham kalır, <br> öncesi parça ve kenar ** atılır; ad kanıtta birebir. Aktarımda tablo
   kaydının klinik_bilgi_en'i temiz ad; zehra_dogrulanmis_v3_3.json'daki 116 tablo kaydıyla birebir
@@ -70,6 +78,227 @@ def note(row):
 
 
 V33 = Path('data/review/pilot/zehra_dogrulanmis_v3_3.json')
+TROPONIN_PDF = Path('data/pdfs/who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf')
+# main'deki (genel tablo kurallarından önceki) kodun pilot çıktısının parmak izleri. Pilot çıktısı değişirse
+# bilerek güncellenir; bu değişiklik pilot kayıtlarını (ve satir_hash'leri) değiştirmemeli.
+PILOT_FINGERPRINTS = {
+    'tablolar_satirlar': '4d9adca7f57d73b0d419d9d53667b4edd55f0719222e429c3da1dd41ca621a11',
+    'tablolar_sutunlar': 'fc211d87280dae2ec8178b0fd074b526c46d538d900e40227b7da8869771603f',
+    'sql_onizleme': '863dec4099fe5f50805de6064a72e15e9a805bba56ff84188f0bfedf3bb802fd',
+    'aktarim': '5e17ce2d040132866a41a3ec5b25c3faa105a166d1e7fa716134a1a4603b1d7d',
+    'table_info': '21a3bd4e0fd4ff42945b2481e95bae12b3a841f9c372808a850abc35a522baa2',
+    'satir_hash': '4012000e26ef16a33513cf1de06e9815448bbba387b529a72675a40a1826282f',
+}
+ROW_KEYS = ('satir_no', 'sayfa', 'ham', 'temiz', 'degisken_ham', 'ad', 'degisken', 'unit', 'alt_bolum', 'sutun_degerleri')
+SYNTHETIC_PAGE = """**Table II: Synthetic general rules.**
+
+|||**Group A (n=10)**|**Group B (n=12)**|**P**|
+|---|---|---|---|---|
+|||n (%)|n (%)||
+|Age||50 (40-60)|55 (45-65)|0.100<br>u|
+|Sex<br>Female<br>Male||4 (40.0)<br>6 (60.0)|5 (41.7)<br>7 (58.3)|0.900<br>p|
+|Drug section|||||
+|Aspirin||3 (30.0)|4 (33.3)<br>II|0.700|
+|||Median (Q1-Q3)|Median (Q1-Q3)||
+|Score (A)||3 (1-5)|4 (2-6)|<0.001<br>u|
+|AUC±SE.||0.70 (0.6-0.8)|0.75 (0.65-0.85)|0.040|
+|Test value<br>f||<0.001|0.020||
+||X-Y|0.010|0.030||
+|Pairwise check|X-Z|0.020|0.040||
+||Y-Z|0.030||7.8 (2.4-25.1)<br>or|
+|_a footnote,_<br>_u Mann Whitney_|_more_|_x_|_y_|_z_|
+
+**Table 3: Complex synthetic.**
+
+||**Variable**|**Imp**|**Class**|
+|---|---|---|---|
+|**Model**|**Name**|**Importance**|**Predicted**|
+|1|Alpha|50%|Absent|
+||Beta|40%|Present|
+"""
+
+
+def fingerprint(obj):
+    import hashlib
+    return hashlib.sha256(json.dumps(obj, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def satir_hash(item, document_id):
+    """src.pilot_clinical.import_records'un satir_hash kimliğiyle aynı (yazmadan, yalnız karşılaştırma için)."""
+    import hashlib
+    payload = {'document_id': document_id, 'bilgi_turu': item['bilgi_turu'], 'baglam': item['baglam'],
+               'klinik_bilgi': item.get('klinik_bilgi'), 'klinik_bilgi_en': item.get('klinik_bilgi_en'),
+               'kanit_sayfa': item['sayfa'], 'kanit_cumle': item['kanit_cumle']}
+    identity = [payload[k] for k in ('document_id', 'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en',
+                                     'kanit_sayfa', 'kanit_cumle')]
+    structured = {k: (item[k] if isinstance(item[k], str) else json.dumps(item[k], ensure_ascii=False))
+                  for k in STRUCTURED_FIELDS if item.get(k) is not None}
+    if structured:
+        identity.append(structured)
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def check_pilot_unchanged(result, document_id):
+    """Genel tablo kuralları pilot çıktısını değiştirmez: main'deki kodun parmak izleriyle birebir."""
+    import hashlib
+    rows = [[t['tablo_no']] + [r[k] for k in ROW_KEYS] for t in result['tablolar'] for r in t['satirlar']]
+    cols = [[t['tablo_no'], t['tablo_basligi'], t['sutunlar'], t['alt_bolumler'], [s['tur'] for s in t['sorunlar']]]
+            for t in result['tablolar']]
+    hashes = sorted(satir_hash(r, document_id) for r in result['aktarim'])
+    got = {'tablolar_satirlar': fingerprint(rows), 'tablolar_sutunlar': fingerprint(cols),
+           'sql_onizleme': fingerprint(result['sql_onizleme']), 'aktarim': fingerprint(result['aktarim']),
+           'table_info': fingerprint([r.get('tablo') for r in result['kayitlar']]),
+           'satir_hash': hashlib.sha256(''.join(hashes).encode()).hexdigest()}
+    check('pilot: main ile birebir (satırlar, sütunlar, sql_onizleme, aktarım, table_info, satir_hash)',
+          PILOT_FINGERPRINTS, got)
+    check('pilot: 116 ayrı satir_hash', 116, len(set(hashes)))
+    check('pilot: atlanan satır / üretilmeyen kayıt / elle inceleme yok', ([], [], 0),
+          ([s for t in result['tablolar'] for s in t['atlanan_satirlar']], result['atlanan_kayitlar'],
+           sum(r['eslesme'] == 'elle_inceleme' for r in result['kayitlar'])))
+    check('pilot: yeni taslak_notu alanı yok', set(),
+          {k for r in result['aktarim'] for k in json.loads(r['taslak_notu'])}
+          & {'posthoc_isareti', 'p_test_isareti', 'test_isareti', 'bicim_etiketi', 'etiket', 'sutun_etiketi'})
+
+
+def check_general_rules():
+    """Genel tablo kuralları, sentetik sayfa (PDF / makale gerekmez)."""
+    check('roma rakamı', [1, 2, 3, 4, 9, 14, None], [pt.roman_to_int(x) for x in ('I', 'II', 'III', 'IV', 'IX', 'XIV', 'IIZ')])
+    check('split_unit: (A) etiket, ±SE etiket', [('hs Trop I 0h (A)', 'ng/l'), ('AUC', None), ('Glucose', 'mg/dL')],
+          [pt.split_unit('hs Trop I  0h  ng/l  (A)'), pt.split_unit('AUC±SE.'), pt.split_unit('Glucose (mg/dL)')])
+    check('row_name: ±SE / ± SD atılır', ['AUC', 'Weight', 'BMI kg/m<sup>2</sup>'],
+          [pt.row_name('AUC±SE.'), pt.row_name('Weight ± SD'), pt.row_name('BMI kg/m<sup>2</sup>')])
+    tables = pt.parse_tables({7: SYNTHETIC_PAGE})
+    check('sentetik: Roma rakamlı başlık sayıya çevrildi', [(2, 'Table II: Synthetic general rules.'), (3, None)],
+          [(t['tablo_no'], t['tablo_basligi'] if t['tablo_no'] == 2 else None) for t in tables])
+    t2 = tables[0]
+    roles = [(c['rol'], c['baslik']) for c in t2['sutunlar']]
+    check('sentetik: başlığı boş etiket sütunu grup değil', ('etiket', ''), roles[1])
+    rows = {r['degisken']: r for r in t2['satirlar']}
+    check('sentetik: satır adları (alt satırlar, birleşik hücre adı, işaretsiz ad)',
+          ['Age', 'Female', 'Male', 'Aspirin', 'Score (A)', 'AUC', 'Test value', 'Pairwise check X-Y',
+           'Pairwise check X-Z', 'Pairwise check Y-Z'], [r['degisken'] for r in t2['satirlar']])
+    check('sentetik: Sex alt satırları bölüm "Sex", değerler ayrı',
+          [('Sex', {'Group A (n=10)': '4 (40.0)', 'Group B (n=12)': '5 (41.7)', 'P': '0.900'}),
+           ('Sex', {'Group A (n=10)': '6 (60.0)', 'Group B (n=12)': '7 (58.3)', 'P': '0.900'})],
+          [(rows[n]['alt_bolum'], {k: v for k, v in rows[n]['sutun_degerleri'].items() if k != ' [sütun 2]'})
+           for n in ('Female', 'Male')])
+    check('sentetik: biçim satırı bölüm kapsamını bitirir', ('Drug section', None),
+          (rows['Aspirin']['alt_bolum'], rows['Score (A)']['alt_bolum']))
+    check('sentetik: işaretler değerden ayrıldı (p test, post-hoc, ad)',
+          ('0.100', {'P': 'u'}, '4 (33.3)', {'Group B (n=12)': 'II'}, 'f'),
+          (rows['Age']['sutun_degerleri']['P'], rows['Age'].get('isaretler'), rows['Aspirin']['sutun_degerleri']['Group B (n=12)'],
+           rows['Aspirin'].get('isaretler'), rows['Test value'].get('ad_isareti')))
+    check('sentetik: p hücresinde OR (or) etki olarak okunmadı (ekip kararı bekliyor)', '7.8 (2.4-25.1) or',
+          rows['Pairwise check Y-Z']['sutun_degerleri']['P'])
+    check('sentetik: atlanan satırlar', ['bicim_satiri', 'bicim_satiri', 'dipnot'],
+          sorted(s['tur'] for s in t2['atlanan_satirlar']))
+    check('sentetik: dipnot satırı veri değil, dipnot metni saklandı', (True, False),
+          (bool(t2.get('dipnot')) and 'Mann Whitney' in t2['dipnot'][0], any('footnote' in r['ham'] for r in t2['satirlar'])))
+    records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': 7, 'kanit_cumle': ham, 'bilgi_turu': 'olcum',
+                'baglam': 'study_finding', 'klinik_bilgi_en': ham}
+               for i, ham in enumerate(dict.fromkeys(r['ham'] for r in t2['satirlar']), 1)]
+    records.append({'v2_sira': 99, 'kanit_turu': 'tablo', 'sayfa': 7, 'kanit_cumle': '|1|Alpha|50%|Absent|',
+                    'bilgi_turu': 'olcum', 'baglam': 'study_finding', 'klinik_bilgi_en': 'Alpha'})
+    result = pt.enrich(records, {7: SYNTHETIC_PAGE})
+    transfer = result['aktarim']
+    check('sentetik: alt satırlı PDF satırı tek kayıttan iki satır (Female, Male)', ['eslesti'] * (len(records) - 1),
+          [r['eslesme'] for r in result['kayitlar'][:-1]])
+    check('sentetik: karmaşık tablonun kaydı -> elle_inceleme, kayıt yok', ('elle_inceleme', 0),
+          (result['kayitlar'][-1]['eslesme'], sum(json.loads(r['taslak_notu'])['tablo_no'] == 3 for r in transfer)))
+    check('sentetik: boş değerli / boş adlı / boş gruplu kayıt yok', [],
+          [r for r in transfer if not r.get('deger') or not r.get('klinik_bilgi_en') or r.get('hasta_grubu') == ''
+           or r.get('p') == ''])
+    check('sentetik: boş değerli grup kaydı üretilmedi, raporlandı', [('Pairwise check Y-Z', 'Group B (n=12)')],
+          [(a['degisken'], a['sutun']) for a in result['atlanan_kayitlar']])
+    check('sentetik: kayıt sayısı (10 satır x 2 grup - 1 boş)', 19, len(transfer))
+    notes = {(r['klinik_bilgi_en'], r['hasta_grubu']): json.loads(r['taslak_notu']) for r in transfer}
+    check('sentetik: taslak_notu işaretleri / biçim (değerle tutarlıysa) / etiket',
+          [{'p_test_isareti': 'u'}, {'bicim_etiketi': 'n (%)', 'p_test_isareti': 'p'},
+           {'posthoc_isareti': 'II', 'bicim_etiketi': 'n (%)'}, {'bicim_etiketi': 'Median (Q1-Q3)', 'p_test_isareti': 'u'},
+           {'test_isareti': 'f'}, {'etiket': 'X-Z'}],
+          [{k: notes[key][k] for k in ('posthoc_isareti', 'p_test_isareti', 'test_isareti', 'bicim_etiketi', 'etiket')
+            if k in notes[key]} for key in (('Age', 'Group A'), ('Female', 'Group A'), ('Aspirin', 'Group B'),
+                                            ('Score (A)', 'Group A'), ('Test value', 'Group A'), ('X-Z', 'Group A'))])
+    t3 = tables[1]
+    issue = next((s for s in t3['sorunlar'] if s['tur'] == 'elle_inceleme_gerekli'), None)
+    check('sentetik karmaşık tablo: elle_inceleme_gerekli, satır yok, ham satırlar saklandı', (True, 0, 3),
+          (issue is not None, len(t3['satirlar']), len(t3.get('elle_inceleme_satirlari', []))))
+    check('sentetik karmaşık tablo: nedenler (genel kurallar)', True, issue['parca'] if issue else None,
+          bool(issue) and any(p.startswith('çok seviyeli') for p in issue['parca'])
+          and any(p.startswith('metin değerli') for p in issue['parca']) and any(p.startswith('sayısal') for p in issue['parca']))
+    accepted, errors = validate_records([dict(r, review_status='verified') for r in transfer], {7: SYNTHETIC_PAGE})
+    check('sentetik: validate_records', (19, 0), (len(accepted), len(errors)))
+
+
+def check_troponin():
+    """İkinci makale (Troponin, 3 tablo): sentetik kayıtlarla (her ham satır bir kayıt), bellekte."""
+    if not TROPONIN_PDF.exists():
+        check('troponin PDF var (yoksa bu bölüm sınanmaz)', True, False)
+        return
+    doc, pages = pdf_pages(TROPONIN_PDF)
+    tables = pt.parse_tables(pages)
+    check('troponin: 3 tablo, Roma rakamlı başlıklar', [(1, 'Table I'), (2, 'Table II'), (3, 'Table III')],
+          [(t['tablo_no'], (t['tablo_basligi'] or '').lstrip('# ').split(':')[0]) for t in tables])
+    hams = list(dict.fromkeys([(t['sayfa'], r['ham']) for t in tables for r in t['satirlar']]
+                              + [(t['sayfa'], h) for t in tables for h in t.get('elle_inceleme_satirlari', [])]))
+    records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': s, 'kanit_cumle': h, 'bilgi_turu': 'olcum',
+                'baglam': 'study_finding', 'klinik_bilgi_en': h} for i, (s, h) in enumerate(hams, 1)]
+    result = pt.enrich(records, pages, doc['document_id'])
+    per = {t['tablo_no']: [r for r in result['aktarim'] if json.loads(r['taslak_notu'])['tablo_no'] == t['tablo_no']]
+           for t in tables}
+    check('troponin: satır / kayıt (Table I, II, III)', [(19, 57), (8, 24), (0, 0)],
+          [(len(t['satirlar']), len(per[t['tablo_no']])) for t in tables])
+    check('troponin: Table III elle inceleme (kayıt yok; 8 ham satırın hepsi)', (True, 8),
+          (any(s['tur'] == 'elle_inceleme_gerekli' for s in tables[2]['sorunlar']),
+           sum(r['eslesme'] == 'elle_inceleme' for r in result['kayitlar'])))
+    check('troponin: boş / çöp kayıt yok (boş değer, boş grup, ham satır adı, dipnot)', [],
+          [(r.get('klinik_bilgi_en'), r.get('hasta_grubu'), r.get('deger')) for r in result['aktarim']
+           if not r.get('deger') or r.get('hasta_grubu') == '' or '|' in r['klinik_bilgi_en']
+           or r['klinik_bilgi_en'].startswith('_') or not any(ch.isdigit() for ch in r['deger'])][:3])
+    names = [(r['degisken'], r['alt_bolum']) for r in tables[0]['satirlar']]
+    check('troponin Table I: Sex alt satırları, işaretsiz ad, birleşik hücre adı',
+          (('Female', 'Sex'), ('Male', 'Sex'), ('P value for intra groups', None), ('Pairwise comparation A-B', None)),
+          (names[1], names[2], names[15], names[16]))
+    check('troponin Table I: biçim satırı bölüm kapsamını bitirdi', None, tables[0]['satirlar'][9]['alt_bolum'])
+    accepted, errors = validate_records([dict(r, review_status='verified') for r in result['aktarim']], pages)
+    check('troponin: validate_records', (81, 0), (len(accepted), len(errors)))
+
+
+def check_inputs(doc, pages):
+    """Girdi: findings zorunlu; başka belgenin findings'i ve çıktısı reddedilir."""
+    import tempfile
+    raised = _raises
+    check('findings yok -> FindingsError (pilot JSON\'una dönülmez)', True,
+          raised(lambda: pt.run(None, None, doc, pages), pt.FindingsError))
+    check('load_records(None) -> FindingsError', True, raised(lambda: pt.load_records(None), pt.FindingsError))
+    with tempfile.TemporaryDirectory() as tmp:
+        wrapper = Path(tmp) / 'findings.json'
+        records = json.loads(pt.DEFAULT_JSON.read_text(encoding='utf-8')) if pt.DEFAULT_JSON.exists() else []
+        wrapper.write_text(json.dumps({'document_id': 'baska-belge', 'kayitlar': records}), encoding='utf-8')
+        check('findings başka document_id beyan ediyor -> FindingsError', True,
+              raised(lambda: pt.run(None, wrapper, doc, pages), pt.FindingsError))
+        wrapper.write_text(json.dumps({'document_id': doc['document_id'], 'kayitlar': records}), encoding='utf-8')
+        if records:
+            check('findings aynı document_id -> kabul', 'document_id', pt.run(None, wrapper, doc, pages)['rapor']['belge_kontrolu'])
+    if TROPONIN_PDF.exists() and pt.DEFAULT_JSON.exists():
+        other, other_pages = pdf_pages(TROPONIN_PDF)
+        check('pilot findings + Troponin PDF -> FindingsError (içerik kontrolü)', True,
+              raised(lambda: pt.run(None, pt.DEFAULT_JSON, other, other_pages), pt.FindingsError))
+        check('Troponin varsayılan çıktı adı pilot çıktısından ayrı', True,
+              pt.default_output(other) != pt.DEFAULT_OUTPUT and 'who_J_Coll' in pt.default_output(other).name)
+        if pt.DEFAULT_OUTPUT.exists():
+            check('pilot çıktısının üzerine başka belge --overwrite ile bile yazamaz', True,
+                  raised(lambda: pt.check_outputs(pt.output_paths(pt.DEFAULT_OUTPUT), other, True), FileExistsError))
+            check('pilot belgesi kendi çıktısının üzerine --overwrite ile yazabilir', False,
+                  raised(lambda: pt.check_outputs(pt.output_paths(pt.DEFAULT_OUTPUT), doc, True), FileExistsError))
+
+
+def _raises(func, exc):
+    try:
+        func()
+    except exc:
+        return True
+    return False
 
 
 def transfer_key(record):
@@ -298,6 +527,11 @@ def main():
             for k in ('bilgi_turu', 'baglam', 'kanit_cumle', 'sayfa', 'kanit_turu'))
         for r in transfer) if real else True)
     check_clean_names(transfer, result['tablolar'], real)
+    if real:
+        check_pilot_unchanged(result, doc['document_id'])
+    check_general_rules()
+    check_troponin()
+    check_inputs(doc, pages)
     hb_t = [r for r in transfer if r.get('sonuc_olcutu_tr') == 'HbA1c' and json.loads(r['taslak_notu'])['tablo_no'] == 1]
     check('aktarım HbA1c: aynı kanıt, iki grup', (2, 1, ['Ischemic event', 'No ischemic event']),
           (len(hb_t), len({r['kanit_cumle'] for r in hb_t}), [r['hasta_grubu'] for r in hb_t]))
