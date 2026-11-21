@@ -5,7 +5,9 @@
 --   {{SUNUM_DB}}  = .env MYSQL_SUNUM_DATABASE, varsayılan kardiyo_sunum
 -- Bölücü kuralı: satır sonunda ';' yalnız ifade sonunda; yorumlar tam satır '--'.
 --
--- _findings_base: bütün hoca view'larının ortak kaynağı (iç kullanım; hoca bunu açmaz).
+-- v_sunum_taban: bütün hoca view'larının ortak kaynağı. KAYNAK veritabanında durur (iç kullanım);
+-- sunum veritabanında yalnız hocaya gösterilen view'lar kalır. Kaynaktaki tablolara ve diğer
+-- view'lara dokunulmaz; yalnız bu view eklenir / yenilenir.
 -- Kaynak: {{KAYNAK_DB}}.v_pilot_bulgular (python -m src.sunum --kur ile kurulur), yalnız
 -- review_status = 'verified' satırlar. Ortak kurallar burada BİR KEZ yazılır:
 --   clinical_context  : hasta_grubu -> 'study population'; diğerleri baglam'dan
@@ -19,7 +21,7 @@
 --   page              : "4" ya da sayfa aralığı "2–3"; sıralama için page_sort (sayı)
 -- Hoca view'ları teknik sütun (bulgu_id, document_id, satir_hash, taslak_notu …) GÖSTERMEZ;
 -- bu taban view'daki bulgu_id / tablo_no / satir_no yalnız birleştirme ve sıralama içindir.
-CREATE OR REPLACE VIEW `{{SUNUM_DB}}`.`_findings_base` AS
+CREATE OR REPLACE VIEW `{{KAYNAK_DB}}`.`v_sunum_taban` AS
 SELECT
     b.bulgu_id,
     b.filename,
@@ -68,3 +70,6 @@ SELECT
     END AS row_key
 FROM `{{KAYNAK_DB}}`.v_pilot_bulgular AS b
 WHERE b.review_status = 'verified';
+
+-- Eski taban view (sunum veritabanındaydı, Workbench menüsünde görünüyordu): varsa silinir.
+DROP VIEW IF EXISTS `{{SUNUM_DB}}`.`_findings_base`;

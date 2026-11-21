@@ -18,7 +18,7 @@ SELECT
     f.evidence,
     f.source,
     f.page
-FROM `{{SUNUM_DB}}`.`_findings_base` AS f
+FROM `{{KAYNAK_DB}}`.`v_sunum_taban` AS f
 WHERE f.kanit_turu = 'tablo' AND f.tablo_no = 1
 ORDER BY f.source, f.page_sort, f.satir_no, f.bulgu_id;
 
@@ -50,7 +50,7 @@ FROM (
         f.p AS p_value,
         f.evidence,
         f.page
-    FROM `{{SUNUM_DB}}`.`_findings_base` AS f
+    FROM `{{KAYNAK_DB}}`.`v_sunum_taban` AS f
     WHERE f.kanit_turu = 'tablo' AND f.tablo_no = 1
 ) AS x
 GROUP BY x.row_key

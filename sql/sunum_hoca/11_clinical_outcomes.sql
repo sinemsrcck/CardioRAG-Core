@@ -2,6 +2,8 @@
 -- finding: tablo satırında faktör adı (degisken), metinde cümle (klinik_bilgi_en).
 -- statistical_result: analiz + etki ölçüsü + değer + %95 GA + p (ör. "univariate OR 3.124 (95% CI 2.213-4.310), p<0.001");
 --   etki ölçüsü / GA / p olmayan kayıtta NULL.
+-- Sıra (her makalede): 1) metin 'study finding' satırları, 2) Table 2 tablo satırları, 3) diğer metin
+--   bağlamları, 4) 'literature' satırları en sonda; her grup içinde sayfaya göre.
 -- outcome sütunu YOK: veride ayrı alan yok (Table 2'nin sonucu yalnız tablo başlığında); tahminle doldurulmaz.
 CREATE OR REPLACE VIEW `{{SUNUM_DB}}`.`clinical_outcomes` AS
 SELECT
@@ -19,6 +21,13 @@ SELECT
     f.evidence,
     f.source,
     f.page
-FROM `{{SUNUM_DB}}`.`_findings_base` AS f
+FROM `{{KAYNAK_DB}}`.`v_sunum_taban` AS f
 WHERE (f.kanit_turu = 'tablo' AND f.tablo_no = 2) OR (f.kanit_turu = 'metin' AND f.bilgi_turu = 'klinik_sonuc')
-ORDER BY f.source, f.page_sort, f.tablo_no, f.satir_no, f.bulgu_id;
+ORDER BY f.source,
+    CASE
+        WHEN f.kanit_turu = 'tablo' THEN 2
+        WHEN f.clinical_context = 'study finding' THEN 1
+        WHEN f.clinical_context = 'literature' THEN 4
+        ELSE 3
+    END,
+    f.page_sort, f.satir_no, f.bulgu_id;

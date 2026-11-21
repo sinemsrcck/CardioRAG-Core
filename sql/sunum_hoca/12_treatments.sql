@@ -11,7 +11,7 @@ SELECT
     MIN(f.evidence) AS evidence,
     MIN(f.source) AS source,
     MIN(f.page) AS page
-FROM `{{SUNUM_DB}}`.`_findings_base` AS f
+FROM `{{KAYNAK_DB}}`.`v_sunum_taban` AS f
 WHERE f.bilgi_turu IN ('ilac', 'doz', 'tedavi')
 GROUP BY f.row_key
 ORDER BY MIN(f.source), MIN(f.page_sort), MIN(f.bulgu_id);

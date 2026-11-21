@@ -284,7 +284,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_data_quality` | Veri kalitesi: normalizasyon, her kontrol için pozitif/negatif örnek, determinizm (ters ekleme sırası → aynı `grup_id`), sürüm hash'i, `satir_hash` çakışması, JSONL ve `--referans` modlarının tabloya yazmaması. Kalite tabloları yoksa transaction dışında kurar; sahte satırlar geri alınır. |
 | `test_evaluate_extraction` | Çıkarım değerlendirmesi: elle hesaplanmış örnekle birebir TP/FP/FN/P/R/F1, birebir/gevşek mod, eşleme, "bulgu yok", yalnız `dogrulandi` adaylar, yanıtsız aday, örneklem determinizmi, xlsx üret-oku turu (Türkçe karakter), ham vs doğrulanmış, `--mock` raporu, `llm_etiketli` / `dogrulandi` ayrımı. Veritabanına yazmaz. |
 | `test_sunum` | Değer alanları (p, GA, örneklem, etki ölçütü, ICD) pozitif/negatif ve gerçek adaylarla `validate_row`; tablo bulgusunda değer alanlarının yazılmaması; `--json-mode`; reddedilenler tablosuna deterministik ve tekrar etmeyen yazım; VIEW'lar ve `kaynak_bul` (harf duyarsız, joker ve SQL injection kapalı); `--mock` / `--no-save` kalıcı yazmaz. Sunum şeması yoksa transaction dışında kurar; yazımlar geri alınır. |
-| `test_sunum_hoca` | Hoca sunum veritabanı: kurulum iki kez çalışınca view'lar aynı kalır; her view'da beklenen sütunlar, teknik sütun yok, satır sayıları doğrudan `klinik_bulgular` sorgusuyla tutarlı, ad sütunlarında `\|` yok; tablo satırı `evidence`'ı "Table N – satır adı" (`\|`, `<br>`, `**`, `<sup>` yok), metin `evidence`'ı değişmemiş; `measurements` yalnız Table 1 tablo satırları, metin ölçümleri `general_clinical_findings`'te; grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu gösterir ve taban view'da veri kaybı olmaz. Örnek veri transaction içinde yazılıp geri alınır. |
+| `test_sunum_hoca` | Hoca sunum veritabanı: kurulum iki kez çalışınca view'lar aynı kalır; her view'da beklenen sütunlar, teknik sütun yok, satır sayıları doğrudan `klinik_bulgular` sorgusuyla tutarlı, ad sütunlarında `\|` yok; tablo satırı `evidence`'ı "Table N – satır adı" (`\|`, `<br>`, `**`, `<sup>` yok), metin `evidence`'ı değişmemiş; `measurements` yalnız Table 1 tablo satırları, metin ölçümleri `general_clinical_findings`'te; grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu gösterir ve taban view'da veri kaybı olmaz. Sunum veritabanında yalnız hoca view'ları (`_` ile başlayan view ve teknik sütun yok), taban view `v_sunum_taban` kaynakta, eski `_findings_base` kurulumda silinir; sabit satır sayıları (51 / 102 / 66 / 13 / 44); `clinical_outcomes` sırası study finding → Table 2 → literature, `general_clinical_findings`'te literature sonda. Örnek veri transaction içinde yazılıp geri alınır. |
 | `test_pilot_gosterim` | `v_pilot_bulgular`: kurulu olduğunu, `import_records` ile yazılan pilot kayıtlarının (HbA1c iki grup, Table 2 HCR univariate/multivariate, bir ilaç satırı, iki metin kaydı) grup/değer/p, `taslak_notu`'dan çıkan `tablo_no` / `analiz` / `grup_n` sütunlarını, Türkçe etiketleri, iki bağlamın aynı listede göründüğünü, sıralamayı, `kaynak_bul`'un pilot satırlarını bulduğunu ve kalite sütunlarının `kalite_isaretleri` ile tuttuğunu doğrular. VIEW yoksa transaction dışında kurar; yazımlar geri alınır. |
 
 **MySQL gerektirmeyenler:**
@@ -602,7 +602,7 @@ python -m src.sunum_hoca --durum # kurulu view'lar ve satır sayıları
 ```
 
 - **Veritabanı adları:** Kaynak veritabanı `.env`'deki `MYSQL_DATABASE`. Sunum veritabanının adı `MYSQL_SUNUM_DATABASE`, varsayılanı `kardiyo_sunum`. SQL dosyalarında veritabanı adı yazmaz.
-- **Kuran kullanıcının yetkileri:** CREATE (veritabanı oluşturma), sunum veritabanında CREATE VIEW ve DROP, kaynakta SELECT ve SHOW VIEW.
+- **Kuran kullanıcının yetkileri:** CREATE (veritabanı oluşturma), sunum veritabanında CREATE VIEW ve DROP, kaynakta SELECT ve SHOW VIEW, ayrıca kaynakta `v_sunum_taban` için CREATE VIEW ve DROP.
 - **Hocanın kullanıcısı:** Yalnız `GRANT SELECT ON kardiyo_sunum.* TO <HOCA_KULLANICI>;` yeter.
 - **Taşıma:** View'lar `mysqldump` ile başka sunucuya taşınmamalı (DEFINER); her makinede bu komutla kurulmalı.
 - **Yeni veri:** Yeni veri geldiğinde view'lar kendiliğinden güncellenir. Yalnız `measurements`'taki `group_N` sütun sayısı kurulumda verideki en fazla grup sayısına göre üretilir; daha çok gruplu bir tablo eklenirse `--kur` yeniden çalıştırılmalı.
@@ -612,12 +612,12 @@ python -m src.sunum_hoca --durum # kurulu view'lar ve satır sayıları
 ```sql
 SELECT * FROM kardiyo_sunum.measurements;               -- Table 1 ölçümleri, gruplar yan yana
 SELECT * FROM kardiyo_sunum.measurements_by_group;      -- aynı veri, grup başına satır
-SELECT * FROM kardiyo_sunum.clinical_outcomes;          -- klinik sonuçlar (Table 2 OR, GA, p + metin)
+SELECT * FROM kardiyo_sunum.clinical_outcomes;          -- klinik sonuçlar: metin bulguları, Table 2 (OR, GA, p), literatür en sonda
 SELECT * FROM kardiyo_sunum.treatments;                 -- ilaçlar
 SELECT * FROM kardiyo_sunum.general_clinical_findings;  -- metin ölçüm cümleleri, kohort, yöntem, hastalık olmayan dışlama kriterleri
 ```
 
-`_findings_base` ortak taban view'dır (iç kullanım). Sinem'in `diseases`, `diagnostics` ve `symptoms` view'ları `sql/sunum_hoca/20–22_*.sql` dosyaları eklenince aynı komutla kurulur; ayrıntı `sql/sunum_hoca/README.md`'de.
+Sunum veritabanında yalnız bu hoca view'ları bulunur. Ortak taban view `v_sunum_taban` kaynak veritabanındadır (iç kullanım; hoca menüsünde görünmez); eski `_findings_base` kurulumda silinir. Kaynaktaki diğer tablo ve view'lara dokunulmaz. Sinem'in `diseases`, `diagnostics` ve `symptoms` view'ları `sql/sunum_hoca/20–22_*.sql` dosyaları eklenince aynı komutla kurulur; ayrıntı `sql/sunum_hoca/README.md`'de.
 
 ## Bilinen sınırlar
 
