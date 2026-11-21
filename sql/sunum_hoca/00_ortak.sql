@@ -10,7 +10,11 @@
 -- review_status = 'verified' satırlar. Ortak kurallar burada BİR KEZ yazılır:
 --   clinical_context  : hasta_grubu -> 'study population'; diğerleri baglam'dan
 --                       (exclusion criterion, literature, study finding, study method, recommendation)
---   evidence          : kanit_gosterim (çok parçalı kanıtta "[s.N] …" gösterimi; birleştirilmiş alıntı değil)
+--   evidence          : metin satırında kanit_gosterim (çok parçalı kanıtta "[s.N] …" gösterimi; birleştirilmiş
+--                       alıntı değil). Tablo satırında ham markdown satırı yerine kısa kaynak metni
+--                       "Table <tablo_no> – <satır adı>": tablo_no = taslak_notu.tablo_no (v_pilot_bulgular.tablo_no),
+--                       satır adı = klinik_bilgi_en (PDF'teki satır adı); <sup>x</sup> -> ^x, <br> ve ** atılır.
+--                       Ham tablo satırı kaynak veritabanında (kanit_cumle) birebir duruyor.
 --   source            : makale başlığı, yoksa PDF dosya adı
 --   page              : "4" ya da sayfa aralığı "2–3"; sıralama için page_sort (sayı)
 -- Hoca view'ları teknik sütun (bulgu_id, document_id, satir_hash, taslak_notu …) GÖSTERMEZ;
@@ -45,7 +49,12 @@ SELECT
         WHEN b.baglam = 'recommendation' THEN 'recommendation'
         ELSE b.baglam
     END AS clinical_context,
-    b.kanit_gosterim AS evidence,
+    CASE
+        WHEN b.kanit_turu = 'tablo' AND b.tablo_no IS NOT NULL AND NULLIF(b.klinik_bilgi_en, '') IS NOT NULL
+            THEN CONCAT('Table ', b.tablo_no, ' – ',
+                 TRIM(REPLACE(REPLACE(REPLACE(REPLACE(b.klinik_bilgi_en, '<sup>', '^'), '</sup>', ''), '<br>', ' '), '**', '')))
+        ELSE b.kanit_gosterim
+    END AS evidence,
     COALESCE(NULLIF(b.makale_basligi, ''), b.filename) AS source,
     CASE
         WHEN b.kanit_sayfa_bitis IS NOT NULL AND b.kanit_sayfa_bitis <> b.kanit_sayfa

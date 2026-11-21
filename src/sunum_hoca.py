@@ -46,7 +46,7 @@ EXPECTED_COLUMNS = {
     "measurements_by_group": ["parameter", "group_order", "group_name", "group_value", "unit", "p_value",
                               "evidence", "source", "page"],
     "treatments": ["treatment_type", "treatment_name", "clinical_context", "evidence", "source", "page"],
-    "clinical_outcomes": ["factor", "statistical_result", "evidence", "source", "page"],
+    "clinical_outcomes": ["finding", "statistical_result", "clinical_context", "evidence", "source", "page"],
     "general_clinical_findings": ["clinical_finding", "clinical_context", "evidence", "source", "page"],
 }
 

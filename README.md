@@ -284,7 +284,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_data_quality` | Veri kalitesi: normalizasyon, her kontrol için pozitif/negatif örnek, determinizm (ters ekleme sırası → aynı `grup_id`), sürüm hash'i, `satir_hash` çakışması, JSONL ve `--referans` modlarının tabloya yazmaması. Kalite tabloları yoksa transaction dışında kurar; sahte satırlar geri alınır. |
 | `test_evaluate_extraction` | Çıkarım değerlendirmesi: elle hesaplanmış örnekle birebir TP/FP/FN/P/R/F1, birebir/gevşek mod, eşleme, "bulgu yok", yalnız `dogrulandi` adaylar, yanıtsız aday, örneklem determinizmi, xlsx üret-oku turu (Türkçe karakter), ham vs doğrulanmış, `--mock` raporu, `llm_etiketli` / `dogrulandi` ayrımı. Veritabanına yazmaz. |
 | `test_sunum` | Değer alanları (p, GA, örneklem, etki ölçütü, ICD) pozitif/negatif ve gerçek adaylarla `validate_row`; tablo bulgusunda değer alanlarının yazılmaması; `--json-mode`; reddedilenler tablosuna deterministik ve tekrar etmeyen yazım; VIEW'lar ve `kaynak_bul` (harf duyarsız, joker ve SQL injection kapalı); `--mock` / `--no-save` kalıcı yazmaz. Sunum şeması yoksa transaction dışında kurar; yazımlar geri alınır. |
-| `test_sunum_hoca` | Hoca sunum veritabanı: kurulum iki kez çalışınca view'lar aynı kalır; her view'da beklenen sütunlar, teknik sütun yok, satır sayıları doğrudan `klinik_bulgular` sorgusuyla tutarlı, ad sütunlarında `\|` yok; `measurements`'ta grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu gösterir ve taban view'da veri kaybı olmaz. Örnek veri transaction içinde yazılıp geri alınır. |
+| `test_sunum_hoca` | Hoca sunum veritabanı: kurulum iki kez çalışınca view'lar aynı kalır; her view'da beklenen sütunlar, teknik sütun yok, satır sayıları doğrudan `klinik_bulgular` sorgusuyla tutarlı, ad sütunlarında `\|` yok; tablo satırı `evidence`'ı "Table N – satır adı" (`\|`, `<br>`, `**`, `<sup>` yok), metin `evidence`'ı değişmemiş; `measurements` yalnız Table 1 tablo satırları, metin ölçümleri `general_clinical_findings`'te; grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu gösterir ve taban view'da veri kaybı olmaz. Örnek veri transaction içinde yazılıp geri alınır. |
 | `test_pilot_gosterim` | `v_pilot_bulgular`: kurulu olduğunu, `import_records` ile yazılan pilot kayıtlarının (HbA1c iki grup, Table 2 HCR univariate/multivariate, bir ilaç satırı, iki metin kaydı) grup/değer/p, `taslak_notu`'dan çıkan `tablo_no` / `analiz` / `grup_n` sütunlarını, Türkçe etiketleri, iki bağlamın aynı listede göründüğünü, sıralamayı, `kaynak_bul`'un pilot satırlarını bulduğunu ve kalite sütunlarının `kalite_isaretleri` ile tuttuğunu doğrular. VIEW yoksa transaction dışında kurar; yazımlar geri alınır. |
 
 **MySQL gerektirmeyenler:**
@@ -591,7 +591,7 @@ FROM v_pilot_bulgular WHERE kanit_parca_sayisi > 1 ORDER BY filename, kanit_sayf
 
 ### Hoca sunum veritabanı (`kardiyo_sunum`)
 
-Hoca için ayrı bir veritabanında İngilizce, salt okunur view'lar. Teknik sütun yoktur; her view'da `evidence`, `source`, `page` bulunur.
+Hoca için ayrı bir veritabanında İngilizce, salt okunur view'lar. Teknik sütun yoktur; her view'da `evidence`, `source`, `page` bulunur. Tablo satırlarında `evidence` kısa bir kaynak metnidir ("Table 1 – Age (years)"); ham tablo satırı kaynak veritabanında durur. Metin satırlarında `evidence` kanıt cümlesinin kendisidir.
 
 **Kurulum** (kaynak sunum nesneleri kurulduktan sonra; tekrar çalıştırılabilir):
 
@@ -610,11 +610,11 @@ python -m src.sunum_hoca --durum # kurulu view'lar ve satır sayıları
 **MySQL Workbench'te açmak:** Sol paneldeki Schemas listesini yenileyin (🔄), **kardiyo_sunum > Views** altından istediğiniz view'a sağ tıklayıp **Select Rows** seçin. Ya da:
 
 ```sql
-SELECT * FROM kardiyo_sunum.measurements;               -- ölçümler, gruplar yan yana (Table 1 + metin)
+SELECT * FROM kardiyo_sunum.measurements;               -- Table 1 ölçümleri, gruplar yan yana
 SELECT * FROM kardiyo_sunum.measurements_by_group;      -- aynı veri, grup başına satır
 SELECT * FROM kardiyo_sunum.clinical_outcomes;          -- klinik sonuçlar (Table 2 OR, GA, p + metin)
 SELECT * FROM kardiyo_sunum.treatments;                 -- ilaçlar
-SELECT * FROM kardiyo_sunum.general_clinical_findings;  -- kohort, yöntem, hastalık olmayan dışlama kriterleri
+SELECT * FROM kardiyo_sunum.general_clinical_findings;  -- metin ölçüm cümleleri, kohort, yöntem, hastalık olmayan dışlama kriterleri
 ```
 
 `_findings_base` ortak taban view'dır (iç kullanım). Sinem'in `diseases`, `diagnostics` ve `symptoms` view'ları `sql/sunum_hoca/20–22_*.sql` dosyaları eklenince aynı komutla kurulur; ayrıntı `sql/sunum_hoca/README.md`'de.
