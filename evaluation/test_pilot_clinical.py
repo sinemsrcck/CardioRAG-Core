@@ -26,7 +26,7 @@ import json
 import sys
 from pathlib import Path
 
-from evaluation.pilot_izolasyon import gercek_pilotu_ayir
+from evaluation.pilot_izolasyon import gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu, korumayi_kaldir
 from src.database import count_rows, get_connection, get_table_columns
 from src.pilot_clinical import import_records, pdf_pages, validate_records
 
@@ -96,6 +96,7 @@ def main():
     max_id = cur.fetchone()[0]
     conn.rollback()  # okuma anlık görüntüsünü bırak; yazımlar tek transaction'da başlar
 
+    real_pilot = gercek_pilot_durumu()  # ayrı bağlantıdan, silmeden önce
     conn.start_transaction()
     try:
         # Gerçek pilot verisi veritabanındaysa test kayıtları satir_hash ile atlanırdı: belgenin gerçek
@@ -208,6 +209,10 @@ def main():
         check('reddedilen çok parçalı kayıtlar satır eklemedi', after_multi, count_rows(cur, 'klinik_bulgular'))
     finally:
         conn.rollback()
+        korumayi_kaldir(conn)
+        # Güvenlik: ayrı bağlantıdan gerçek pilot satırları başlangıçla aynı mı (değilse IzolasyonHatasi).
+        check('güvenlik: gerçek pilot satırları ayrı bağlantıdan başlangıçla aynı', real_pilot,
+              guvenlik_kontrolu(real_pilot, 'test_pilot_clinical'))
 
     final_count = count_rows(cur, 'klinik_bulgular')
     final_hash = table_hash(cur)

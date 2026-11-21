@@ -650,7 +650,7 @@ def pilot_test_records():
 
 
 def test_pilot_database(tmp):
-    from evaluation.pilot_izolasyon import gercek_pilotu_ayir
+    from evaluation.pilot_izolasyon import gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu, korumayi_kaldir
     from src.database import get_connection
     from src.pilot_clinical import import_records, pdf_pages
 
@@ -660,7 +660,15 @@ def test_pilot_database(tmp):
     doc, pages = pdf_pages(PILOT_PDF)
     loader = lambda path: (doc, pages)  # noqa: E731 - PDF bir kez okunur
     records = pilot_test_records()
+    # Şema hazırlığı (DDL örtük commit yapar): AYRI bağlantıda ve silmeden ÖNCE.
+    setup = get_connection()
+    try:
+        if not schema_ready(setup):
+            ensure_schema(setup)
+    finally:
+        setup.close()
     before = db_state()
+    real_pilot = gercek_pilot_durumu()  # ayrı bağlantıdan, silmeden önce
     conn = get_connection()
     conn.autocommit = False
     conn.start_transaction()
@@ -802,7 +810,11 @@ def test_pilot_database(tmp):
                "s.7 parçası o sayfada birebir yok" in detail))
     finally:
         conn.rollback()
+        korumayi_kaldir(conn)
         conn.close()
+        # Güvenlik: ayrı bağlantıdan gerçek pilot satırları başlangıçla aynı mı (değilse IzolasyonHatasi).
+        check("pilot DB: güvenlik — gerçek pilot satırları ayrı bağlantıdan başlangıçla aynı", real_pilot,
+              guvenlik_kontrolu(real_pilot, "test_data_quality.test_pilot_database"))
     check("pilot DB: ROLLBACK sonrası tablo satır sayıları başlangıçla aynı", before, db_state())
 
 
@@ -882,9 +894,11 @@ def main():
         test_collisions(tmp)
     with tempfile.TemporaryDirectory() as tmp:
         test_database(tmp)
+    # Bilerek commit eden alt test, gerçek pilot satırlarını transaction içinde silen pilot testinden
+    # ÖNCE ve kendi bağlantısında çalışır (silme yapılan bağlantıda hiçbir commit olmaz).
+    test_own_transaction_after_select()
     with tempfile.TemporaryDirectory() as tmp:
         test_pilot_database(tmp)
-    test_own_transaction_after_select()
 
     width = max(len(r[0]) for r in results)
     print(f"\n{'Kontrol':<{width}}  {'Beklenen':<22}  {'Bulunan':<40}  Sonuç")

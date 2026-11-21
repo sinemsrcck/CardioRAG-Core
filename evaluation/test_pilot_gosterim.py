@@ -76,12 +76,13 @@ def rows_as_dicts(cursor):
 
 
 def test_view():
-    from evaluation.pilot_izolasyon import gercek_pilotu_ayir
+    from evaluation.pilot_izolasyon import gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu, korumayi_kaldir
     from src.data_quality import Options, run_quality
     from src.database import get_connection
     from src.pilot_clinical import import_records, pdf_pages
     from src.sunum import ensure_schema, installed_objects
 
+    # Şema kurulumu (DDL örtük commit yapar): AYRI bağlantıda ve silmeden ÖNCE; bağlantı burada kapanır.
     conn = get_connection()
     try:
         names = {name for name, _ in installed_objects(conn)[0]}
@@ -105,6 +106,7 @@ def test_view():
     doc, pages = pdf_pages(PILOT_PDF)
     records = test_records()
     before = db_counts()
+    real_pilot = gercek_pilot_durumu()  # ayrı bağlantıdan, silmeden önce
     conn = get_connection()
     conn.autocommit = False
     conn.start_transaction()
@@ -231,7 +233,11 @@ def test_view():
         cursor.close()
     finally:
         conn.rollback()
+        korumayi_kaldir(conn)
         conn.close()
+        # Güvenlik: ayrı bağlantıdan gerçek pilot satırları başlangıçla aynı mı (değilse IzolasyonHatasi).
+        check("güvenlik: gerçek pilot satırları ayrı bağlantıdan başlangıçla aynı", real_pilot,
+              guvenlik_kontrolu(real_pilot, "test_pilot_gosterim"))
     check("ROLLBACK sonrası tablo satır sayıları başlangıçla aynı", before, db_counts())
 
 
