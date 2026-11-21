@@ -1,10 +1,14 @@
 """Pilot PDF -> evidence-grounded clinical draft JSON; never writes SQL.
 
-LLM output is untrusted: only exact substrings on the stated PDF page survive.
+LLM output is untrusted: only exact substrings on the stated PDF page (or an explicit
+adjacent physical page boundary, sayfa..sayfa_bitis) survive.
 Manual completeness/clinical review is mandatory.
 """
 import argparse
 import json
+import hashlib
+import os
+import time
 from pathlib import Path
 
 from src.pilot_clinical import pdf_pages, validate_records, TYPES, CONTEXTS
@@ -20,8 +24,24 @@ Output JSON object {"findings": [records...]}. Each record MUST contain:
 
 Extract ALL meaningful study-specific clinical facts, including individual table variables, groups, values, units, comparative statistics, drugs, and outcomes. Preserve numeric results and their groups together; do not create isolated fragments like '(n=372)' or '30 minutes'. Do not inflate count by splitting a single clinical finding into trivial pieces. Do not merge distinct outcomes or numerical results.
 
+DIAGNOSTIC COMPLETENESS (check each methods section before finishing):
+- Extract each explicitly performed clinical procedure separately: 12-lead ECG acquisition, echocardiographic assessment, modified Simpson method for LVEF, and laboratory measurement procedures when stated. Preserve relevant procedural details in the quote, such as rest duration, patient position and equipment settings, but do not extract equipment brand names as standalone facts.
+- Distinguish a diagnostic PROCEDURE (teshis_yontemi) from the result/parameter it measures (olcum), and from the explicit disease definition or threshold (tani_kriteri). An ECG pattern and minimum AF duration are separate diagnostic criteria; an echocardiographic LVEF calculation is a measurement method, not a separate disease diagnosis.
+- Extract distinct disease definitions separately (AF, DM, hypertension, hypercholesterolemia, mild mitral stenosis, CAD) only where supported by this excerpt. Do not invent criteria or promote study-specific thresholds to universal guidelines.
+- Review methods across the entire supplied excerpt; do not stop after the first example. Do not invent findings that occur on other pages.
+
+EXCLUSION COMPLETENESS:
+- If an exclusion sentence lists multiple distinct conditions, emit a separate tani record for each excluded medical condition with baglam=exclusion_criterion. Never merge them into one record or label them as diagnoses among included patients.
+- For non-disease exclusions (e.g. age under 18, central venous catheter), use diger with baglam=exclusion_criterion when clinically relevant, not tani.
+- klinik_bilgi_en must be an exact contiguous substring of the quote; kanit_cumle must be an exact contiguous substring of this excerpt. If an exclusion sentence is cut by the excerpt boundary, do not fabricate or concatenate the missing portion.
+
+TABLE CONTEXT:
+- A table row reporting CAD, DM, hypertension, HF, or another condition in study groups is a group-specific prevalence finding, NOT a diagnosis newly made in an individual patient. Retain the disease name, all available group values and p-value together as one evidence-backed row.
+- Table column headers may define group meanings, but never insert them into klinik_bilgi_en or kanit_cumle unless they are contiguous in the original excerpt. Do not infer or reverse group order. Keep exact row evidence and page number for subsequent manual header-to-row review.
+- Keep each table variable in its own record. Do not discard a row merely because its p-value is nonsignificant.
+
 Classify by clinical meaning, NOT keywords:
-- tani: named medical condition, only if described as a condition in the relevant context. A condition mentioned in an exclusion list MUST have baglam=exclusion_criterion, never imply it was diagnosed in included patients. For a list of multiple excluded medical conditions, create ONE separate tani record per named condition. Every such record must keep baglam=exclusion_criterion, use the exact condition phrase as klinik_bilgi_en, and quote the original full exclusion sentence as kanit_cumle. Do not create a combined tani record containing several distinct conditions. Do not treat non-medical exclusions (e.g. age, central venous catheter) as diagnoses.
+- tani: named medical condition, only if described as a condition in the relevant context. A condition mentioned in an exclusion list MUST have baglam=exclusion_criterion, never imply it was diagnosed in included patients. For a list of multiple excluded medical conditions, create one separate tani record per named condition. Every such record must keep baglam=exclusion_criterion, use the exact condition phrase as klinik_bilgi_en, and quote the original full exclusion sentence as kanit_cumle. Do not create a combined tani record containing several distinct conditions. Do not treat non-medical exclusions (e.g. age, central venous catheter) as diagnoses.
 - semptom: patient-experienced symptom (e.g. dyspnea, pain), not lab abnormality, physiology, ECG feature, or a diagnosis.
 - teshis_yontemi: actual clinical diagnostic procedure (ECG, echo, laboratory assay), NOT retrospective study design, ROC analysis, or statistical regression.
 - tani_kriteri: threshold or criterion used to define a diagnosis.
@@ -36,6 +56,38 @@ Choose baglam carefully: study_finding=own cohort's results; study_method=method
 
 Each finding must be explicit and supported by its own exact quote. No paraphrasing, translation, invented numbers or inferred diagnosis. Keep complete evidence context when possible. All findings await human review.
 """
+
+CROSS_PAGE_SYSTEM = SYSTEM + """
+
+CROSS-PAGE BOUNDARY MODE: The supplied excerpt is the exact concatenation of
+adjacent physical PDF page texts. Extract ONLY clinical facts whose complete
+source quote crosses the indicated boundary. Ignore facts contained wholly on
+one page (they are extracted in the ordinary page pass).
+For every record use sayfa=start_page and sayfa_bitis=end_page. The exact
+kanit_cumle MUST occur in the supplied concatenated excerpt and MUST span the
+boundary. klinik_bilgi_en must be an exact substring of kanit_cumle.
+Do not repair broken hyphenation, insert spaces, or reconstruct missing text.
+If no cross-boundary evidence exists, return {"findings": []}.
+"""
+
+
+def boundary_excerpt(left, right, *, window=2200):
+    """Preserve exact text at both sides of a physical page boundary."""
+    return left[-window:] + right[:window], min(window, len(left))
+
+
+def request_findings(client, model, system, payload, page_no):
+    response = client.chat.completions.create(
+        model=model, response_format={'type': 'json_object'},
+        messages=[{'role': 'system', 'content': system},
+                  {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}],
+    )
+    if not response.choices or response.choices[0].finish_reason != 'stop':
+        raise ValueError(f'Eksik API yanıtı: sayfa {page_no}')
+    data = json.loads(response.choices[0].message.content)
+    if not isinstance(data, dict) or not isinstance(data.get('findings'), list):
+        raise ValueError(f'Geçersiz JSON yanıtı: sayfa {page_no}')
+    return data['findings']
 
 
 def split_page(text, limit=10000):
@@ -57,43 +109,173 @@ def split_page(text, limit=10000):
     return result
 
 
-def extract_pages(pages, client, model, *, max_calls=60):
+CHECKPOINT_VERSION = 2
+SPLIT_LIMIT = 10000
+BOUNDARY_WINDOW = 2200
+
+
+def save_checkpoint(path, state):
+    """Atomically save completed calls, never a partially processed call."""
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(temporary, path)
+
+
+def _default_retry_exceptions():
+    try:
+        from openai import APITimeoutError, APIConnectionError, RateLimitError
+    except ImportError:  # pragma: no cover - openai requirements.txt'de var
+        return (TimeoutError,)
+    return (TimeoutError, APITimeoutError, APIConnectionError, RateLimitError)
+
+
+def request_with_retry(client, model, system, payload, page_no, *, attempts=3,
+                       retry_exceptions=None, sleep=time.sleep):
+    """Zaman aşımı/bağlantı/oran sınırı hatalarında sınırlı yeniden deneme.
+
+    Eksik veya geçersiz yanıt (ValueError) yeniden denenmez; son denemenin hatası yükseltilir."""
+    if attempts < 1:
+        raise ValueError('attempts pozitif olmalı')
+    retry_exceptions = retry_exceptions or _default_retry_exceptions()
+    for attempt in range(attempts):
+        try:
+            return request_findings(client, model, system, payload, page_no)
+        except retry_exceptions:
+            if attempt == attempts - 1:
+                raise
+            sleep(2 ** attempt)
+
+
+def build_tasks(pages):
+    tasks = []
+    for page_no, page_text in sorted(pages.items()):
+        for excerpt in split_page(page_text, limit=SPLIT_LIMIT):
+            tasks.append(('page', page_no, None, excerpt, None))
+    ordered_pages = sorted(pages)
+    for left_page, right_page in zip(ordered_pages, ordered_pages[1:]):
+        if right_page != left_page + 1:
+            continue
+        excerpt, boundary = boundary_excerpt(pages[left_page], pages[right_page], window=BOUNDARY_WINDOW)
+        if excerpt[:boundary].strip() and excerpt[boundary:].strip():
+            tasks.append(('boundary', left_page, right_page, excerpt, boundary))
+    return tasks
+
+
+def run_signature(pages, model, tasks, source_id=None):
+    """Ara kaydı PDF metni/kimliği, model, istemler ve parçalama ayarlarına bağlar."""
+    return hashlib.sha256(json.dumps({
+        'version': CHECKPOINT_VERSION, 'source_id': source_id,
+        'pages': sorted(pages.items()), 'model': model,
+        'system': SYSTEM, 'cross_page_system': CROSS_PAGE_SYSTEM,
+        'split_limit': SPLIT_LIMIT, 'boundary_window': BOUNDARY_WINDOW,
+        'tasks': tasks,
+    }, ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def load_checkpoint(checkpoint, signature, task_count):
+    if not checkpoint.exists():
+        return {'signature': signature, 'completed': []}
+    try:
+        state = json.loads(checkpoint.read_text(encoding='utf-8'))
+    except ValueError as exc:
+        raise ValueError(f'Checkpoint okunamadı: {checkpoint}') from exc
+    if not isinstance(state, dict) or state.get('signature') != signature:
+        raise ValueError('Checkpoint farklı PDF/model/çıkarım ayarına ait; devam edilemez')
+    completed = state.get('completed')
+    if (not isinstance(completed, list) or len(completed) > task_count
+            or not all(isinstance(findings, list) for findings in completed)):
+        raise ValueError('Checkpoint içeriği geçersiz; devam edilemez')
+    return state
+
+
+def _screen(kind, left_page, right_page, excerpt, boundary, findings, records, rejected):
+    for item in findings:
+        if not isinstance(item, dict):
+            rejected.append({'sayfa': left_page, 'neden': 'Kayıt nesne değil'})
+            continue
+        quote = item.get('kanit_cumle')
+        if kind == 'page':
+            if (item.get('sayfa') != left_page or item.get('sayfa_bitis', left_page) != left_page
+                    or item.get('bilgi_turu') not in TYPES
+                    or (item.get('baglam') is not None and item.get('baglam') not in CONTEXTS)):
+                rejected.append({'sayfa': left_page, 'neden': 'Sayfa veya tür geçersiz'})
+                continue
+            # Prevent accepting quotes assembled from multiple excerpts.
+            if not isinstance(quote, str) or quote not in excerpt:
+                rejected.append({'sayfa': left_page, 'neden': 'Kanıt parçada bulunamadı'})
+                continue
+        else:
+            if (item.get('sayfa') != left_page or item.get('sayfa_bitis') != right_page
+                    or item.get('bilgi_turu') not in TYPES or item.get('baglam') not in CONTEXTS):
+                rejected.append({'sayfa': left_page, 'neden': 'Sınır kaydı sayfa veya tür geçersiz'})
+                continue
+            if not isinstance(quote, str) or not quote:
+                rejected.append({'sayfa': left_page, 'neden': 'Sınır kanıtı metin değil'})
+                continue
+            offset = excerpt.find(quote)
+            while offset >= 0 and not (offset < boundary < offset + len(quote)):
+                offset = excerpt.find(quote, offset + 1)
+            if offset < 0:
+                rejected.append({'sayfa': left_page, 'neden': 'Kanıt iki sayfa sınırını birebir geçmiyor'})
+                continue
+        records.append(item)
+
+
+def extract_pages(pages, client, model, *, max_calls=60, checkpoint_path=None, source_id=None,
+                  attempts=3, retry_exceptions=None, sleep=time.sleep):
+    """Return (valid, rejected, api_calls_this_run).
+
+    checkpoint_path verilirse yalnızca başarılı çağrıların yanıtları sırayla kaydedilir;
+    yeniden çalıştırmada bu yanıtlar API çağrılmadan yeniden kullanılır."""
     if not model:
         raise ValueError('Model adı gerekli')
     if max_calls < 1:
         raise ValueError('max_calls pozitif olmalı')
+
+    tasks = build_tasks(pages)
+    signature = run_signature(pages, model, tasks, source_id)
+    checkpoint = Path(checkpoint_path) if checkpoint_path is not None else None
+    if checkpoint:
+        state = load_checkpoint(checkpoint, signature, len(tasks))
+    else:
+        state = {'signature': signature, 'completed': []}
+    completed = state['completed']
+    pending = len(tasks) - len(completed)
+    if pending > max_calls:
+        raise RuntimeError(f'API çağrı sınırı yetersiz: {pending} bekleyen çağrı > {max_calls}; '
+                           'hiç çağrı yapılmadı, sonuç dosyası yazılmadı')
+
     all_records, rejected, calls = [], [], 0
-    for page_no, page_text in sorted(pages.items()):
-        for excerpt in split_page(page_text):
-            if calls >= max_calls:
-                raise RuntimeError('API çağrı sınırı aşıldı; sonuç dosyası yazılmadı')
+    for index, (kind, left_page, right_page, excerpt, boundary) in enumerate(tasks):
+        if index < len(completed):
+            findings = completed[index]
+        else:
+            if kind == 'page':
+                system = SYSTEM
+                payload = {'sayfa': left_page, 'page_excerpt': excerpt}
+            else:
+                system = CROSS_PAGE_SYSTEM
+                payload = {'start_page': left_page, 'end_page': right_page,
+                           'boundary_offset': boundary, 'page_excerpt': excerpt}
+            # Hata yükselirse bu görev kaydedilmez (tamamlanmış sayılmaz); önceki görevler checkpoint'te kalır.
+            findings = request_with_retry(client, model, system, payload, left_page, attempts=attempts,
+                                          retry_exceptions=retry_exceptions, sleep=sleep)
             calls += 1
-            response = client.chat.completions.create(
-                model=model, response_format={'type': 'json_object'},
-                messages=[{'role': 'system', 'content': SYSTEM},
-                          {'role': 'user', 'content': json.dumps({'sayfa': page_no, 'page_excerpt': excerpt}, ensure_ascii=False)}],
-            )
-            if not response.choices or response.choices[0].finish_reason != 'stop':
-                raise ValueError(f'Eksik API yanıtı: sayfa {page_no}')
-            data = json.loads(response.choices[0].message.content)
-            if not isinstance(data, dict) or not isinstance(data.get('findings'), list):
-                raise ValueError(f'Geçersiz JSON yanıtı: sayfa {page_no}')
-            for item in data['findings']:
-                if not isinstance(item, dict):
-                    rejected.append({'sayfa': page_no, 'neden': 'Kayıt nesne değil'})
-                    continue
-                if item.get('sayfa') != page_no or item.get('bilgi_turu') not in TYPES or (item.get('baglam') is not None and item.get('baglam') not in CONTEXTS):
-                    rejected.append({'sayfa': page_no, 'neden': 'Sayfa veya tür geçersiz'})
-                    continue
-                # Prevent accepting quotes assembled from multiple excerpts.
-                quote = item.get('kanit_cumle')
-                if not isinstance(quote, str) or quote not in excerpt:
-                    rejected.append({'sayfa': page_no, 'neden': 'Kanıt parçada bulunamadı'})
-                    continue
-                all_records.append(item)
+            completed.append(findings)
+            if checkpoint:
+                save_checkpoint(checkpoint, state)
+        _screen(kind, left_page, right_page, excerpt, boundary, findings, all_records, rejected)
+
+    # validate_records tekrarları (örn. örtüşen parçalardan gelen aynı kayıt) reddeder; çıktıda mükerrer kalmaz.
     valid, errors = validate_records(all_records, pages)
     rejected.extend({'sayfa': None, 'neden': e['hata'], 'satir': e['satir']} for e in errors)
     return valid, rejected, calls
+
+
+def write_new(path, data):
+    """Yalnızca yeni dosya oluşturur; mevcut dosyanın üzerine yazmaz."""
+    with open(path, 'x', encoding='utf-8') as handle:
+        handle.write(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def main():
@@ -111,14 +293,20 @@ def main():
         raise FileExistsError(f'Mevcut çıktı dosyasının üzerine yazılmadı: {output} / {report}')
     doc, pages = pdf_pages(args.pdf)
     from src.rag import get_llm_client, DEFAULT_LLM
+    output.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint = output.with_suffix('.checkpoint.json')
+    if checkpoint.exists():
+        print(f'Ara kayıt bulundu, kaldığı yerden devam ediliyor: {checkpoint}')
     client = get_llm_client()
     try:
-        records, rejected, calls = extract_pages(pages, client, args.model or DEFAULT_LLM, max_calls=args.max_calls)
+        records, rejected, calls = extract_pages(pages, client, args.model or DEFAULT_LLM, max_calls=args.max_calls,
+                                                 checkpoint_path=checkpoint, source_id=doc['document_id'])
     finally:
         client.close()
-    output.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
-    report.write_text(json.dumps(rejected, ensure_ascii=False, indent=2), encoding='utf-8')
-    print(f"PDF: {doc['filename']} | API çağrısı: {calls} | Geçerli taslak: {len(records)} | Reddedilen: {len(rejected)}")
+    write_new(output, records)
+    write_new(report, rejected)
+    checkpoint.unlink(missing_ok=True)
+    print(f"PDF: {doc['filename']} | Bu çalıştırmadaki API çağrısı: {calls} | Geçerli taslak: {len(records)} | Reddedilen: {len(rejected)}")
     print(f'Taslak: {output} | Ret raporu: {report} | SQL değişmedi')
 
 

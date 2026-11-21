@@ -18,6 +18,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -51,6 +52,9 @@ CHECKS = {
     "farkli_doz": "tutarsizlik", "farkli_hasta_sayisi": "tutarsizlik", "farkli_deger": "tutarsizlik",
     "mudahale_turu_kaynak_uyusmuyor": "tutarsizlik", "taslak_notu_okunamadi": "tutarsizlik",
     "dil_uyusmuyor": "tutarsizlik",
+    # İstatistiksel tutarlılık (kaynak makalenin raporladığı değerler; kayıtlar değişmez).
+    "ci_p_celiskisi": "sayisal", "kategorik_p_yeniden_uretilemedi": "tutarsizlik",
+    "surekli_p_supheli": "tutarsizlik", "model_etki_olcusu_celiskisi": "tutarsizlik",
 }
 LEVEL_ORDER = {"hata": 0, "uyari": 1, "bilgi": 2}
 
@@ -90,7 +94,16 @@ EMBEDDING_THRESHOLD = 0.92
 # Kontrol MANTIĞI (ayrıştırma, kural koşulları) değişince elle artırılır; listeler,
 # eşikler ve eşanlamlılar zaten hash'e kendiliğinden girer.
 # r2: boşluklu eksi işareti ("− 4.4") negatif sayılır; "0.5 - 0.9" aralık kalır.
-RULES_REVISION = 2
+# r3: istatistiksel tutarlılık kontrolleri (GA–p, kategorik/sürekli p yeniden hesaplama, model terimi).
+RULES_REVISION = 3
+# GA–p çelişkisinde en yakın GA sınırının boş değere (oranlar için 1, log ölçeği; AUC için 0.5)
+# uzaklığı bu eşiğin altındaysa farklı GA/test yöntemleri sapma üretebilir: "uyari"; üstünde "hata".
+CI_P_SINIR_MARJI = 0.05
+# Sürekli değişken: bildirilen p anlamsızken |t| bu eşiğin üstündeyse (ya da p ≤ 0.01 iken |t| alt
+# eşiğin altındaysa) "uyari". ± = SS, n = grup başlığı ve Welch t varsayımdır; asla "hata" değildir.
+SUREKLI_T_UST = 3.5
+SUREKLI_T_ALT = 1.0
+SUREKLI_MIN_N = 30
 
 
 def config_payload(embedding=False, embedding_threshold=EMBEDDING_THRESHOLD):
@@ -554,6 +567,229 @@ def check_group_consistency(rows):
 
 
 # ---------------------------------------------------------------------------
+# İstatistiksel tutarlılık (kaynak değerler yalnızca okunur; yorum işarette durur)
+# ---------------------------------------------------------------------------
+
+P_BOUND = re.compile(r"^\s*(?:p\s*)?(<=|≤|<|=|>|≥|>=)?\s*(\d*\.\d+|\d+)\s*$", re.IGNORECASE)
+CATEGORICAL_VALUE = re.compile(r"^\s*(\d+)\s*\(\s*(\d+(?:\.(\d+))?)\s*%?\s*\)\s*$")
+MEAN_SD_VALUE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*±\s*(\d+(?:\.\d+)?)\s*$")
+COX_TERMS = re.compile(r"\bcox\b|hazard ratio|\(HR\)", re.IGNORECASE)
+LOGISTIC_TERMS = re.compile(r"logistic regression|odds ratio", re.IGNORECASE)
+HR_RESULT = re.compile(r"\bHR\s*[=:]?\s*\d")
+OR_RESULT = re.compile(r"\bOR\s*[=:]?\s*\d|odds ratio", re.IGNORECASE)
+
+
+def parse_p(text):
+    """'<0.001', 'p=0.03', '0.002' -> (işleç, değer); belirsiz biçim ('<001', boş) -> None."""
+    if text in (None, ""):
+        return None
+    match = P_BOUND.match(unicodedata.normalize("NFKC", str(text)).replace("*", ""))
+    if not match or re.fullmatch(r"0\d+", match.group(2)):
+        return None
+    op = {"≤": "<=", "≥": ">=", None: "="}.get(match.group(1), match.group(1))
+    value = float(match.group(2))
+    return (op, value) if 0 <= value <= 1 else None
+
+
+def _p_significant(bound, alpha=0.05):
+    """True/False; '<0.10' gibi karar verilemeyen sınırlar için None."""
+    op, value = bound
+    if op in ("<", "<="):
+        return True if value <= alpha else None
+    if op in (">", ">="):
+        return False if value >= alpha else None
+    return value < alpha
+
+
+def _normal_p(z):
+    return math.erfc(abs(z) / math.sqrt(2))
+
+
+def check_ci_p(row):
+    """OR/RR/HR/IRR ve AUC: %95 GA boş değeri içeriyorsa p ≥ 0.05, içermiyorsa p < 0.05 olmalı."""
+    etki = (row.get("etki_turu") or "").strip()
+    if etki not in RATIO_TYPES and etki != AUC_TYPE:
+        return []
+    ci = [n["value"] for n in parse_numbers(row.get("ci95")) if n["value"] is not None]
+    bound = parse_p(row.get("p"))
+    if len(ci) != 2 or bound is None or ci[0] > ci[1]:
+        return []
+    significant = _p_significant(bound)
+    low, high = ci
+    if significant is None or (etki in RATIO_TYPES and low <= 0):
+        return []
+    null = 0.5 if etki == AUC_TYPE else 1.0
+    includes = low <= null <= high
+    if includes != significant:
+        return []
+    if etki == AUC_TYPE:
+        margin = min(abs(low - null), abs(high - null))
+    else:
+        margin = min(abs(math.log(low)), abs(math.log(high)))
+    level = "hata" if margin >= CI_P_SINIR_MARJI else "uyari"
+    side = "içeriyor" if includes else "içermiyor"
+    return [_flag(row, "ci_p_celiskisi", level,
+                  f"{etki} %95 GA [{low}, {high}] boş değeri ({null:g}) {side} ama p '{row.get('p')}' "
+                  f"{'anlamlı' if significant else 'anlamsız'}",
+                  detail={"ci95": row.get("ci95"), "p": row.get("p"), "bos_deger": null,
+                          "sinir_marji": round(margin, 4),
+                          "varsayim": "GA ve p aynı modelden; marj küçükse farklı GA/test yöntemi sapması mümkün"})]
+
+
+def _group_pairs(rows):
+    """Aynı belge + tablo + satırdaki iki grup kaydı (karşılıklı comparator). Üç+ grup atlanır."""
+    buckets = defaultdict(list)
+    for row in rows:
+        note = _note(row) or {}
+        if note.get("tablo_no") is None or note.get("satir_no") is None or not row.get("hasta_grubu"):
+            continue
+        doc = row.get("document_id") or row.get("makale_id") or ""
+        buckets[(doc, str(note["tablo_no"]), str(note["satir_no"]))].append((row, note))
+    for members in buckets.values():
+        if len(members) != 2:
+            continue
+        (a, na), (b, nb) = sorted(members, key=lambda m: m[0]["satir_hash"])
+        if a.get("comparator") != b.get("hasta_grubu") or b.get("comparator") != a.get("hasta_grubu"):
+            continue
+        if (a.get("p") or "") != (b.get("p") or ""):
+            continue
+        yield a, na, b, nb
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _chi2_2x2_p(x1, n1, x2, n2, yates):
+    total, successes = n1 + n2, x1 + x2
+    failures = total - successes
+    if not (0 < successes < total):
+        return 1.0
+    diff = abs(x1 * (n2 - x2) - x2 * (n1 - x1))
+    if yates:
+        diff = max(0.0, diff - total / 2)
+    chi2 = total * diff ** 2 / (n1 * n2 * successes * failures)
+    return math.erfc(math.sqrt(chi2 / 2))
+
+
+def check_statistical_groups(rows):
+    """Grup tablosu satır çiftleri: kategorik n (%) ve ortalama±SS için bildirilen p'nin yeniden hesabı."""
+    flags = []
+    for a, na, b, nb in _group_pairs(rows):
+        bound = parse_p(a.get("p"))
+        n1, n2 = _int_or_none(na.get("grup_n")), _int_or_none(nb.get("grup_n"))
+        if bound is None or not n1 or not n2:
+            continue
+        hashes = [a["satir_hash"], b["satir_hash"]]
+        cat_a, cat_b = CATEGORICAL_VALUE.match(a.get("deger") or ""), CATEGORICAL_VALUE.match(b.get("deger") or "")
+        mean_a, mean_b = MEAN_SD_VALUE.match(a.get("deger") or ""), MEAN_SD_VALUE.match(b.get("deger") or "")
+        if cat_a and cat_b:
+            flags += _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes)
+        elif mean_a and mean_b and min(n1, n2) >= SUREKLI_MIN_N:
+            flags += _check_continuous(a, b, mean_a, mean_b, n1, n2, bound, hashes)
+    return flags
+
+
+def _check_categorical(a, b, cat_a, cat_b, n1, n2, bound, hashes):
+    code = "kategorik_p_yeniden_uretilemedi"
+    gid = group_id(code, hashes)
+    x1, x2 = int(cat_a.group(1)), int(cat_b.group(1))
+    detail = {"uyeler": hashes, "deger": [a.get("deger"), b.get("deger")], "n": [n1, n2], "p": a.get("p"),
+              "varsayim": "payda = grup başlığındaki n; 2x2 ki-kare (süreklilik düzeltmeli/düzeltmesiz); "
+                          "makalenin belirttiği test kontrol edilmedi"}
+    # Yüzde aritmetiği: raporlanan ondalık hassasiyetinde n/N ile tutmalı (yuvarlama ya da kesme:
+    # son basamağın bir birimi kadar tolerans; ör. 435/853 = 50.996 -> "50.99").
+    mismatched = []
+    for (x, n, match) in ((x1, n1, cat_a), (x2, n2, cat_b)):
+        decimals = len(match.group(3) or "")
+        if x > n or abs(100 * x / n - float(match.group(2))) > 10 ** -decimals + 1e-9:
+            mismatched.append(f"{x}/{n}={100 * x / n:.2f}% ≠ {match.group(2)}%")
+    if mismatched:
+        return [_flag(row, code, "uyari", "yüzde, grup n'si ile tutmuyor (eksik veri olabilir): " + "; ".join(mismatched),
+                      gid, detail) for row in (a, b)]
+    p_plain, p_yates = _chi2_2x2_p(x1, n1, x2, n2, False), _chi2_2x2_p(x1, n1, x2, n2, True)
+    low, high = min(p_plain, p_yates), max(p_plain, p_yates)
+    detail.update(hesaplanan_p=[round(low, 4), round(high, 4)])
+    significant = _p_significant(bound)
+    op, value = bound
+    if significant is not None and significant != (high < 0.05) and significant != (low < 0.05):
+        level, text = "uyari", "anlamlılık sonucu tersine dönüyor"
+    elif op == "=" and not (low / 2 <= value <= min(1.0, high * 2)):
+        level, text = "bilgi", "sayısal olarak yeniden üretilemedi (sonuç aynı)"
+    elif op in ("<", "<=") and low > 2 * value:
+        level, text = "bilgi", "sayısal olarak yeniden üretilemedi (sonuç aynı)"
+    else:
+        return []
+    return [_flag(row, code, level, f"bildirilen p '{a.get('p')}', hesaplanan p≈{low:.3g}–{high:.3g}: {text}",
+                  gid, detail) for row in (a, b)]
+
+
+def _check_continuous(a, b, mean_a, mean_b, n1, n2, bound, hashes):
+    code = "surekli_p_supheli"
+    m1, s1 = float(mean_a.group(1)), float(mean_a.group(2))
+    m2, s2 = float(mean_b.group(1)), float(mean_b.group(2))
+    se = math.sqrt(s1 ** 2 / n1 + s2 ** 2 / n2)
+    if se == 0:
+        return []
+    t = (m1 - m2) / se
+    op, value = bound
+    significant = _p_significant(bound)
+    if significant is False and abs(t) >= SUREKLI_T_UST:
+        text = f"bildirilen p '{a.get('p')}' anlamsız, özetlerden |t|={abs(t):.2f} (p≈{_normal_p(t):.1e})"
+    elif significant and value <= 0.01 and abs(t) <= SUREKLI_T_ALT:
+        text = f"bildirilen p '{a.get('p')}' çok anlamlı, özetlerden |t|={abs(t):.2f} (p≈{_normal_p(t):.2f})"
+    else:
+        return []
+    gid = group_id(code, hashes)
+    detail = {"uyeler": hashes, "deger": [a.get("deger"), b.get("deger")], "n": [n1, n2], "p": a.get("p"),
+              "t": round(t, 3), "varsayim": "± = standart sapma; n = grup başlığı (eksik veri bilinmiyor); Welch t"}
+    return [_flag(row, code, "uyari", text + "; varsayımlar doğrulanmadı", gid, detail) for row in (a, b)]
+
+
+def _row_text(row):
+    return " ".join(str(row.get(k) or "") for k in ("kanit_cumle", "klinik_bilgi_en", "sonuc_olcutu_tr", "taslak_notu"))
+
+
+def check_model_terminology(rows):
+    """Aynı belgede yöntem Cox/HR ile lojistik/OR terimlerini birlikte kullanıyor ama sonuçlar yalnız birinin
+    etki ölçüsüyle raporlanmışsa (ya da hiçbiri) işaretler. İki ölçü de raporlanmışsa meşru kullanım sayılır."""
+    flags = []
+    by_doc = defaultdict(list)
+    for row in rows:
+        by_doc[row.get("document_id") or row.get("makale_id") or ""].append(row)
+    code = "model_etki_olcusu_celiskisi"
+    for doc, members in sorted(by_doc.items()):
+        cox, logit, hr_results, or_results = [], [], [], []
+        for row in members:
+            text, etki = _row_text(row), (row.get("etki_turu") or "").strip()
+            if COX_TERMS.search(text) or etki == "HR":
+                cox.append(row)
+            if LOGISTIC_TERMS.search(text) or etki == "OR":
+                logit.append(row)
+            if etki == "HR" or HR_RESULT.search(text):
+                hr_results.append(row)
+            if etki == "OR" or OR_RESULT.search(text):
+                or_results.append(row)
+        if not cox or not logit or (hr_results and or_results):
+            continue
+        involved = sorted({r["satir_hash"]: r for r in cox + logit}.values(), key=lambda r: r["satir_hash"])
+        hashes = [r["satir_hash"] for r in involved]
+        gid = group_id(code, hashes)
+        reported = "OR" if or_results else ("HR" if hr_results else "yok")
+        detail = {"uyeler": hashes, "cox_hr": [r["satir_hash"] for r in cox],
+                  "lojistik_or": [r["satir_hash"] for r in logit], "raporlanan_etki_olcusu": reported,
+                  "varsayim": "hangi modelin kullanıldığı bilinmiyor; kaynakta iki terim birlikte geçiyor"}
+        for row in involved:
+            flags.append(_flag(row, code, "uyari",
+                               f"belgede Cox/HR ({len(cox)} kayıt) ve lojistik/OR ({len(logit)} kayıt) birlikte; "
+                               f"sonuçlarda raporlanan etki ölçüsü: {reported}", gid, detail))
+    return flags
+
+
+# ---------------------------------------------------------------------------
 # satir_hash çakışması (toplu iş çıktılarından)
 # ---------------------------------------------------------------------------
 
@@ -605,6 +841,7 @@ def run_checks(rows, ctx=None, *, collisions=None, embedder=None, embedding_thre
     flags += check_duplicates(rows, embedder, embedding_threshold)
     for row in rows:
         flags += check_numeric(row)
+        flags += check_ci_p(row)
         flags += check_row_consistency(row)
         if ctx is not None:
             flags += check_source(row, ctx)
@@ -614,6 +851,8 @@ def run_checks(rows, ctx=None, *, collisions=None, embedder=None, embedding_thre
                                f"aynı satir_hash ile {len(variants)} farklı bulgu üretildi; yalnızca biri kaydedilebilir",
                                detail={"varyantlar": variants}))
     flags += check_group_consistency(rows)
+    flags += check_statistical_groups(rows)
+    flags += check_model_terminology(rows)
     return merge_flags(flags)
 
 

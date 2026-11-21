@@ -6,6 +6,8 @@ Default mode is read-only preview. --write explicitly enables SQL insertion.
 import argparse
 import hashlib
 import json
+import re
+from itertools import product
 from pathlib import Path
 
 TYPES = {'tani', 'semptom', 'teshis_yontemi', 'tani_kriteri', 'tedavi', 'ilac', 'doz', 'hasta_grubu', 'klinik_sonuc', 'olcum', 'diger'}
@@ -15,7 +17,19 @@ CONTEXTS = {'study_finding', 'study_method', 'exclusion_criterion', 'literature_
 STRUCTURED_FIELDS = ('hasta_grubu', 'deger', 'unit', 'p', 'ci95', 'etki_turu', 'comparator', 'taslak_notu',
                      'sonuc_olcutu_tr', 'mudahale_en', 'mudahale_turu', 'outcome_type')
 # import_records'un okuduğu temel alanlar; bunlar ve STRUCTURED_FIELDS dışındaki alanlar açık hata verir.
-INPUT_FIELDS = {'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'kanit_turu', 'review_status'}
+INPUT_FIELDS = {'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'sayfa_bitis',
+                'kanit_turu', 'review_status'}
+# Çok sayfalı kanıt (sayfa_bitis = sayfa + 1) SQL'e yazılmaz: SQL yazım sınırı (clinical_validation.validate_source)
+# kanit_sayfa_bitis != kanit_sayfa kabul etmez. Destek eklenene kadar bu kayıtlar açık hatayla durdurulur.
+SQL_MULTI_PAGE_SUPPORTED = False
+# Çok parçalı kanıt (kanit_parcalari): metni araya giren sayfa sonu, tablo sayfası veya şekil/tablo başlığıyla
+# bölünmüş tek bir cümle. Parçalar asla birleştirilip aranmaz; her biri kendi fiziksel sayfasında birebir
+# doğrulanır. import_records bu alanları henüz desteklemez (INPUT_FIELDS dışında; açık hata verir).
+CAPTION_RE = re.compile(r'\*\*(?:TABLE|FIGURE)\s*\d+\s*:\*\*', re.IGNORECASE)
+NUMBER_RE = re.compile(r'\d+(?:\.\d+)?')
+MAX_PARTS = 3
+MAX_INLINE_GAP = 1000  # aynı sayfada iki parça arasındaki şekil/tablo bloğunun azami uzunluğu
+PART_NUMERIC_FIELDS = ('deger', 'p', 'ci95')
 
 
 def _structured_key(item):
@@ -26,8 +40,85 @@ def _structured_key(item):
             note = json.loads(note)
         except ValueError:
             note = None
-    analysis = note.get('analiz') if isinstance(note, dict) else None
-    return item.get('hasta_grubu'), item.get('deger'), analysis
+    if not isinstance(note, dict):
+        note = {}
+    # Aynı kanıt cümlesini paylaşan farklı grup/karşılaştırma/analiz/tablo satırları ayrı kayıttır;
+    # yalnızca bütün bu alanları aynı olan kayıt tekrar sayılır.
+    return (item.get('hasta_grubu'), item.get('comparator'), item.get('deger'), item.get('unit'),
+            item.get('etki_turu'), item.get('p'), item.get('ci95'), item.get('sonuc_olcutu_tr'),
+            note.get('analiz'), note.get('tablo_no'), note.get('satir_no'))
+
+
+def evidence_end_page(item):
+    """sayfa_bitis yoksa tek sayfalı kanıt; varsa int olmalı."""
+    end = item.get('sayfa_bitis', item.get('sayfa'))
+    return item.get('sayfa') if end is None else end
+
+
+def quote_in_pages(quote, pages, page, end_page):
+    """Kanıt birebir (normalizasyonsuz) aranır. İki sayfalı kanıt sayfa sınırını gerçekten geçmelidir."""
+    if end_page == page:
+        return quote in pages[page]
+    left = pages[page]
+    text = left + pages[end_page]
+    boundary = len(left)
+    start = text.find(quote)
+    while start >= 0:
+        if start < boundary < start + len(quote):
+            return True
+        start = text.find(quote, start + 1)
+    return False
+
+
+def _occurrences(text, page_text):
+    start = page_text.find(text)
+    while start >= 0:
+        yield start
+        start = page_text.find(text, start + 1)
+
+
+def _part_link(pages, prev_page, prev_end, page, start):
+    """İki ardışık parçanın okuma sırasında kesintisiz olup olmadığı: 'sayfa' | 'ara_blok' | None."""
+    if page == prev_page:
+        gap = pages[page][prev_end:start]
+        if start >= prev_end and len(gap) <= MAX_INLINE_GAP and CAPTION_RE.match(gap.strip()):
+            return 'ara_blok'  # aynı sayfada araya şekil/tablo başlığı girmiş
+        return None
+    # Sayfa geçişi: önceki parça sayfanın son metni, sonraki parça sayfanın ilk metni olmalı.
+    if pages[prev_page][prev_end:].strip() or pages[page][:start].strip():
+        return None
+    if page == prev_page + 1:
+        return 'sayfa'
+    skipped = prev_page + 1
+    if page == prev_page + 2 and skipped in pages and CAPTION_RE.match(pages[skipped].lstrip()):
+        return 'ara_blok'  # araya yalnızca tablo/şekil sayfası girmiş
+    return None
+
+
+def check_evidence_parts(parts, pages):
+    """kanit_parcalari doğrulaması. Döndürür: birlestirme ('sayfa' | 'ara_blok')."""
+    if not isinstance(parts, list) or not 2 <= len(parts) <= MAX_PARTS:
+        raise ValueError(f'kanit_parcalari 2-{MAX_PARTS} parçalı liste olmalı')
+    for part in parts:
+        if not isinstance(part, dict) or set(part) != {'sayfa', 'metin'}:
+            raise ValueError('Her kanıt parçası yalnızca sayfa ve metin içermeli')
+        page, text = part['sayfa'], part['metin']
+        if not isinstance(page, int) or isinstance(page, bool) or page not in pages:
+            raise ValueError('Kanıt parçasında geçersiz fiziksel sayfa')
+        if not isinstance(text, str) or not text.strip() or text not in pages[page]:
+            raise ValueError(f'Kanıt parçası s.{page} metninde birebir bulunamadı')
+    candidates = [list(_occurrences(part['metin'], pages[part['sayfa']])) for part in parts]
+    for starts in product(*candidates):
+        links = []
+        for prev, cur, prev_start, start in zip(parts, parts[1:], starts, starts[1:]):
+            link = _part_link(pages, prev['sayfa'], prev_start + len(prev['metin']), cur['sayfa'], start)
+            if link is None:
+                break
+            links.append(link)
+        else:
+            return 'ara_blok' if 'ara_blok' in links else 'sayfa'
+    raise ValueError('Kanıt parçaları okuma sırasında kesintisiz değil (sayfa sonu/başı, tablo sayfası '
+                     'veya şekil/tablo başlığı dışında metin atlanıyor)')
 
 
 def validate_records(records, pages):
@@ -48,11 +139,41 @@ def validate_records(records, pages):
                 raise ValueError('Geçersiz baglam')
             if not isinstance(page, int) or isinstance(page, bool) or page not in pages:
                 raise ValueError('Geçersiz fiziksel sayfa numarası')
-            if not isinstance(quote, str) or not quote.strip() or quote not in pages[page]:
-                raise ValueError('Kanıt cümlesi bu PDF sayfasında birebir bulunamadı')
-            if not isinstance(fact, str) or not fact.strip() or fact not in quote:
-                raise ValueError('Klinik bilgi kanıt cümlesinde birebir bulunamadı; çıkarımsal/çeviri bilgi doğrulanmadı')
-            key = (page, kind, context, fact.strip().casefold()) + _structured_key(item)
+            end_page = evidence_end_page(item)
+            parts = item.get('kanit_parcalari')
+            if parts is None:
+                if item.get('birlestirme') is not None:
+                    raise ValueError('birlestirme yalnızca kanit_parcalari ile kullanılabilir')
+                if (not isinstance(end_page, int) or isinstance(end_page, bool) or end_page not in pages
+                        or end_page not in (page, page + 1)):
+                    raise ValueError('Geçersiz kanıt bitiş sayfası (sayfa_bitis yalnızca sayfa veya sayfa+1 olabilir)')
+                if not isinstance(quote, str) or not quote.strip() or not quote_in_pages(quote, pages, page, end_page):
+                    raise ValueError('Kanıt cümlesi belirtilen PDF sayfasında/sayfa sınırında birebir bulunamadı')
+                if not isinstance(fact, str) or not fact.strip() or fact not in quote:
+                    raise ValueError('Klinik bilgi kanıt cümlesinde birebir bulunamadı; çıkarımsal/çeviri bilgi doğrulanmadı')
+                part_key = ()
+            else:
+                joined = check_evidence_parts(parts, pages)
+                if item.get('kanit_turu', 'metin') != 'metin':
+                    raise ValueError('kanit_parcalari yalnızca metin kanıtı için kullanılabilir')
+                # kanit_cumle tek sayfalı birebir alıntıdır (ilk parça); parçalar tek alıntıymış gibi sunulmaz.
+                if quote != parts[0]['metin']:
+                    raise ValueError('kanit_cumle ilk kanıt parçasıyla birebir aynı olmalı')
+                if page != parts[0]['sayfa'] or end_page != parts[-1]['sayfa']:
+                    raise ValueError('sayfa/sayfa_bitis ilk ve son kanıt parçasının sayfalarıyla aynı olmalı')
+                if item.get('birlestirme') != joined:
+                    raise ValueError(f'birlestirme kanıt parçalarına göre {joined!r} olmalı')
+                if not isinstance(fact, str) or not fact.strip() or not any(fact in part['metin'] for part in parts):
+                    raise ValueError('Klinik bilgi tek bir kanıt parçasında birebir bulunamadı; parçalar birleştirilmez')
+                part_numbers = {n for part in parts for n in NUMBER_RE.findall(part['metin'])}
+                for field in PART_NUMERIC_FIELDS:
+                    value = item.get(field)
+                    missing = [n for n in NUMBER_RE.findall(str(value))] if value is not None else []
+                    missing = [n for n in missing if n not in part_numbers]
+                    if missing:
+                        raise ValueError(f'{field} içindeki sayı kanıt parçalarında yok: {", ".join(missing)}')
+                part_key = tuple((part['sayfa'], part['metin']) for part in parts)
+            key = (page, end_page, kind, context, fact.strip().casefold()) + _structured_key(item) + (part_key,)
             if key in seen:
                 raise ValueError('tekrar: aynı sayfa/tür/bağlam/metin ve grup/değer/analiz daha önce geldi')
             seen.add(key)
@@ -76,6 +197,10 @@ def import_records(doc, records, connection=None):
         raise ValueError('SQL aktarımı yalnızca bağlamı geçerli, manuel onaylı kayıtlarla yapılabilir')
     if any(item.get('bilgi_turu') not in TYPES for item in records):
         raise ValueError('SQL aktarımı için her kayıtta geçerli bilgi_turu zorunlu')
+    if any(not isinstance(item.get('sayfa'), int) or isinstance(item.get('sayfa'), bool) for item in records):
+        raise ValueError('SQL aktarımı için her kayıtta geçerli sayfa zorunlu')
+    if not SQL_MULTI_PAGE_SUPPORTED and any(evidence_end_page(item) != item['sayfa'] for item in records):
+        raise ValueError('Çok sayfalı kanıt (sayfa_bitis != sayfa) için SQL şeması/yazım sınırı desteklemiyor; aktarım durduruldu')
     unknown = sorted({key for item in records for key in item} - INPUT_FIELDS - set(STRUCTURED_FIELDS))
     if unknown:
         raise ValueError(f'import_records bu alanları desteklemiyor (sessizce atlanmaz): {", ".join(unknown)}')
