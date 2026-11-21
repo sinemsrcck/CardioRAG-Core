@@ -3,6 +3,7 @@
 --     python -m src.sunum --kur
 -- klinik_bulgular'ın yapısı değişmez; v_tani_tedavi / v_sonuclar ve
 -- halusinasyon_degerlendirme'ye dokunulmaz. kaynak_bul procedure'ü src/sunum.py kurar.
+-- Pilot kayıtlar için salt okunur v_pilot_bulgular dosyanın sonundadır.
 
 -- LLM öncesi ayrılan adaylar ve doğrulamadan geçemeyen bulgular (kayda girmeyenler).
 CREATE TABLE IF NOT EXISTS cikarim_reddedilenler (
@@ -250,3 +251,71 @@ WHERE x.kayit_turu = 'soru_cevap'
   AND (x.claim_text IS NOT NULL
        OR (JSON_VALID(x.ham_cikti)
            AND JSON_TYPE(JSON_EXTRACT(x.ham_cikti, '$.evaluation.claim_index')) IN ('INTEGER', 'UNSIGNED INTEGER')));
+
+
+-- ---------------------------------------------------------------------------
+-- Pilot kayıtları (klinik_bulgular.bilgi_turu dolu; src.pilot_clinical.import_records).
+-- Salt okunur. Literatür bilgisi ve çalışmanın kendi bulguları AYNI listededir:
+-- baglam yalnız sütundur, filtre değildir (ekip kararı). Türkçe *_tr sütunları
+-- yalnız etikettir, asıl değerler yanında durur; eşlemesi olmayan değer olduğu gibi görünür.
+-- taslak_notu alanları (pilot_tablo aktarımı) JSON_VALID korumalı okunur: alan yoksa,
+-- JSON null ise ya da JSON bozuksa NULL döner (metin kayıtlarında hepsi NULL).
+-- Kalite sütunları v_kalite_bulgu'dan gelir, yani yalnız EN SON kalite koşusunun
+-- sürümü görünür: pilot işaretleri için son koşu python -m src.data_quality --pilot olmalı.
+-- v3.1 notu: çok parçalı kanıt (kanit_parcalari) yapısı belli olunca ayrı bir VIEW
+-- ya da buraya JSON_VALID korumalı yeni sütunlar eklenir, bugünkü sütunlar değişmez.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_pilot_bulgular AS
+SELECT
+    b.id AS bulgu_id, p.filename, m.baslik AS makale_basligi, b.kanit_sayfa,
+    b.bilgi_turu,
+    CASE b.bilgi_turu
+        WHEN 'tani' THEN 'Tanı' WHEN 'semptom' THEN 'Semptom' WHEN 'teshis_yontemi' THEN 'Teşhis yöntemi'
+        WHEN 'tani_kriteri' THEN 'Tanı kriteri' WHEN 'tedavi' THEN 'Tedavi' WHEN 'ilac' THEN 'İlaç'
+        WHEN 'doz' THEN 'Doz' WHEN 'hasta_grubu' THEN 'Hasta grubu' WHEN 'klinik_sonuc' THEN 'Klinik sonuç'
+        WHEN 'olcum' THEN 'Ölçüm' WHEN 'diger' THEN 'Diğer' ELSE b.bilgi_turu
+    END AS bilgi_turu_tr,
+    b.baglam,
+    CASE b.baglam
+        WHEN 'study_finding' THEN 'Çalışmanın bulgusu' WHEN 'study_method' THEN 'Çalışmanın yöntemi'
+        WHEN 'exclusion_criterion' THEN 'Dışlama kriteri' WHEN 'literature_background' THEN 'Literatür bilgisi'
+        WHEN 'recommendation' THEN 'Öneri' ELSE b.baglam
+    END AS baglam_tr,
+    b.kanit_turu,
+    CASE b.kanit_turu WHEN 'metin' THEN 'Metin' WHEN 'tablo' THEN 'Tablo' ELSE b.kanit_turu END AS kanit_turu_tr,
+    b.tablo_no, b.satir_no, b.alt_bolum, b.analiz,
+    b.klinik_bilgi_en,
+    b.sonuc_olcutu_tr AS degisken,
+    b.mudahale_en AS ilac, b.mudahale_turu,
+    b.hasta_grubu, b.grup_n, b.comparator, b.comparator_n,
+    b.deger, b.deger_bicimi, b.unit, b.etki_turu, b.ci95, b.p, b.outcome_type,
+    b.kanit_cumle, b.review_status,
+    COALESCE(k.hata_sayisi, 0) AS kalite_hata, COALESCE(k.uyari_sayisi, 0) AS kalite_uyari,
+    COALESCE(k.bilgi_sayisi, 0) AS kalite_bilgi,
+    CASE WHEN k.hata_sayisi > 0 THEN 'hata' WHEN k.uyari_sayisi > 0 THEN 'uyari'
+         WHEN k.bilgi_sayisi > 0 THEN 'bilgi' END AS kalite_en_yuksek,
+    k.kontroller AS kalite_kontrolleri
+FROM (
+    SELECT
+        x.*,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.tablo_no')) IN ('INTEGER', 'UNSIGNED INTEGER')
+            THEN CAST(JSON_EXTRACT(x.taslak_notu, '$.tablo_no') AS UNSIGNED) END END AS tablo_no,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.satir_no')) IN ('INTEGER', 'UNSIGNED INTEGER')
+            THEN CAST(JSON_EXTRACT(x.taslak_notu, '$.satir_no') AS UNSIGNED) END END AS satir_no,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.alt_bolum')) = 'STRING'
+            THEN JSON_UNQUOTE(JSON_EXTRACT(x.taslak_notu, '$.alt_bolum')) END END AS alt_bolum,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.analiz')) = 'STRING'
+            THEN JSON_UNQUOTE(JSON_EXTRACT(x.taslak_notu, '$.analiz')) END END AS analiz,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.grup_n')) IN ('INTEGER', 'UNSIGNED INTEGER')
+            THEN CAST(JSON_EXTRACT(x.taslak_notu, '$.grup_n') AS UNSIGNED) END END AS grup_n,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.comparator_n')) IN ('INTEGER', 'UNSIGNED INTEGER')
+            THEN CAST(JSON_EXTRACT(x.taslak_notu, '$.comparator_n') AS UNSIGNED) END END AS comparator_n,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.deger_bicimi')) = 'STRING'
+            THEN JSON_UNQUOTE(JSON_EXTRACT(x.taslak_notu, '$.deger_bicimi')) END END AS deger_bicimi
+    FROM klinik_bulgular AS x
+    WHERE x.bilgi_turu IS NOT NULL
+) AS b
+LEFT JOIN pdf_belgeleri AS p ON p.document_id = b.document_id
+LEFT JOIN makaleler AS m ON m.document_id = b.document_id
+LEFT JOIN v_kalite_bulgu AS k ON k.klinik_bulgu_id = b.id
+ORDER BY p.filename, b.kanit_sayfa, b.tablo_no, b.id;

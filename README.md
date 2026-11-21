@@ -283,6 +283,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_data_quality` | Veri kalitesi: normalizasyon, her kontrol için pozitif/negatif örnek, determinizm (ters ekleme sırası → aynı `grup_id`), sürüm hash'i, `satir_hash` çakışması, JSONL ve `--referans` modlarının tabloya yazmaması. Kalite tabloları yoksa transaction dışında kurar; sahte satırlar geri alınır. |
 | `test_evaluate_extraction` | Çıkarım değerlendirmesi: elle hesaplanmış örnekle birebir TP/FP/FN/P/R/F1, birebir/gevşek mod, eşleme, "bulgu yok", yalnız `dogrulandi` adaylar, yanıtsız aday, örneklem determinizmi, xlsx üret-oku turu (Türkçe karakter), ham vs doğrulanmış, `--mock` raporu, `llm_etiketli` / `dogrulandi` ayrımı. Veritabanına yazmaz. |
 | `test_sunum` | Değer alanları (p, GA, örneklem, etki ölçütü, ICD) pozitif/negatif ve gerçek adaylarla `validate_row`; tablo bulgusunda değer alanlarının yazılmaması; `--json-mode`; reddedilenler tablosuna deterministik ve tekrar etmeyen yazım; VIEW'lar ve `kaynak_bul` (harf duyarsız, joker ve SQL injection kapalı); `--mock` / `--no-save` kalıcı yazmaz. Sunum şeması yoksa transaction dışında kurar; yazımlar geri alınır. |
+| `test_pilot_gosterim` | `v_pilot_bulgular`: kurulu olduğunu, `import_records` ile yazılan pilot kayıtlarının (HbA1c iki grup, Table 2 HCR univariate/multivariate, bir ilaç satırı, iki metin kaydı) grup/değer/p, `taslak_notu`'dan çıkan `tablo_no` / `analiz` / `grup_n` sütunlarını, Türkçe etiketleri, iki bağlamın aynı listede göründüğünü, sıralamayı, `kaynak_bul`'un pilot satırlarını bulduğunu ve kalite sütunlarının `kalite_isaretleri` ile tuttuğunu doğrular. VIEW yoksa transaction dışında kurar; yazımlar geri alınır. |
 
 **MySQL gerektirmeyenler:**
 
@@ -451,7 +452,7 @@ python -m src.evaluate_extraction --degerlendir --mock                 # sahte L
 python -m src.sunum --kur
 ```
 
-Kurar: `cikarim_reddedilenler`, `hata_onlem` (hata türü → halüsinasyon türü → önlem eşlemesi, `onlem-v2`), kalite tabloları, `v_bulgu_notu`, `v_cardiorag_bulgular`, `v_bulgu_kaynak`, `v_halusinasyon_onlemleri`, RAG için `v_rag_sorgular`, `v_rag_kaynaklar`, `v_rag_iddialar` VIEW'ları ve `kaynak_bul(arama)` procedure'ü. `klinik_bulgular`'ın yapısına, `v_tani_tedavi` / `v_sonuclar`'a ve `halusinasyon_degerlendirme`'ye dokunmaz. Tablolar model koşusu (`python -m src.run_clinical_batch` veya `--from-cache`) ve kalite koşusundan (`python -m src.data_quality`) sonra dolar. Bütün satırlar `review_status = 'pending'`; İngilizce sonuçlar çevrilmemiştir (`sonuc_kaynagi` sütunu belirtir).
+Kurar: `cikarim_reddedilenler`, `hata_onlem` (hata türü → halüsinasyon türü → önlem eşlemesi, `onlem-v2`), kalite tabloları, `v_bulgu_notu`, `v_cardiorag_bulgular`, `v_bulgu_kaynak`, `v_halusinasyon_onlemleri`, RAG için `v_rag_sorgular`, `v_rag_kaynaklar`, `v_rag_iddialar` VIEW'ları, pilot kayıtlar için `v_pilot_bulgular` ve `kaynak_bul(arama)` procedure'ü. `klinik_bulgular`'ın yapısına, `v_tani_tedavi` / `v_sonuclar`'a ve `halusinasyon_degerlendirme`'ye dokunmaz. Tablolar model koşusu (`python -m src.run_clinical_batch` veya `--from-cache`) ve kalite koşusundan (`python -m src.data_quality`) sonra dolar. Bütün satırlar `review_status = 'pending'`; İngilizce sonuçlar çevrilmemiştir (`sonuc_kaynagi` sütunu belirtir).
 
 MySQL Workbench'te:
 
@@ -523,6 +524,62 @@ RAG VIEW'ları salt okunurdur; değerleri tablolarda (`rag_sorgulari`, `rag_sorg
 - `retrieval_score` RRF birleşik sıralama puanıdır (kosinüs benzerliği değil); sıra `source_rank`'tir (reranker sırası).
 
 `kaynak_bul` arama metnini yalnızca değer olarak kullanır (dinamik SQL yok); `%`, `_` ve `\` joker değil, düz karakterdir.
+
+### Pilot kayıtlar (`v_pilot_bulgular`)
+
+Pilot aktarımıyla (`src.pilot_clinical.import_records`) gelen, `bilgi_turu` dolu `klinik_bulgular` satırları; satır başına bir satır, salt okunur. Literatür bilgisi ve çalışmanın kendi bulguları **aynı listededir**: `baglam` yalnız bir sütundur, filtre değildir.
+
+```sql
+USE kardiyo_tam_metin;
+
+-- 1) Bütün pilot bulgular (literatür + çalışmanın bulguları birlikte)
+SELECT bulgu_id, filename, makale_basligi, kanit_sayfa, bilgi_turu_tr, baglam_tr, kanit_turu_tr,
+       tablo_no, alt_bolum, degisken, ilac, hasta_grubu, grup_n, comparator, comparator_n, analiz,
+       deger, deger_bicimi, unit, etki_turu, ci95, p, klinik_bilgi_en, kanit_cumle, review_status,
+       kalite_en_yuksek, kalite_kontrolleri
+FROM v_pilot_bulgular ORDER BY filename, kanit_sayfa, tablo_no, bulgu_id;
+
+-- 2) Bir tablonun satırları gruplarıyla (Table 1: grup başına satır; Table 2: analiz başına satır)
+SELECT satir_no, alt_bolum, degisken, ilac, hasta_grubu, grup_n, comparator, comparator_n, analiz,
+       deger, deger_bicimi, unit, etki_turu, ci95, p, kanit_cumle
+FROM v_pilot_bulgular
+WHERE filename = 'TK-cardiovascular36-2-1.pdf' AND tablo_no = 1
+ORDER BY satir_no, hasta_grubu, analiz;
+
+-- 3) Yalnız ilaçlar (kullanım oranı n (%); makalede doz yok)
+SELECT filename, kanit_sayfa, tablo_no, ilac, mudahale_turu, hasta_grubu, grup_n, deger, deger_bicimi, p, kanit_cumle
+FROM v_pilot_bulgular
+WHERE bilgi_turu = 'ilac' OR mudahale_turu = 'arka plan tedavisi'
+ORDER BY filename, ilac, hasta_grubu;
+
+-- 4) Bir sayfadaki bütün bilgiler (metin kayıtları önce, sonra tablo satırları)
+SELECT bulgu_id, bilgi_turu_tr, baglam_tr, kanit_turu_tr, tablo_no, satir_no, degisken, ilac, hasta_grubu,
+       analiz, deger, p, klinik_bilgi_en, kanit_cumle
+FROM v_pilot_bulgular
+WHERE filename = 'TK-cardiovascular36-2-1.pdf' AND kanit_sayfa = 4
+ORDER BY tablo_no, satir_no, bulgu_id;
+
+-- 5) Bir bilgiyi PDF'te göstermek: kanıtta arama (dosya + sayfa + birebir kanıt cümlesi)
+SELECT bulgu_id, filename, kanit_sayfa, tablo_no, satir_no, hasta_grubu, analiz, deger, p, kanit_cumle
+FROM v_pilot_bulgular WHERE kanit_cumle LIKE '%HbA1c%' ORDER BY filename, kanit_sayfa, bulgu_id;
+
+-- kaynak_bul pilot satırlarını da kapsar (kanıt, değişken, hasta grubu, ilaç adında arar);
+-- bulunan bulgu_id'lerin pilot ayrıntısı:
+CALL kaynak_bul('HbA1c');
+SELECT * FROM v_pilot_bulgular WHERE bulgu_id IN (...);
+
+-- 6) Kalite işareti olan pilot satırları (önce: python -m src.data_quality --pilot)
+SELECT bulgu_id, kanit_sayfa, tablo_no, degisken, hasta_grubu, analiz, kalite_hata, kalite_uyari, kalite_bilgi,
+       kalite_en_yuksek, kalite_kontrolleri
+FROM v_pilot_bulgular WHERE kalite_en_yuksek IS NOT NULL
+ORDER BY kalite_hata DESC, kalite_uyari DESC, bulgu_id;
+```
+
+- **`taslak_notu` sütunları:** `tablo_no`, `satir_no`, `alt_bolum`, `analiz`, `grup_n`, `comparator_n`, `deger_bicimi` pilot tablo aktarımının notundan okunur (`JSON_VALID` korumalı). Metin kayıtlarında, alan yoksa ya da JSON bozuksa NULL olurlar.
+- **Grup ve analiz:** Table 1 satırları grup başına ayrıdır (`hasta_grubu`, `comparator`, `grup_n`, `comparator_n`; aynı satırın p'si iki grupta da aynıdır). Table 2 satırları analiz başına ayrıdır (`analiz` = univariate / multivariate, `etki_turu` = OR, `ci95`). İlaç satırlarında ilaç adı `ilac` sütunundadır, `degisken` "kullanım oranı"dır.
+- **Türkçe etiketler** ek sütunlardır; asıl değerler yanında durur. `bilgi_turu_tr`: tani → Tanı, semptom → Semptom, teshis_yontemi → Teşhis yöntemi, tani_kriteri → Tanı kriteri, tedavi → Tedavi, ilac → İlaç, doz → Doz, hasta_grubu → Hasta grubu, klinik_sonuc → Klinik sonuç, olcum → Ölçüm, diger → Diğer. `baglam_tr`: study_finding → Çalışmanın bulgusu, study_method → Çalışmanın yöntemi, exclusion_criterion → Dışlama kriteri, literature_background → Literatür bilgisi, recommendation → Öneri. `kanit_turu_tr`: metin → Metin, tablo → Tablo.
+- **Kalite sütunları** `v_kalite_bulgu`'dan gelir ve yalnız **en son kalite koşusunun** sürümünü gösterir. Son koşu `--pilot` olmadan yapıldıysa pilot satırlarının işaretleri görünmez (`data_quality` bu durumda uyarı verir).
+- VIEW yalnızca bugünkü sütunlara dayanır. Çok parçalı kanıt (`kanit_parcalari`, pilot v3.1) geldiğinde ayrı bir VIEW ya da yeni sütunlar eklenir; mevcut sütunlar değişmez.
 
 ## Bilinen sınırlar
 
