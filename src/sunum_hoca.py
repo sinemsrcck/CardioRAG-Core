@@ -54,6 +54,9 @@ EXPECTED_COLUMNS = {
     "treatments": ["treatment_type", "treatment_name", "clinical_context", "evidence", "source", "page"],
     "clinical_outcomes": ["finding", "statistical_result", "clinical_context", "evidence", "source", "page"],
     "general_clinical_findings": ["clinical_finding", "clinical_context", "evidence", "source", "page"],
+    "diseases": ["disease", "clinical_context", "evidence", "source", "page"],
+    "diagnostics": ["type", "name", "evidence", "source", "page"],
+    "symptoms": ["symptom", "patient_group", "evidence", "source", "page"],
 }
 
 
