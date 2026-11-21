@@ -26,6 +26,7 @@ import json
 import sys
 from pathlib import Path
 
+from evaluation.pilot_izolasyon import gercek_pilotu_ayir
 from src.database import count_rows, get_connection, get_table_columns
 from src.pilot_clinical import import_records, pdf_pages, validate_records
 
@@ -95,7 +96,13 @@ def main():
     max_id = cur.fetchone()[0]
     conn.rollback()  # okuma anlık görüntüsünü bırak; yazımlar tek transaction'da başlar
 
+    conn.start_transaction()
     try:
+        # Gerçek pilot verisi veritabanındaysa test kayıtları satir_hash ile atlanırdı: belgenin gerçek
+        # pilot satırları bu transaction içinde ayrılır, sonda ROLLBACK ile geri gelir.
+        removed = gercek_pilotu_ayir(conn, doc['document_id'])
+        check('gerçek pilot satırları transaction içinde ayrıldı (bilgi)', '-', f'{removed} satır', True)
+        initial_pilot_free = count_rows(cur, 'klinik_bulgular')
         check('örnek kayıt (HbA1c x2, HCR x2, Warfarin x2)', 6, len(verified))
         check('aktarım dosyasında review_status yok', 0, sum('review_status' in r for r in transfer))
         accepted, errors = validate_records(verified, pages)
@@ -142,6 +149,7 @@ def main():
         try:
             other_cur = other.cursor()
             check('import_records commit etmedi (2. bağlantı)', initial_count, count_rows(other_cur, 'klinik_bulgular'))
+            check('import_records commit etmedi: bu bağlantıda +6', initial_pilot_free + 6, count_rows(cur, 'klinik_bulgular'))
             other_cur.close()
         finally:
             other.close()

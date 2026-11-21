@@ -76,6 +76,7 @@ def rows_as_dicts(cursor):
 
 
 def test_view():
+    from evaluation.pilot_izolasyon import gercek_pilotu_ayir
     from src.data_quality import Options, run_quality
     from src.database import get_connection
     from src.pilot_clinical import import_records, pdf_pages
@@ -111,6 +112,10 @@ def test_view():
         cursor = conn.cursor()
         cursor.execute("SELECT COALESCE(MAX(id), 0) FROM klinik_bulgular")
         last_id = cursor.fetchone()[0]
+        # Gerçek pilot verisi varsa test kayıtları satir_hash ile atlanırdı: belgenin gerçek pilot satırları
+        # bu transaction içinde ayrılır, sonda ROLLBACK ile geri gelir.
+        removed = gercek_pilotu_ayir(conn, doc["document_id"])
+        check("gerçek pilot satırları transaction içinde ayrıldı (bilgi)", "-", f"{removed} satır", True)
         cursor.execute("SELECT COUNT(*) FROM v_pilot_bulgular")
         existing = cursor.fetchone()[0]
         written = import_records(doc, records, connection=conn)

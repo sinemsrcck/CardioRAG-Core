@@ -650,6 +650,7 @@ def pilot_test_records():
 
 
 def test_pilot_database(tmp):
+    from evaluation.pilot_izolasyon import gercek_pilotu_ayir
     from src.database import get_connection
     from src.pilot_clinical import import_records, pdf_pages
 
@@ -664,6 +665,13 @@ def test_pilot_database(tmp):
     conn.autocommit = False
     conn.start_transaction()
     try:
+        # Gerçek pilot verisi varsa --pilot koşusu onu da okur ve test kayıtları satir_hash ile atlanırdı:
+        # belgenin gerçek pilot satırları (ve CASCADE ile işaretleri) bu transaction içinde ayrılır.
+        removed = gercek_pilotu_ayir(conn, doc["document_id"])
+        check("pilot DB: gerçek pilot satırları transaction içinde ayrıldı (bilgi)", "-", f"{removed} satır", True)
+        # Kapsam kontrolü için gerçek rag satırına güvenilmez: test kendi rag satırını ekler.
+        rag = fake_rows(conn)["tekrar_1"]
+        insert_rows(conn, {"tekrar_1": rag}, ["tekrar_1"])
         written = import_records(doc, records, connection=conn)
         check("pilot DB: import_records aynı bağlantıyla yazdı", len(records), written)
         plain, _, _ = run_quality(Options(dry_run=True, rapor_dir=Path(tmp) / "rapor"), connection=conn,
@@ -686,7 +694,8 @@ def test_pilot_database(tmp):
         pilot_flags = [f for f in flags if f["satir_hash"] in pilot_hashes]
         check("pilot DB: pilot satırları yüklendi", len(records), len(pilot_rows))
         check("pilot DB: işaretler aynı transaction'da kalite_isaretleri'ne yazıldı", len(flags), len(stored))
-        check("pilot DB: rag satırları da kapsamda (tek sürüm)", True, len(rows) > len(pilot_rows))
+        check("pilot DB: rag satırları da kapsamda (tek sürüm)", True,
+              len(rows) > len(pilot_rows) and rag["satir_hash"] in {r["satir_hash"] for r in rows})
 
         by = defaultdict(set)
         for f in pilot_flags:
