@@ -335,6 +335,45 @@ def test_pilot_unit():
           ("pilot" in config_payload(), control_version() == control_version(pilot=False)))
     check("sürüm: --pilot ayrı sürüm", True, control_version(pilot=True) != control_version())
 
+    # Çok parçalı kanıt (taslak_notu.kanit_parcalari): her parça kendi sayfasında.
+    multi_pages = {6: "Intro. HCR rate is inversely proportional to C-pep-", 7: "tide level. Next sentence.",
+                   8: "Text **FIGURE 1:** caption."}
+    parts = [{"sayfa": 6, "metin": "HCR rate is inversely proportional to C-pep-"}, {"sayfa": 7, "metin": "tide level."}]
+
+    def parted(parts=parts, **fields):
+        base = dict(kanit_cumle=parts[0]["metin"], klinik_bilgi_en="inversely proportional", kanit_sayfa=6,
+                    kanit_sayfa_bitis=7, birlestirme="sayfa", taslak_notu=json.dumps({"kanit_parcalari": parts}))
+        base.update(fields)
+        return pilot(**base)
+
+    resolved = flags_of(parted(), {"pages": multi_pages})
+    check("çok parçalı: doğrulanan parçalar -> pilot_cok_parcali_cozuldu [bilgi]; 'C-pep-' sayfa geçişi uyarısı yok",
+          ([("pilot_cok_parcali_cozuldu", "bilgi")]), [(f["kontrol_kodu"], f["seviye"]) for f in resolved])
+    check("çok parçalı: tek parçalı 'C-pep-' (çözülmemiş) hâlâ uyari", True,
+          has(flags_of(pilot(kanit_cumle=parts[0]["metin"], klinik_bilgi_en="inversely proportional", kanit_sayfa=6),
+                       {"pages": multi_pages}), "pilot_sayfa_gecisi_supheli", "uyari"))
+    check("çok parçalı: bilgi sonraki parçada olabilir", False,
+          has(flags_of(parted(klinik_bilgi_en="tide level"), {"pages": multi_pages}), "pilot_bilgi_kanitta_yok"))
+    for label, row, needle in (
+            ("kanit_cumle ≠ ilk parça", parted(kanit_cumle=parts[0]["metin"] + " tide level."), "ilk parçayla aynı değil"),
+            ("bitiş sayfası uyuşmuyor", parted(kanit_sayfa_bitis=6), "son parçanın sayfası"),
+            ("parça sayfada yok", parted(taslak_notu=json.dumps({"kanit_parcalari": [parts[0], {"sayfa": 7, "metin": "yok."}]})),
+             "s.7 parçası o sayfada birebir yok"),
+            ("birlestirme yanlış", parted(birlestirme="ara_blok"), "parçalardan çıkan 'sayfa'"),
+            ("yapı bozuk", parted(taslak_notu=json.dumps({"kanit_parcalari": "metin"})), "yapısı bozuk")):
+        got = flags_of(row, {"pages": multi_pages})
+        check(f"çok parçalı tutarsız ({label}) -> pilot_parca_tutarsiz [hata], çözüldü yok", (True, False, True),
+              (has(got, "pilot_parca_tutarsiz", "hata"), has(got, "pilot_cok_parcali_cozuldu"),
+               any(needle in f["aciklama"] for f in got if f["kontrol_kodu"] == "pilot_parca_tutarsiz")))
+    boundary = pilot(kanit_cumle="proportional to C-pep-tide level.", klinik_bilgi_en="proportional", kanit_sayfa=6,
+                     kanit_sayfa_bitis=7)
+    check("parçasız iki sayfalı alıntı: sayfa sınırında aranır -> çözüldü, kanıt hatası yok", (True, False),
+          (has(flags_of(boundary, {"pages": multi_pages}), "pilot_cok_parcali_cozuldu", "bilgi"),
+           has(flags_of(boundary, {"pages": multi_pages}), "pilot_kanit_sayfada_yok")))
+    check("parçasız iki sayfalı alıntı sınırda yoksa -> pilot_kanit_sayfada_yok [hata]", True,
+          has(flags_of(dict(boundary, kanit_cumle="proportional to C-peptide level."), {"pages": multi_pages}),
+              "pilot_kanit_sayfada_yok", "hata"))
+
 
 def test_collisions(tmp):
     from src.database import clinical_row_hash
@@ -556,8 +595,36 @@ def test_database(tmp):
 
 PILOT_DIR = Path("data/review/pilot")
 PILOT_PDF = Path("data/pdfs/TK-cardiovascular36-2-1.pdf")
-PILOT_TEXT_SIRA = (6, 7, 46, 106, 107, 109, 152)  # pilot_findings_v2.json, 1 tabanlı (v2_sira)
+PILOT_V32 = PILOT_DIR / "pilot_findings_v3_2.json"
+PILOT_V2 = PILOT_DIR / "pilot_findings_v2.json"
+# Metin kayıtları kanıta göre seçilir (dosyalar arası sıra numarası değişir). PDF yükleyici v4:
+# v2 #7'nin "0.6820.889" kanıtı artık sayfada yok; güncel kayıtlar v3.2'den. Şekil yazılı eski tek
+# parçalı kayıt (v2 #109) v4 sayfasında hâlâ birebir olduğu için şekil/tablo uyarısını sınamak için kalır.
+PILOT_TEXTS = {
+    "hcr_ozet": (PILOT_V32, lambda r: r["kanit_cumle"].startswith("It was observed that the HCR (3.41")),
+    "roc_ozet": (PILOT_V32, lambda r: "HCR score" in r["kanit_cumle"] and "CI95=0.682-0.889" in r["kanit_cumle"]),
+    "hasta_1225": (PILOT_V32, lambda r: r["kanit_cumle"].startswith("1,225 patients")),
+    "roc_sonuc": (PILOT_V32, lambda r: r["kanit_cumle"].startswith(
+        "In the ROC analysis, the cut-off value of the HCR value in patients experiencing")),
+    "sekil_eski": (PILOT_V2, lambda r: "**FIGURE 1:**" in r["kanit_cumle"]),
+    # Çok parçalı (v3.2): v2 #106 (s.3→5 '(1.88%)…'), #152 ('C-pep-' / 'tide level.'), C-peptide ROC (Figure arası).
+    "parca_mezenter": (PILOT_V32, lambda r: "kanit_parcalari" in r and "mesenteric" in r["klinik_bilgi_en"]),
+    "parca_cpep": (PILOT_V32, lambda r: "kanit_parcalari" in r and r["kanit_cumle"].endswith("C-pep-")),
+    "parca_roc": (PILOT_V32, lambda r: "kanit_parcalari" in r and "AUC=0.692" in r["klinik_bilgi_en"]),
+}
 pilot_distribution = {}
+
+
+def pilot_texts():
+    cache = {}
+    out = {}
+    for name, (path, wanted) in PILOT_TEXTS.items():
+        data = cache.setdefault(path, json.loads(path.read_text(encoding="utf-8")))
+        matches = [r for r in data if wanted(r)]
+        if not matches:
+            raise AssertionError(f"test kaydı bulunamadı: {name} ({path.name})")
+        out[name] = dict(matches[0])
+    return out
 
 
 def pilot_test_records():
@@ -567,7 +634,6 @@ def pilot_test_records():
     - Table 2 Age: univariate aynen, multivariate OR'u yapay olarak GA dışına (2.500) çekilmiş.
     """
     transfer = json.loads((PILOT_DIR / "pilot_tablo_aktarim.json").read_text(encoding="utf-8"))
-    findings = json.loads((PILOT_DIR / "pilot_findings_v2.json").read_text(encoding="utf-8"))
     picked = []
     for item in transfer:
         note = json.loads(item["taslak_notu"])
@@ -579,7 +645,7 @@ def pilot_test_records():
     for item in picked:
         if item.get("etki_turu") == "OR" and json.loads(item["taslak_notu"]).get("analiz") == "multivariate":
             item["deger"] = "2.500"  # yapay: GA 0.542-0.915 dışında
-    texts = [dict(findings[n - 1]) for n in PILOT_TEXT_SIRA]
+    texts = list(pilot_texts().values())
     return [dict(r, review_status="verified") for r in picked + texts]
 
 
@@ -630,9 +696,12 @@ def test_pilot_database(tmp):
             return [r for r in pilot_rows if r.get("taslak_notu") and (lambda n: (n.get("tablo_no"), n.get("degisken"))
                     == (tablo, degisken))(json.loads(r["taslak_notu"]))]
 
-        def text_row(sira):
-            quote = json.loads((PILOT_DIR / "pilot_findings_v2.json").read_text(encoding="utf-8"))[sira - 1]["kanit_cumle"]
-            return next(r for r in pilot_rows if r["kanit_cumle"] == quote and r.get("kanit_turu") == "metin")
+        texts = pilot_texts()
+
+        def text_row(name):
+            want = texts[name]
+            return next(r for r in pilot_rows if r["kanit_cumle"] == want["kanit_cumle"]
+                        and r["klinik_bilgi_en"] == want["klinik_bilgi_en"] and r.get("kanit_turu") == "metin")
 
         def codes_of(members):
             return {c for m in members for c, _ in by[m["satir_hash"]]}
@@ -655,30 +724,38 @@ def test_pilot_database(tmp):
         check("pilot DB: Age univariate CI içinde (deger_ci_disinda yok)", False,
               any(c == "deger_ci_disinda" for c, _ in by[uni["satir_hash"]]))
         check("pilot DB: Female gender n (%) yüzdeleri tutarlı", False, "pilot_yuzde_uyumsuz" in codes_of(female))
-        check("pilot DB: 'p<001' (#7, #107, #109) -> kaynak_p_bicim_bozuk [bilgi]", True,
-              all(("kaynak_p_bicim_bozuk", "bilgi") in by[text_row(n)["satir_hash"]] for n in (7, 107, 109)))
-        check("pilot DB: 'p<0.001' (#6) -> kaynak_p_bicim_bozuk yok", False,
-              any(c == "kaynak_p_bicim_bozuk" for c, _ in by[text_row(6)["satir_hash"]]))
+        check("pilot DB: 'p<001' (özet ROC, sonuç ROC, eski Figure kaydı, parçalı C-peptide ROC 2. parça) "
+              "-> kaynak_p_bicim_bozuk [bilgi]", True,
+              all(("kaynak_p_bicim_bozuk", "bilgi") in by[text_row(n)["satir_hash"]]
+                  for n in ("roc_ozet", "roc_sonuc", "sekil_eski", "parca_roc")))
+        check("pilot DB: 'p<0.001' (HCR özet) -> kaynak_p_bicim_bozuk yok", False,
+              any(c == "kaynak_p_bicim_bozuk" for c, _ in by[text_row("hcr_ozet")["satir_hash"]]))
         hcr_dup = [f for f in pilot_flags if f["kontrol_kodu"] == "pilot_tekrar_metin_tablo"]
-        check("pilot DB: HCR metin (#6) ↔ Table 1 tekrarı tek grupta bağlı [bilgi]",
-              {text_row(6)["satir_hash"], *(r["satir_hash"] for r in hcr)},
+        check("pilot DB: HCR metin (özet) ↔ Table 1 tekrarı tek grupta bağlı [bilgi]",
+              {text_row("hcr_ozet")["satir_hash"], *(r["satir_hash"] for r in hcr)},
               {f["satir_hash"] for f in hcr_dup if f["grup_id"] == hcr_dup[0]["grup_id"]} if hcr_dup else set())
         check("pilot DB: tekrar yalnız bilgi seviyesinde", {"bilgi"},
               {f["seviye"] for f in pilot_flags if f["kategori"] == "tekrar"})
-        check("pilot DB: #7 ↔ #107 (özet ↔ sonuçlar ROC) metin tekrarı", True,
-              any(f["kontrol_kodu"] == "pilot_tekrar_metin_metin" and text_row(107)["satir_hash"] in f["ayrinti"]["uyeler"]
-                  for f in pilot_flags if f["satir_hash"] == text_row(7)["satir_hash"]))
-        check("pilot DB: Figure yazılı kanıt (#109) -> pilot_kanitta_sekil_tablo [uyari]", True,
-              ("pilot_kanitta_sekil_tablo", "uyari") in by[text_row(109)["satir_hash"]])
-        check("pilot DB: #106 '(1.88%) …' -> pilot_sayfa_gecisi_supheli [uyari]", True,
-              ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row(106)["satir_hash"]])
-        check("pilot DB: #46 '1,225 patients…' -> sayfa geçişi yalnız bilgi (uyari yok)", (True, False),
-              (("pilot_sayfa_gecisi_supheli", "bilgi") in by[text_row(46)["satir_hash"]],
-               ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row(46)["satir_hash"]]))
-        check("pilot DB: #152 'C-pep-' -> pilot_sayfa_gecisi_supheli [uyari]", True,
-              ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row(152)["satir_hash"]])
+        check("pilot DB: özet ↔ sonuçlar ROC metin tekrarı (v4: '0.682-0.889' iki kayıtta da)", True,
+              any(f["kontrol_kodu"] == "pilot_tekrar_metin_metin"
+                  and text_row("roc_sonuc")["satir_hash"] in f["ayrinti"]["uyeler"]
+                  and "0.889" in f["ayrinti"]["ortak_sayilar"]
+                  for f in pilot_flags if f["satir_hash"] == text_row("roc_ozet")["satir_hash"]))
+        check("pilot DB: eski tek parçalı Figure yazılı kanıt (v2 #109) -> pilot_kanitta_sekil_tablo [uyari]", True,
+              ("pilot_kanitta_sekil_tablo", "uyari") in by[text_row("sekil_eski")["satir_hash"]])
+        check("pilot DB: '1,225 patients…' -> sayfa geçişi yalnız bilgi (uyari yok)", (True, False),
+              (("pilot_sayfa_gecisi_supheli", "bilgi") in by[text_row("hasta_1225")["satir_hash"]],
+               ("pilot_sayfa_gecisi_supheli", "uyari") in by[text_row("hasta_1225")["satir_hash"]]))
+        for name, label in (("parca_mezenter", "#106 '(1.88%) …' (s.3→5)"), ("parca_cpep", "#152 'C-pep-' (s.6→7)"),
+                            ("parca_roc", "C-peptide ROC (Figure arası)")):
+            codes = {c for c, _ in by[text_row(name)["satir_hash"]]}
+            check(f"pilot DB: çok parçalı {label} -> çözüldü [bilgi], sayfa geçişi / şekil uyarısı yok",
+                  (True, False, False, False),
+                  (("pilot_cok_parcali_cozuldu", "bilgi") in by[text_row(name)["satir_hash"]],
+                   "pilot_sayfa_gecisi_supheli" in codes, "pilot_kanitta_sekil_tablo" in codes,
+                   "pilot_parca_tutarsiz" in codes))
         check("pilot DB: kanıtların hepsi sayfada birebir, bilgi kanıtta", False,
-              any(c in ("pilot_kanit_sayfada_yok", "pilot_bilgi_kanitta_yok", "pilot_pdf_okunamadi")
+              any(c in ("pilot_kanit_sayfada_yok", "pilot_bilgi_kanitta_yok", "pilot_pdf_okunamadi", "pilot_parca_tutarsiz")
                   for f in pilot_flags for c in [f["kontrol_kodu"]]))
         check("pilot DB: pilot satırlarına chunk temelli kaynak kontrolü uygulanmadı", False,
               any(f["kontrol_kodu"] in ("chunk_id_bos", "dogrulama_artik_gecmiyor") for f in pilot_flags))
@@ -696,6 +773,24 @@ def test_pilot_database(tmp):
                                    "isaret": len(pilot_flags), "eksiksizlik": [
                                        {k: v for k, v in i.items() if k in ("dosya", "pdf_tablo_satiri", "temsil_edilen")}
                                        for i in pilot["eksiksizlik"]]})
+
+        # Bozuk parça: SQL'deki taslak_notu.kanit_parcalari transaction içinde bozulur (ROLLBACK ile geri alınır).
+        target = text_row("parca_cpep")
+        note = json.loads(target["taslak_notu"])
+        note["kanit_parcalari"][1]["metin"] = "tide level was changed."
+        cursor = conn.cursor()
+        cursor.execute("UPDATE klinik_bulgular SET taslak_notu = %s WHERE id = %s",
+                       (json.dumps(note, ensure_ascii=False), target["id"]))
+        cursor.close()
+        _, broken_flags, _ = run_quality(Options(pilot=True, dry_run=True, rapor_dir=Path(tmp) / "rapor"),
+                                         connection=conn, out=lambda *_: None, page_loader=loader)
+        broken = {(f["kontrol_kodu"], f["seviye"]) for f in broken_flags if f["satir_hash"] == target["satir_hash"]}
+        detail = next((f["aciklama"] for f in broken_flags if f["satir_hash"] == target["satir_hash"]
+                       and f["kontrol_kodu"] == "pilot_parca_tutarsiz"), "")
+        check("pilot DB: bozuk parça (s.7 parçası sayfada yok) -> pilot_parca_tutarsiz [hata], çözüldü yok",
+              (True, False, True),
+              (("pilot_parca_tutarsiz", "hata") in broken, ("pilot_cok_parcali_cozuldu", "bilgi") in broken,
+               "s.7 parçası o sayfada birebir yok" in detail))
     finally:
         conn.rollback()
         conn.close()

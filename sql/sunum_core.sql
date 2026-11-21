@@ -262,8 +262,12 @@ WHERE x.kayit_turu = 'soru_cevap'
 -- JSON null ise ya da JSON bozuksa NULL döner (metin kayıtlarında hepsi NULL).
 -- Kalite sütunları v_kalite_bulgu'dan gelir, yani yalnız EN SON kalite koşusunun
 -- sürümü görünür: pilot işaretleri için son koşu python -m src.data_quality --pilot olmalı.
--- v3.1 notu: çok parçalı kanıt (kanit_parcalari) yapısı belli olunca ayrı bir VIEW
--- ya da buraya JSON_VALID korumalı yeni sütunlar eklenir, bugünkü sütunlar değişmez.
+-- Çok parçalı kanıt (pilot v3.1+): import_records parçaları taslak_notu.kanit_parcalari'nda,
+-- bitiş sayfasını kanit_sayfa_bitis'te, birleşme türünü birlestirme'de tutar; kanit_cumle ilk
+-- parçadır. Sona eklenen sütunlar: kanit_sayfa_bitis, birlestirme, kanit_parca_sayisi (parçasız = 1)
+-- ve kanit_gosterim. kanit_gosterim YALNIZ GÖSTERİM içindir, birleştirilmiş alıntı DEĞİLDİR:
+-- parçalar "[s.N] metin" işaretiyle sırayla yan yana yazılır (en çok 3 parça, fazlası "[+N parça]");
+-- parçasız kayıtta kanit_cumle'nin aynısıdır. Birebir kanıt kanit_cumle ve parçalardır.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_pilot_bulgular AS
 SELECT
@@ -294,7 +298,18 @@ SELECT
     COALESCE(k.bilgi_sayisi, 0) AS kalite_bilgi,
     CASE WHEN k.hata_sayisi > 0 THEN 'hata' WHEN k.uyari_sayisi > 0 THEN 'uyari'
          WHEN k.bilgi_sayisi > 0 THEN 'bilgi' END AS kalite_en_yuksek,
-    k.kontroller AS kalite_kontrolleri
+    k.kontroller AS kalite_kontrolleri,
+    b.kanit_sayfa_bitis, b.birlestirme,
+    CASE WHEN b.parcalar IS NOT NULL THEN JSON_LENGTH(b.parcalar) ELSE 1 END AS kanit_parca_sayisi,
+    CASE WHEN b.parcalar IS NULL THEN b.kanit_cumle ELSE CONCAT_WS(' ',
+        CASE WHEN JSON_TYPE(JSON_EXTRACT(b.parcalar, '$[0].metin')) = 'STRING' THEN CONCAT('[s.',
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(b.parcalar, '$[0].sayfa')), '?'), '] ', JSON_UNQUOTE(JSON_EXTRACT(b.parcalar, '$[0].metin'))) END,
+        CASE WHEN JSON_TYPE(JSON_EXTRACT(b.parcalar, '$[1].metin')) = 'STRING' THEN CONCAT('[s.',
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(b.parcalar, '$[1].sayfa')), '?'), '] ', JSON_UNQUOTE(JSON_EXTRACT(b.parcalar, '$[1].metin'))) END,
+        CASE WHEN JSON_TYPE(JSON_EXTRACT(b.parcalar, '$[2].metin')) = 'STRING' THEN CONCAT('[s.',
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(b.parcalar, '$[2].sayfa')), '?'), '] ', JSON_UNQUOTE(JSON_EXTRACT(b.parcalar, '$[2].metin'))) END,
+        CASE WHEN JSON_LENGTH(b.parcalar) > 3 THEN CONCAT('[+', JSON_LENGTH(b.parcalar) - 3, ' parça]') END)
+    END AS kanit_gosterim
 FROM (
     SELECT
         x.*,
@@ -311,7 +326,9 @@ FROM (
         CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.comparator_n')) IN ('INTEGER', 'UNSIGNED INTEGER')
             THEN CAST(JSON_EXTRACT(x.taslak_notu, '$.comparator_n') AS UNSIGNED) END END AS comparator_n,
         CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.deger_bicimi')) = 'STRING'
-            THEN JSON_UNQUOTE(JSON_EXTRACT(x.taslak_notu, '$.deger_bicimi')) END END AS deger_bicimi
+            THEN JSON_UNQUOTE(JSON_EXTRACT(x.taslak_notu, '$.deger_bicimi')) END END AS deger_bicimi,
+        CASE WHEN JSON_VALID(x.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(x.taslak_notu, '$.kanit_parcalari')) = 'ARRAY'
+            THEN JSON_EXTRACT(x.taslak_notu, '$.kanit_parcalari') END END AS parcalar
     FROM klinik_bulgular AS x
     WHERE x.bilgi_turu IS NOT NULL
 ) AS b

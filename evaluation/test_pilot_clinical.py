@@ -17,6 +17,8 @@ Kontroller (data/review/pilot/pilot_tablo_aktarim.json'dan 6 kayıt, test kopyas
 - import_records commit etmiyor (ikinci bağlantı yeni satırları görmüyor).
 - Aynı kayıt iki kez: validate_records "tekrar" hatası; ikinci import 0 satır yazar.
 - Şemada olmayan / desteklenmeyen alan açık hata; verified olmayan ve geçersiz bilgi_turu reddedilir.
+- Çok parçalı kanıt (pilot_findings_v3_2.json'daki 6 kayıt): kanit_sayfa_bitis, birlestirme ve
+  taslak_notu["kanit_parcalari"] yazılıyor, kanit_cumle ilk parça; tutarsız parçalı kayıt reddediliyor.
 """
 
 import hashlib
@@ -29,6 +31,7 @@ from src.pilot_clinical import import_records, pdf_pages, validate_records
 
 PDF = Path('data/pdfs/TK-cardiovascular36-2-1.pdf')
 TRANSFER = Path('data/review/pilot/pilot_tablo_aktarim.json')
+V32 = Path('data/review/pilot/pilot_findings_v3_2.json')
 PILOT_COLUMNS = ('bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en')
 SELECT_COLUMNS = ('id', 'document_id', 'bilgi_turu', 'baglam', 'klinik_bilgi_en', 'kanit_sayfa', 'kanit_cumle',
                   'kanit_turu', 'review_status', 'cikarma_yontemi', 'hasta_grubu', 'hasta_sayisi', 'comparator',
@@ -68,7 +71,7 @@ def main():
         else:
             check(name, f'ValueError ~ "{needle}"', 'hata yok', False)
 
-    for path in (PDF, TRANSFER):
+    for path in (PDF, TRANSFER, V32):
         if not path.exists():
             print(f'Bulunamadı: {path} (aktarım için: python -m src.pilot_tablo --pdf {PDF} --overwrite)')
             sys.exit(1)
@@ -162,6 +165,39 @@ def main():
         raises('geçersiz bilgi_turu reddedilir', lambda: import_records(
             doc, [dict(verified[0], bilgi_turu='uydurma')], connection=conn), 'bilgi_turu')
         check('hatalı çağrılar satır eklemedi', after_valid, count_rows(cur, 'klinik_bulgular'))
+
+        # Çok parçalı kanıt (v3.2): 6 kayıt, test kopyasında verified; aynı transaction, sonda ROLLBACK.
+        v32 = json.loads(V32.read_text(encoding='utf-8'))
+        multi = [dict(r, review_status='verified') for r in v32 if 'kanit_parcalari' in r]
+        check('v3.2 çok parçalı kayıt', 6, len(multi))
+        cur.execute('SELECT COALESCE(MAX(id), 0) FROM klinik_bulgular')
+        before_multi = cur.fetchone()[0]
+        check('çok parçalı: import_records yazdı (sayfalar pdf_pages doc\'undan)', 6,
+              import_records(doc, multi, connection=conn))
+        cur.execute('SELECT kanit_sayfa, kanit_sayfa_bitis, birlestirme, kanit_cumle, taslak_notu, klinik_bilgi_en, '
+                    'deger, unit, satir_hash FROM klinik_bulgular WHERE id > %s ORDER BY id', (before_multi,))
+        stored = [tuple(map(text, row)) for row in cur.fetchall()]
+        check('çok parçalı: kanit_sayfa / kanit_sayfa_bitis / birlestirme',
+              [(r['sayfa'], r['sayfa_bitis'], r['birlestirme']) for r in multi],
+              [(int(s[0]), int(s[1]), s[2]) for s in stored])
+        check('çok parçalı: kanit_cumle = ilk parça (birleştirilmiş alıntı yok)', True,
+              all(s[3] == r['kanit_parcalari'][0]['metin'] for s, r in zip(stored, multi)))
+        check('çok parçalı: taslak_notu["kanit_parcalari"] kayıttaki parçalar', True,
+              all(json.loads(s[4]) == {'kanit_parcalari': r['kanit_parcalari']} for s, r in zip(stored, multi)))
+        check('çok parçalı: klinik_bilgi_en / deger / unit kayıttan', True,
+              all((s[5], s[6], s[7]) == (r['klinik_bilgi_en'], r.get('deger'), r.get('unit')) for s, r in zip(stored, multi)))
+        check('çok parçalı: 6 ayrı satir_hash (aynı parçalı farklı bilgiler ayrı)', 6, len({s[8] for s in stored}))
+        check('çok parçalı: aynı kayıt 2. import 0 satır', 0, import_records(doc, multi[:1], connection=conn))
+        after_multi = count_rows(cur, 'klinik_bulgular')
+        bad = dict(multi[0], kanit_cumle=multi[0]['kanit_parcalari'][0]['metin'] + ' '
+                   + multi[0]['kanit_parcalari'][1]['metin'])
+        raises('tutarsız parçalı kayıt (birleştirilmiş kanit_cumle) reddedilir', lambda: import_records(
+            doc, [bad], connection=conn), 'ilk kanıt parçası')
+        raises('tutarsız parçalı kayıt (yanlış sayfa_bitis) reddedilir', lambda: import_records(
+            doc, [dict(multi[0], sayfa_bitis=multi[0]['sayfa'])], connection=conn), 'sayfa_bitis')
+        raises('sayfası olmayan doc ile çok parçalı kayıt reddedilir', lambda: import_records(
+            {k: v for k, v in doc.items() if k != 'pages'}, multi[:1], connection=conn), 'PDF sayfaları gerekli')
+        check('reddedilen çok parçalı kayıtlar satır eklemedi', after_multi, count_rows(cur, 'klinik_bulgular'))
     finally:
         conn.rollback()
 

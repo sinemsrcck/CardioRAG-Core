@@ -18,13 +18,12 @@ STRUCTURED_FIELDS = ('hasta_grubu', 'deger', 'unit', 'p', 'ci95', 'etki_turu', '
                      'sonuc_olcutu_tr', 'mudahale_en', 'mudahale_turu', 'outcome_type')
 # import_records'un okuduğu temel alanlar; bunlar ve STRUCTURED_FIELDS dışındaki alanlar açık hata verir.
 INPUT_FIELDS = {'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_cumle', 'sayfa', 'sayfa_bitis',
-                'kanit_turu', 'review_status'}
-# Çok sayfalı kanıt (sayfa_bitis = sayfa + 1) SQL'e yazılmaz: SQL yazım sınırı (clinical_validation.validate_source)
-# kanit_sayfa_bitis != kanit_sayfa kabul etmez. Destek eklenene kadar bu kayıtlar açık hatayla durdurulur.
-SQL_MULTI_PAGE_SUPPORTED = False
+                'kanit_turu', 'review_status', 'kanit_parcalari', 'birlestirme'}
 # Çok parçalı kanıt (kanit_parcalari): metni araya giren sayfa sonu, tablo sayfası veya şekil/tablo başlığıyla
 # bölünmüş tek bir cümle. Parçalar asla birleştirilip aranmaz; her biri kendi fiziksel sayfasında birebir
-# doğrulanır. import_records bu alanları henüz desteklemez (INPUT_FIELDS dışında; açık hata verir).
+# doğrulanır. import_records çok sayfalı/çok parçalı kaydı yazmadan önce validate_records ile aynı kurallarla
+# denetler (PDF sayfaları gerekir) ve şöyle yazar: sayfa_bitis -> kanit_sayfa_bitis, birlestirme -> birlestirme,
+# parçalar -> taslak_notu["kanit_parcalari"]; kanit_cumle ilk parça olarak kalır (birleştirilmiş alıntı yok).
 CAPTION_RE = re.compile(r'\*\*(?:TABLE|FIGURE)\s*\d+\s*:\*\*', re.IGNORECASE)
 NUMBER_RE = re.compile(r'\d+(?:\.\d+)?')
 MAX_PARTS = 3
@@ -189,21 +188,64 @@ def pdf_pages(pdf_path):
     return doc, {p['page_number']: p['text'] for p in doc['pages']}
 
 
-def import_records(doc, records, connection=None):
+def is_multi_evidence(item):
+    """Çok parçalı, çok sayfalı (sayfa_bitis != sayfa) ya da birlestirme dolu kayıt."""
+    return (item.get('kanit_parcalari') is not None or item.get('birlestirme') is not None
+            or evidence_end_page(item) != item.get('sayfa'))
+
+
+def _note_with_parts(item):
+    """Mevcut taslak_notu (dict ya da JSON metni) + kanit_parcalari; diğer anahtarlar korunur."""
+    note = item.get('taslak_notu')
+    if note is None:
+        note = {}
+    elif isinstance(note, str):
+        try:
+            note = json.loads(note)
+        except ValueError:
+            raise ValueError('taslak_notu JSON değil; kanit_parcalari ile birleştirilemez') from None
+    if not isinstance(note, dict):
+        raise ValueError('taslak_notu JSON nesnesi olmalı; kanit_parcalari ile birleştirilemez')
+    parts = item['kanit_parcalari']
+    if 'kanit_parcalari' in note and note['kanit_parcalari'] != parts:
+        raise ValueError('taslak_notu["kanit_parcalari"] kayıttaki kanit_parcalari ile farklı')
+    return json.dumps(dict(note, kanit_parcalari=parts), ensure_ascii=False)
+
+
+def _check_multi_evidence(records, doc, pages):
+    """Çok sayfalı/çok parçalı kayıtları yazımdan önce validate_records ile aynı kurallarla denetler."""
+    multi = [(index, item) for index, item in enumerate(records, 1) if is_multi_evidence(item)]
+    if not multi:
+        return
+    if pages is None:
+        pages = {p['page_number']: p['text'] for p in doc.get('pages') or []} or None
+    if not pages:
+        raise ValueError('Çok sayfalı kanıt / çok parçalı kanıt için PDF sayfaları gerekli (pdf_pages() doc\'u ya da '
+                         'pages=); sayfasız doğrulanamaz, aktarım durduruldu')
+    for index, item in multi:
+        _, errors = validate_records([item], pages)
+        if errors:
+            raise ValueError(f'Kayıt {index}: çok sayfalı/çok parçalı kanıt doğrulanamadı: {errors[0]["hata"]}')
+        if item.get('kanit_parcalari') is not None:
+            _note_with_parts(item)  # taslak_notu birleştirilemiyorsa bağlantıdan önce dur
+
+
+def import_records(doc, records, connection=None, pages=None):
     """Only called with explicit --write. Never updates existing rows.
 
-    connection verilirse onu kullanır ve commit/rollback/close yapmaz (çağıran yönetir)."""
+    connection verilirse onu kullanır ve commit/rollback/close yapmaz (çağıran yönetir).
+    pages: {fiziksel sayfa: metin}; verilmezse doc['pages'] (pdf_pages() çıktısı). Yalnız çok
+    sayfalı/çok parçalı kayıtlar için gerekir; tek sayfalı kayıtların yolu değişmedi."""
     if not records or any(item.get('review_status') != 'verified' or item.get('baglam') not in CONTEXTS for item in records):
         raise ValueError('SQL aktarımı yalnızca bağlamı geçerli, manuel onaylı kayıtlarla yapılabilir')
     if any(item.get('bilgi_turu') not in TYPES for item in records):
         raise ValueError('SQL aktarımı için her kayıtta geçerli bilgi_turu zorunlu')
     if any(not isinstance(item.get('sayfa'), int) or isinstance(item.get('sayfa'), bool) for item in records):
         raise ValueError('SQL aktarımı için her kayıtta geçerli sayfa zorunlu')
-    if not SQL_MULTI_PAGE_SUPPORTED and any(evidence_end_page(item) != item['sayfa'] for item in records):
-        raise ValueError('Çok sayfalı kanıt (sayfa_bitis != sayfa) için SQL şeması/yazım sınırı desteklemiyor; aktarım durduruldu')
     unknown = sorted({key for item in records for key in item} - INPUT_FIELDS - set(STRUCTURED_FIELDS))
     if unknown:
         raise ValueError(f'import_records bu alanları desteklemiyor (sessizce atlanmaz): {", ".join(unknown)}')
+    _check_multi_evidence(records, doc, pages)
     own = connection is None
     if own:
         from src.database import get_connection
@@ -223,6 +265,8 @@ def import_records(doc, records, connection=None):
             if not required <= columns:
                 raise ValueError('SQL klinik_bulgular sütunları eksik')
             used = {key for item in records for key in STRUCTURED_FIELDS if item.get(key) is not None}
+            if any(is_multi_evidence(item) for item in records):
+                used |= {'kanit_sayfa_bitis', 'birlestirme', 'taslak_notu'}
             if not used <= columns:
                 raise ValueError(f'SQL klinik_bulgular sütunları eksik: {", ".join(sorted(used - columns))}')
             written = 0
@@ -243,12 +287,26 @@ def import_records(doc, records, connection=None):
                     value = item.get(key)
                     if value is not None:
                         payload[key] = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                multi = None
+                if is_multi_evidence(item):
+                    # Parçalar taslak_notu'da; kanit_cumle ilk parça olarak kalır (_check_multi_evidence denetledi).
+                    if item.get('kanit_parcalari') is not None:
+                        payload['taslak_notu'] = _note_with_parts(item)
+                    payload['kanit_sayfa_bitis'] = evidence_end_page(item)
+                    if item.get('birlestirme') is not None:
+                        payload['birlestirme'] = item['birlestirme']
+                    multi = {'kanit_sayfa_bitis': payload['kanit_sayfa_bitis'], 'birlestirme': item.get('birlestirme'),
+                             'kanit_parcalari': item.get('kanit_parcalari')}
                 identity = [payload[k] for k in ('document_id', 'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_sayfa', 'kanit_cumle')]
                 # Yapılandırılmış alanlar kimliğe girer (aynı kanıtlı grup satırları ayrı kalır);
                 # yapılandırılmış alanı olmayan kayıtların hash'i öncekiyle aynıdır.
                 structured = {k: payload[k] for k in STRUCTURED_FIELDS if k in payload}
                 if structured:
                     identity.append(structured)
+                # Çok sayfalı/çok parçalı kayıtta bitiş sayfası ve parçalar kimliğe girer;
+                # tek sayfalı, parçasız kayıtların kimliği (ve hash'i) değişmez.
+                if multi is not None:
+                    identity.append(multi)
                 payload['satir_hash'] = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
                 fields = list(payload)
                 cursor.execute(

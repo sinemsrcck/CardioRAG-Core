@@ -67,6 +67,7 @@ PILOT_CHECKS = {
     "kaynak_p_bicim_bozuk": "tutarsizlik", "kaynak_ci_p_celiski": "tutarsizlik",
     "pilot_tekrar_metin_tablo": "tekrar", "pilot_tekrar_metin_metin": "tekrar", "pilot_tekrar_belirsiz": "tekrar",
     "pilot_baglam_tablo": "tutarsizlik", "pilot_ilac_doz_oran": "tutarsizlik",
+    "pilot_parca_tutarsiz": "kaynak", "pilot_cok_parcali_cozuldu": "kaynak",
 }
 ALL_CHECKS = {**CHECKS, **PILOT_CHECKS}
 PILOT_JACCARD = 0.3          # metin ↔ metin tekrarında anahtar kelime örtüşmesi
@@ -74,7 +75,9 @@ PILOT_MIN_SHARED_NUMBERS = 2  # metin ↔ metin tekrarında ortak anlamlı sayı
 PILOT_SIGNIFICANCE = 0.05
 # r2: rakamla başlayan kanıt sayfa geçişi şüphesinde bilgi (parantez/noktalama uyari kalır).
 # r3: kaynak_ci_p_celiski ortak ci_p_assessment kuralını kullanır (AUC dahil; '<001' gibi belirsiz p atlanır).
-PILOT_RULES_REVISION = 3
+# r4: çok parçalı kanıt (taslak_notu.kanit_parcalari) her parça kendi sayfasında aranır; doğrulanan
+#     parçalı / sayfa sınırlı kanıta sayfa geçişi ve şekil/tablo uyarısı verilmez.
+PILOT_RULES_REVISION = 4
 DEFAULT_PDF_DIR = Path("data/pdfs")
 PILOT_WARNING = ("pilot satırlar var ama --pilot verilmedi; v_kalite_ozet son sürümü gösterdiği için "
                  "pilot işaretleri görünmeyecek")
@@ -902,25 +905,93 @@ def _contains_term(text, term):
     return bool(term) and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", norm_text(text)) is not None
 
 
+def _int_or_none(value):
+    try:
+        return None if value in (None, "") else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def pilot_part_problems(row, parts, pages):
+    """Çok parçalı kanıtın SQL satırıyla tutarlılığı (src.pilot_clinical.check_evidence_parts kuralları).
+
+    Döndürür: sorun listesi (boşsa parçalar doğrulandı)."""
+    from src.pilot_clinical import check_evidence_parts
+
+    if not isinstance(parts, list) or not parts or not all(
+            isinstance(p, dict) and isinstance(p.get("metin"), str) and _int_or_none(p.get("sayfa")) is not None
+            for p in parts):
+        return ["taslak_notu.kanit_parcalari yapısı bozuk (sayfa + metin listesi değil)"]
+    problems = []
+    missing = [p["sayfa"] for p in parts if p["metin"] not in (pages.get(int(p["sayfa"])) or "")]
+    problems += [f"s.{page} parçası o sayfada birebir yok" for page in missing]
+    if (row.get("kanit_cumle") or "") != parts[0]["metin"]:
+        problems.append("kanit_cumle ilk parçayla aynı değil")
+    start, end = _int_or_none(row.get("kanit_sayfa")), _int_or_none(row.get("kanit_sayfa_bitis"))
+    if start != int(parts[0]["sayfa"]):
+        problems.append(f"kanit_sayfa {start} ≠ ilk parçanın sayfası {parts[0]['sayfa']}")
+    if (end if end is not None else start) != int(parts[-1]["sayfa"]):
+        problems.append(f"kanit_sayfa_bitis {end} ≠ son parçanın sayfası {parts[-1]['sayfa']}")
+    if not missing:
+        try:
+            joined = check_evidence_parts([{"sayfa": int(p["sayfa"]), "metin": p["metin"]} for p in parts], pages)
+        except ValueError as exc:
+            problems.append(str(exc))
+        else:
+            if row.get("birlestirme") != joined:
+                problems.append(f"birlestirme '{row.get('birlestirme')}' ≠ parçalardan çıkan '{joined}'")
+    return problems
+
+
 def check_pilot_row(row, source):
-    """Tek pilot satırının kanıt / biçim / bağlam kontrolleri. source: {'pages': {...}} veya {'hata': ...}."""
+    """Tek pilot satırının kanıt / biçim / bağlam kontrolleri. source: {'pages': {...}} veya {'hata': ...}.
+
+    Çok parçalı kanıt (taslak_notu.kanit_parcalari) parça parça, her biri kendi sayfasında aranır;
+    doğrulanan parçalı ya da sayfa sınırını geçen tek alıntıda sayfa geçişi / şekil-tablo uyarısı verilmez."""
+    from src.pilot_clinical import quote_in_pages
+
     flags = []
     quote = row.get("kanit_cumle") or ""
     pages = (source or {}).get("pages")
+    note = _note(row) or {}
+    parts = note.get("kanit_parcalari")
+    start, end = _int_or_none(row.get("kanit_sayfa")), _int_or_none(row.get("kanit_sayfa_bitis"))
+    texts = [p["metin"] for p in parts if isinstance(p, dict) and isinstance(p.get("metin"), str)] \
+        if isinstance(parts, list) else [quote]
+    resolved = False
     if pages is None:
         flags.append(_flag(row, "pilot_pdf_okunamadi", "uyari",
                            f"PDF metni okunamadı: {(source or {}).get('hata', 'belge yok')}; kanıt kontrolü yapılmadı"))
+    elif parts is not None:
+        problems = pilot_part_problems(row, parts, pages)
+        if problems:
+            flags.append(_flag(row, "pilot_parca_tutarsiz", "hata", "çok parçalı kanıt tutarsız: " + "; ".join(problems),
+                               detail={"sorunlar": problems}))
+        else:
+            resolved = True
+            flags.append(_flag(row, "pilot_cok_parcali_cozuldu", "bilgi",
+                               f"çok parçalı kanıt, çözülmüş: {len(parts)} parça her biri kendi sayfasında birebir "
+                               f"(s.{start}–{end if end is not None else start}, birlestirme '{row.get('birlestirme')}')"))
+    elif end is not None and end != start:
+        if quote and start in pages and end in pages and end == start + 1 and quote_in_pages(quote, pages, start, end):
+            resolved = True
+            flags.append(_flag(row, "pilot_cok_parcali_cozuldu", "bilgi",
+                               f"sayfa sınırını geçen tek alıntı doğrulandı (s.{start}–{end})"))
+        else:
+            flags.append(_flag(row, "pilot_kanit_sayfada_yok", "hata",
+                               f"kanit_cumle s.{start}–{end} sayfa sınırında (pdf_pages) birebir yok"))
     else:
-        page = row.get("kanit_sayfa")
-        text = pages.get(int(page)) if page not in (None, "") else None
+        text = pages.get(start) if start is not None else None
         if not quote or text is None or quote not in text:
             flags.append(_flag(row, "pilot_kanit_sayfada_yok", "hata",
-                               f"kanit_cumle PDF'in {page}. sayfasında (pdf_pages) birebir yok"))
+                               f"kanit_cumle PDF'in {start}. sayfasında (pdf_pages) birebir yok"))
     fact = row.get("klinik_bilgi_en") or row.get("klinik_bilgi")
-    if not fact or fact not in quote:
-        flags.append(_flag(row, "pilot_bilgi_kanitta_yok", "hata", "klinik_bilgi_en kanıt cümlesinin içinde değil"))
+    if not fact or not any(fact in t for t in texts):
+        flags.append(_flag(row, "pilot_bilgi_kanitta_yok", "hata",
+                           "klinik_bilgi_en kanıt cümlesinin içinde değil" if parts is None
+                           else "klinik_bilgi_en hiçbir kanıt parçasının içinde değil"))
 
-    if row.get("kanit_turu") != "tablo" and quote.strip():
+    if row.get("kanit_turu") != "tablo" and quote.strip() and not resolved:
         start = re.sub(r"^[\s*_#>]+", "", quote)
         end = re.sub(r"(?:<sup>[^<]*</sup>|[\s*_])+$", "", quote)
         strong, weak = [], []  # strong -> uyari; yalnız weak -> bilgi
@@ -939,15 +1010,15 @@ def check_pilot_row(row, source):
         if reasons:
             flags.append(_flag(row, "pilot_sayfa_gecisi_supheli", level,
                                "sayfa/sütun geçişi şüphesi: " + ", ".join(reasons)))
-    if _FIGURE_TABLE.search(quote):
+    if not resolved and _FIGURE_TABLE.search(quote):
         flags.append(_flag(row, "pilot_kanitta_sekil_tablo", "uyari",
                            f"kanıtta şekil/tablo yazısı var: '{_FIGURE_TABLE.search(quote).group(0)}'"))
-    if _P_BROKEN.search(quote):
+    broken = next((m for m in map(_P_BROKEN.search, texts) if m), None)
+    if broken:
         flags.append(_flag(row, "kaynak_p_bicim_bozuk", "bilgi",
-                           f"KAYNAK TUTARSIZLIĞI: kanıtta bozuk p biçimi '{_P_BROKEN.search(quote).group(0)}' "
+                           f"KAYNAK TUTARSIZLIĞI: kanıtta bozuk p biçimi '{broken.group(0)}' "
                            "(ondalık nokta eksik; kanıt kaynaktan birebir)"))
 
-    note = _note(row) or {}
     match = _N_PCT.match(str(row.get("deger") or ""))
     group_n = note.get("grup_n")
     if match and isinstance(group_n, int) and group_n > 0:
