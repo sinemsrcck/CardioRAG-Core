@@ -44,7 +44,7 @@ BASE = "bilgi_turu IS NOT NULL AND review_status = 'verified'"
 HOCA_VIEWS = {"measurements", *EXPECTED_COLUMNS}  # sunum veritabanında yalnız bunlar olmalı
 # Pilot veride sabit satır sayıları (veri değişirse bilerek güncellenir).
 FIXED_COUNTS = {"measurements": 51, "measurements_by_group": 102, "clinical_outcomes": 66, "treatments": 13,
-                "general_clinical_findings": 44}
+                "general_clinical_findings": 44, "diseases": 20, "diagnostics": 17, "symptoms": 0}
 
 results = []
 
