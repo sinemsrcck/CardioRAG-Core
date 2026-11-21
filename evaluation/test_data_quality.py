@@ -650,6 +650,7 @@ def pilot_test_records():
 
 
 def test_pilot_database(tmp):
+    from evaluation.pilot_izolasyon import gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu, korumayi_kaldir
     from src.database import get_connection
     from src.pilot_clinical import import_records, pdf_pages
 
@@ -659,11 +660,26 @@ def test_pilot_database(tmp):
     doc, pages = pdf_pages(PILOT_PDF)
     loader = lambda path: (doc, pages)  # noqa: E731 - PDF bir kez okunur
     records = pilot_test_records()
+    # Şema hazırlığı (DDL örtük commit yapar): AYRI bağlantıda ve silmeden ÖNCE.
+    setup = get_connection()
+    try:
+        if not schema_ready(setup):
+            ensure_schema(setup)
+    finally:
+        setup.close()
     before = db_state()
+    real_pilot = gercek_pilot_durumu()  # ayrı bağlantıdan, silmeden önce
     conn = get_connection()
     conn.autocommit = False
     conn.start_transaction()
     try:
+        # Gerçek pilot verisi varsa --pilot koşusu onu da okur ve test kayıtları satir_hash ile atlanırdı:
+        # belgenin gerçek pilot satırları (ve CASCADE ile işaretleri) bu transaction içinde ayrılır.
+        removed = gercek_pilotu_ayir(conn, doc["document_id"])
+        check("pilot DB: gerçek pilot satırları transaction içinde ayrıldı (bilgi)", "-", f"{removed} satır", True)
+        # Kapsam kontrolü için gerçek rag satırına güvenilmez: test kendi rag satırını ekler.
+        rag = fake_rows(conn)["tekrar_1"]
+        insert_rows(conn, {"tekrar_1": rag}, ["tekrar_1"])
         written = import_records(doc, records, connection=conn)
         check("pilot DB: import_records aynı bağlantıyla yazdı", len(records), written)
         plain, _, _ = run_quality(Options(dry_run=True, rapor_dir=Path(tmp) / "rapor"), connection=conn,
@@ -686,7 +702,8 @@ def test_pilot_database(tmp):
         pilot_flags = [f for f in flags if f["satir_hash"] in pilot_hashes]
         check("pilot DB: pilot satırları yüklendi", len(records), len(pilot_rows))
         check("pilot DB: işaretler aynı transaction'da kalite_isaretleri'ne yazıldı", len(flags), len(stored))
-        check("pilot DB: rag satırları da kapsamda (tek sürüm)", True, len(rows) > len(pilot_rows))
+        check("pilot DB: rag satırları da kapsamda (tek sürüm)", True,
+              len(rows) > len(pilot_rows) and rag["satir_hash"] in {r["satir_hash"] for r in rows})
 
         by = defaultdict(set)
         for f in pilot_flags:
@@ -793,7 +810,11 @@ def test_pilot_database(tmp):
                "s.7 parçası o sayfada birebir yok" in detail))
     finally:
         conn.rollback()
+        korumayi_kaldir(conn)
         conn.close()
+        # Güvenlik: ayrı bağlantıdan gerçek pilot satırları başlangıçla aynı mı (değilse IzolasyonHatasi).
+        check("pilot DB: güvenlik — gerçek pilot satırları ayrı bağlantıdan başlangıçla aynı", real_pilot,
+              guvenlik_kontrolu(real_pilot, "test_data_quality.test_pilot_database"))
     check("pilot DB: ROLLBACK sonrası tablo satır sayıları başlangıçla aynı", before, db_state())
 
 
@@ -873,9 +894,11 @@ def main():
         test_collisions(tmp)
     with tempfile.TemporaryDirectory() as tmp:
         test_database(tmp)
+    # Bilerek commit eden alt test, gerçek pilot satırlarını transaction içinde silen pilot testinden
+    # ÖNCE ve kendi bağlantısında çalışır (silme yapılan bağlantıda hiçbir commit olmaz).
+    test_own_transaction_after_select()
     with tempfile.TemporaryDirectory() as tmp:
         test_pilot_database(tmp)
-    test_own_transaction_after_select()
 
     width = max(len(r[0]) for r in results)
     print(f"\n{'Kontrol':<{width}}  {'Beklenen':<22}  {'Bulunan':<40}  Sonuç")
