@@ -130,6 +130,10 @@ def expected_counts(cur):
                 f"AND {TNO.replace('taslak_notu', 'g.taslak_notu')} = {TNO.replace('taslak_notu', 'klinik_bulgular.taslak_notu')} "
                 f"AND {SNO.replace('taslak_notu', 'g.taslak_notu')} = {SNO.replace('taslak_notu', 'klinik_bulgular.taslak_notu')}) "
                 f"AND NOT (JSON_VALID(taslak_notu) AND JSON_EXTRACT(taslak_notu, '$.p_baglandigi_satir') IS NOT NULL)")
+    # 11_clinical_outcomes.sql ile aynı: etki bilgisi olmayan ilaç / doz / tedavi / tanı yöntemi tablo satırları
+    # (etki_turu, deger, p üçü de NULL ya da boş) clinical_outcomes'ta gösterilmez.
+    no_effect = ("bilgi_turu IN ('ilac', 'doz', 'tedavi', 'teshis_yontemi') AND NULLIF(TRIM(etki_turu), '') IS NULL "
+                 "AND NULLIF(TRIM(deger), '') IS NULL AND NULLIF(TRIM(p), '') IS NULL")
     distinct_rows = lambda where: scalar(cur, f"SELECT COUNT(DISTINCT document_id, {TNO}, {SNO}) FROM klinik_bulgular WHERE {where}")  # noqa: E731
     olcum_text = scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} AND bilgi_turu = 'olcum'")
     trt = "bilgi_turu IN ('ilac', 'doz', 'tedavi')"
@@ -138,7 +142,7 @@ def expected_counts(cur):
         "measurements": distinct_rows(group),
         "treatments": distinct_rows(f"{BASE} AND kanit_turu = 'tablo' AND {trt}")
                       + scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} AND {trt}"),
-        "clinical_outcomes": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {no_group}")
+        "clinical_outcomes": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {no_group} AND NOT ({no_effect})")
                              + scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} AND bilgi_turu = 'klinik_sonuc'"),
         "general_clinical_findings": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} "
                                                  f"AND bilgi_turu IN ('diger', 'hasta_grubu')") + olcum_text,
