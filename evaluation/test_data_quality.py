@@ -328,6 +328,13 @@ def test_pilot_unit():
     med = table | {"bilgi_turu": "ilac", "deger": "119 (31.98)", "taslak_notu": note(372)}
     check("pilot_ilac_doz_oran [uyari]: pozitif / negatif", (True, False),
           (has(flags_of(med | {"doz": "100 mg"}), "pilot_ilac_doz_oran", "uyari"), has(flags_of(med), "pilot_ilac_doz_oran")))
+    check("pilot_tablo_bos_deger [uyari]: boş / boşluk / rakamsız ('n (%)') pozitif; dolu tablo ve metin negatif",
+          (True, True, True, False, False),
+          (has(flags_of(table | {"deger": None}), "pilot_tablo_bos_deger", "uyari"),
+           has(flags_of(table | {"deger": "  "}), "pilot_tablo_bos_deger", "uyari"),
+           has(flags_of(table | {"deger": "n (%)"}), "pilot_tablo_bos_deger", "uyari"),
+           has(flags_of(table | {"deger": "7.83±1.2"}), "pilot_tablo_bos_deger"),
+           has(flags_of(good), "pilot_tablo_bos_deger")))
     check("pilot: bütün kodlar PILOT_CHECKS'te, CHECKS ile çakışmıyor", (True, set()),
           (all(f["kontrol_kodu"] in ALL_CHECKS for f in flags_of(pilot(kanit_cumle="x-", klinik_bilgi_en="y"))),
            set(PILOT_CHECKS) & set(CHECKS)))

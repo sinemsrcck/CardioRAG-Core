@@ -20,7 +20,27 @@ Kurallar:
   "^2" gösterimi sunum katmanında (sql/sunum_hoca v_sunum_taban evidence) üretilir.
 
 Çalıştırma:
-    python -m src.pilot_tablo --pdf data/pdfs/TK-cardiovascular36-2-1.pdf
+    python -m src.pilot_tablo --pdf data/pdfs/TK-cardiovascular36-2-1.pdf --findings data/review/pilot/pilot_findings_v3_2.json
+
+--findings zorunludur (varsayılan pilot girdisine dönülmez) ve PDF ile aynı belgeye ait olmalıdır
+(check_findings_document). Varsayılan çıktı adı belgeye göredir; başka belgenin çıktısının üzerine
+--overwrite ile bile yazılmaz.
+
+Genel tablo kuralları (makaleye özel değil; pilot çıktısı değişmez, evaluation/test_pilot_tablo.py sınar):
+- "Table I:" gibi Roma rakamlı başlık sayıya çevrilir.
+- Dipnot satırı (bütün dolu hücreleri _…_) ve ara başlık / biçim satırı ("n (%)", "Median (Q1-Q3)", başlık
+  tekrarı) veri değildir; biçim satırı sonraki satırların biçimini belirler (taslak_notu.bicim_etiketi,
+  değerle tutarlıysa) ve önceki bölümün kapsamını bitirir. Başlıktan önceki kalın etiket satırı ("( A )")
+  sütun etiketidir (taslak_notu.sutun_etiketi).
+- Başlığı boş, değerleri etiket olan sütun (ör. "A-B") grup değildir: etiket satır adına eklenir, birleşik
+  hücrenin adı bloktaki satırlara taşınır ("Pairwise comparation A-B"). Boş değerli grup / analiz kaydı
+  üretilmez.
+- "Sex<br>Female<br>Male" gibi alt satırlar (ad ve değer hücreleri aynı sayıda parça, en az 2 alt satır):
+  ilk parça bölüm, kalanlar ayrı satır.
+- Hücre sonundaki işaretler değerden ayrılır: p hücresinde test işareti (u, p, f…; yalnız kalan değer bir p
+  ise), ad hücresinde test işareti, grup hücresinde post-hoc işareti (I, II…) -> taslak_notu.
+- Karmaşık tablo (kalın ikinci başlık satırı, metin değerli değer sütunu, sayısal satır adı) otomatik
+  ayrıştırılmaz: "elle_inceleme_gerekli" sorunu, kayıt üretilmez.
 """
 import argparse
 import csv
@@ -57,7 +77,9 @@ EFFECT_TYPES = (('odds ratio', 'OR'), ('hazard ratio', 'HR'), ('relative risk', 
 ANALYSIS_LABELS = ('univariate', 'multivariate', 'univariable', 'multivariable', 'unadjusted', 'adjusted')
 
 SEPARATOR = re.compile(r'^\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
-CAPTION = re.compile(r'^[\s#>*_]*table\s*(\d+)\s*[:.]', re.IGNORECASE)
+# Tablo başlığı: "TABLE 1:", "Table 2.", Roma rakamıyla "Table I:", "Table II." (sayıya çevrilir).
+CAPTION = re.compile(r'^[\s#>*_]*table\s*(\d+|[IVXLC]+)\s*[:.]', re.IGNORECASE)
+ROMAN_VALUES = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100}
 GROUP_N = re.compile(r'^(.*?)\s*\(\s*n\s*=\s*(\d+)\s*\)\s*$', re.IGNORECASE)
 MEAN_SD = re.compile(r'^-?\d+(?:\.\d+)?\s*±\s*\d+(?:\.\d+)?$')
 N_PCT = re.compile(r'^\d+\s*\(\s*\d+(?:\.\d+)?\s*\)$')
@@ -68,9 +90,26 @@ UNIT_TOKEN = re.compile(r'^[A-Za-zµ%]+(?:/[A-Za-zµ0-9^]+)+$')
 # Satır adının sonundaki istatistik etiketi (klinik birim değil): "n (%)", "n, %", "mean ± SD",
 # "mean (SD)", "median (IQR)", "median [IQR]", "median (range)", "median (Q1-Q3)"; isteğe bağlı parantez
 # ve önündeki virgül/boşlukla. "(%)" tek başına birimdir (ör. "LvEF (%)") ve kalır.
+# "±SE", "±SD", "± SEM" (ör. "AUC±SE.") da istatistik etiketidir.
 STAT_LABEL = re.compile(
     r'[\s,]*\(?\s*(?:n\s*\(\s*%\s*\)|n\s*,\s*%|mean\s*(?:±|\+/-|\+-)\s*s\.?d\.?|mean\s*\(\s*s\.?d\.?\s*\)'
-    r'|median\s*[(\[]\s*(?:iqr|range|q1\s*[-–,]\s*q3)\s*[)\]]|median\s*,\s*iqr)\s*\)?\s*$', re.IGNORECASE)
+    r'|median\s*[(\[]\s*(?:iqr|range|q1\s*[-–,]\s*q3)\s*[)\]]|median\s*,\s*iqr'
+    r'|±\s*s\.?(?:d|e|em)\.?)\s*\)?\s*$', re.IGNORECASE)
+# Değer hücresinin TAMAMI bir istatistik / biçim etiketi mi (ara başlık satırı için): "n (%)", "%",
+# "Median (Q1-Q3)", "Median (Q1.-Q3.)", "Median (IQR)", "Mean ± SD", "X±SD", "(X±SD) (minimum-maximum)".
+CELL_STAT = re.compile(
+    r'^(?:\(?\s*(?:n\s*\(\s*%\s*\)|n\s*,\s*%|%|n|(?:mean|x)\s*(?:±|\+/-|\+-)\s*s\.?[de]\.?m?'
+    r'|(?:mean|median)\s*[(\[]\s*(?:iqr|range|s\.?d\.?|q1\.?\s*[-–,]\s*q3\.?|min(?:imum)?\.?\s*[-–]\s*max(?:imum)?\.?)\s*[)\]]'
+    r'|median\s*,\s*iqr|min(?:imum)?\.?\s*[-–]\s*max(?:imum)?\.?)\s*\)?\s*)+$', re.IGNORECASE)
+# Hücrenin sonundaki ayrı <br> parçası olarak işaretler: test işareti (p hücresinde / ad hücresinde, ör. "u", "p",
+# "f", "or"; anlamı tablo dipnotunda) ve grup hücresinde post-hoc anlamlılık işareti (I, II, …).
+TEST_MARK = re.compile(r'^[a-z]{1,2}$')
+POSTHOC_MARK = re.compile(r'^(?:I|II|III|IV|V|VI)$')
+P_LIKE = re.compile(r'^[<>=≤≥]?\s*(?:\d+(?:\.\d+)?|\.\d+)$')
+# Değer hücresi sayısal bir değerle başlıyor mu (karmaşık tablo tespiti için).
+VALUE_START = re.compile(r'^[<>=≤≥±~+\-]?\s*\.?\d')
+ITALIC_PART = re.compile(r'^_[^_](?:.*[^_])?_$|^_[^_]_$', re.DOTALL)
+SINGLE_LABEL_PAREN = re.compile(r'^(.*?)\s*\(\s*([A-Z])\s*\)\s*$')
 BOLD_EDGE = re.compile(r'^(?:\*\*|__)+|(?:\*\*|__)+$')
 # Başlıkta tek harfin kelimeden kopması ("u nivariate"); a/I gerçek kelime olabilir.
 SPLIT_LETTER = re.compile(r'(?<![A-Za-z])[b-hj-zB-HJ-Z] [a-z]{3,}')
@@ -134,11 +173,21 @@ def header_cell(cell):
 
 def split_unit(name):
     """'Glucose (mg/dL)' -> ('Glucose', 'mg/dL'); 'Female gender n (%)' -> ('Female gender', 'n (%)');
-    'BMI kg/m2' -> ('BMI', 'kg/m2'); tek kelimelik adlar (E/e') bölünmez."""
+    'BMI kg/m2' -> ('BMI', 'kg/m2'); tek kelimelik adlar (E/e') bölünmez.
+
+    Tek büyük harfli parantez birim değil etikettir: 'hs Trop I 0h ng/l (A)' -> ('hs Trop I 0h (A)', 'ng/l').
+    Sondaki diğer istatistik etiketleri (STAT_LABEL, ör. '±SE') birim sayılmaz, adda tutulmaz."""
     name = name.strip()
     match = N_PCT_SUFFIX.search(name)
     if match:
         return name[:match.start()].strip().rstrip(','), 'n (%)'
+    label = SINGLE_LABEL_PAREN.match(name)
+    if label and label.group(1).strip():
+        base, unit = split_unit(label.group(1))
+        return f'{base} ({label.group(2)})', unit
+    stripped = STAT_LABEL.sub('', name).strip()
+    if stripped and stripped != name:
+        return split_unit(stripped)
     match = UNIT_PAREN.match(name)
     if match and match.group(1).strip():
         return match.group(1).strip().rstrip(',').strip(), match.group(2).strip()
@@ -146,6 +195,67 @@ def split_unit(name):
     if len(tokens) > 1 and UNIT_TOKEN.match(tokens[-1]):
         return ' '.join(tokens[:-1]), tokens[-1]
     return name, None
+
+
+def roman_to_int(text):
+    """'IV' -> 4; geçersizse None."""
+    text = text.upper()
+    if not text or any(ch not in ROMAN_VALUES for ch in text):
+        return None
+    total = 0
+    for index, ch in enumerate(text):
+        value = ROMAN_VALUES[ch]
+        total += -value if index + 1 < len(text) and ROMAN_VALUES[text[index + 1]] > value else value
+    return total
+
+
+def table_number(token):
+    return int(token) if token.isdigit() else roman_to_int(token)
+
+
+def is_footnote_row(cells):
+    """Bütün dolu hücreleri (her <br> parçası) italik _…_ olan satır tablo dipnotudur, veri değildir."""
+    parts = [part.strip() for cell in cells for part in br_parts(cell)]
+    return bool(parts) and all(ITALIC_PART.match(part) for part in parts)
+
+
+def is_stat_label(value):
+    return bool(value) and bool(CELL_STAT.match(value.strip()))
+
+
+def _header_base(text):
+    """Başlık / başlık tekrarı karşılaştırması için: ' / ' sonrası ve sondaki istatistik etiketi atılır."""
+    text = clean(text).split(' / ')[0]
+    previous = None
+    while text != previous:
+        previous = text
+        text = STAT_LABEL.sub('', text).strip()
+        text = re.sub(r'\s*(?:\(?\s*(?:median|mean|x)\s*[(\[±][^)\]]*[)\]]?\s*\)?|n\s*\(\s*%\s*\))\s*$', '',
+                      text, flags=re.IGNORECASE).strip()
+    return re.sub(r'\s+', '', text).casefold()
+
+
+def stat_suffix(value):
+    """'Total (n=114) n (%)' -> 'n (%)'; 'Median (Q1.-Q3.)' -> 'Median (Q1.-Q3.)'; etiket yoksa None."""
+    value = clean(value)
+    if is_stat_label(value):
+        return value
+    for start in range(len(value)):
+        if value[start] == ' ' and is_stat_label(value[start + 1:]):
+            return value[start + 1:]
+    return None
+
+
+def split_marker(cell, pattern, require=None):
+    """(işaretsiz hücre, işaret). Son <br> parçası işaret desenine uyuyorsa ayrılır; require verilirse kalan
+    değer o desene uymalı (ör. p hücresinde yalnız p değeri: '0.100<br>u' ayrılır, '7.8 (2.4-25.1)<br>or' ayrılmaz)."""
+    parts = br_parts(cell)
+    if len(parts) < 2 or not pattern.match(clean(parts[-1])):
+        return cell, None
+    rest = '<br>'.join(parts[:-1])
+    if require is not None and not require.match(clean(rest)):
+        return cell, None
+    return rest, clean(parts[-1])
 
 
 def value_format(value):
@@ -165,8 +275,8 @@ def value_format(value):
 def _caption(lines, start):
     for k in range(start - 1, max(-1, start - 6), -1):
         match = CAPTION.match(lines[k])
-        if match:
-            return int(match.group(1)), lines[k].strip()
+        if match and table_number(match.group(1)) is not None:
+            return table_number(match.group(1)), lines[k].strip()
     return None, None
 
 
@@ -250,17 +360,65 @@ def _parse_table(page, lines, start, end, ordinal):
                        'aciklama': 'Başlık hücresinde kalın olmayan parça; başlığa katılmadı, düzeltme yapılmadı'})
     columns = _columns(headers)
     rows, sections, section, first_data = [], [], None, True
+    skipped, footnotes, formats, complex_reasons = [], [], {}, []
     for line_no in range(start + 2, end):
         raw = lines[line_no]
         cells = split_cells(raw)
         cleaned = [clean(c) for c in cells]
+        if is_footnote_row(cells):  # dipnot (_…_): veri değil, kayıt üretmez
+            footnotes.append(' '.join(c for c in cleaned if c))
+            skipped.append({'tur': 'dipnot', 'ham': raw.strip()})
+            continue
         if cleaned and cleaned[0] and not any(cleaned[1:]):
             section = cleaned[0]
             sections.append(section)
             continue
         if not any(cleaned):
             continue
-        parts = br_parts(cells[0])
+        filled = [(col, v) for col, v in zip(columns[1:], cleaned[1:]) if v]
+        if not cleaned[0] and filled and all(is_stat_label(v) or _header_base(v) == _header_base(col['baslik'])
+                                             for col, v in filled):
+            # Ara başlık / değer biçimi satırı: sonraki satırların biçimini belirler, önceki bölümün kapsamı biter.
+            formats = {col['anahtar']: stat_suffix(v) for col, v in filled if stat_suffix(v)}
+            section = None
+            skipped.append({'tur': 'bicim_satiri', 'ham': raw.strip(), 'bicim': formats})
+            continue
+        nonempty = [c.strip() for c in cells if clean(c)]
+        all_bold = all(c.startswith(('**', '__')) for c in nonempty)
+        if first_data and not cleaned[0] and filled and all_bold \
+                and not any(ch.isdigit() for _, v in filled for ch in v):
+            for col, v in filled:  # sütun etiketi satırı, ör. "( A ) | ( B ) | ( C )"
+                col['etiket'] = v
+            skipped.append({'tur': 'sutun_etiketi_satiri', 'ham': raw.strip()})
+            continue
+        if first_data and cleaned[0] and len(filled) >= 2 and all_bold:
+            complex_reasons.append('çok seviyeli başlık: ilk veri satırı kalın ikinci bir başlık satırı')
+        name_cell, name_mark = split_marker(cells[0], TEST_MARK)
+        parts = br_parts(name_cell)
+        marks, cell_parts = {}, {}
+        for col, cell in zip(columns[1:], cells[1:]):
+            mark = None
+            if col['rol'] == 'p':
+                cell, mark = split_marker(cell, TEST_MARK, require=P_LIKE)
+            elif col['rol'] == 'grup':
+                cell, mark = split_marker(cell, POSTHOC_MARK)
+            if mark:
+                marks[col['anahtar']] = mark
+            cell_parts[col['anahtar']] = br_parts(cell)
+        group_parts = [cell_parts[c['anahtar']] for c in columns[1:]
+                       if c['rol'] == 'grup' and cell_parts.get(c['anahtar'])]
+        sub = len(parts) - 1
+        if sub >= 2 and group_parts and all(len(g) == sub for g in group_parts):
+            # <br> ile alt satırlar: "Sex<br>Female<br>Male" + "44 (38.6)<br>70 (61.4)" -> bölüm "Sex", iki satır.
+            local = clean(parts[0])
+            for k in range(sub):
+                cells_map = {key: clean(vals[k] if len(vals) == sub else '<br>'.join(vals))
+                             for key, vals in cell_parts.items()}
+                temiz = ' | '.join(c for c in [clean(parts[k + 1]), *cells_map.values()] if c)
+                rows.append(_row(len(rows) + 1, page, raw, temiz, parts[k + 1], local, cells_map, marks,
+                                 name_mark, formats))
+            first_data = False
+            continue
         name_raw = clean(parts[-1]) if parts else ''
         fused = [clean(p) for p in parts[:-1]]
         if fused:
@@ -273,17 +431,111 @@ def _parse_table(page, lines, start, end, ordinal):
                            'aciklama': 'İlk alt bölüm başlığı başlık hücresine ve ilk satıra bölünmüş görünüyor; '
                                        'alt_bolum=None bırakıldı, ad uydurulmadı'})
         first_data = False
-        variable, unit = split_unit(name_raw)
         cells_map = {}
         for col, value in zip(columns[1:], cleaned[1:]):
-            cells_map[col['anahtar']] = value
-        rows.append({'satir_no': len(rows) + 1, 'sayfa': page, 'ham': raw.strip(),
-                     'temiz': ' | '.join(c for c in cleaned if c), 'degisken_ham': name_raw,
-                     'ad': row_name(cells[0]),
-                     'degisken': variable, 'unit': unit, 'alt_bolum': section, 'sutun_degerleri': cells_map})
-    return {'tablo_no': no if no is not None else ordinal, 'sayfa': page, 'tablo_basligi': caption,
-            'tablo_basligi_ham': caption_raw, 'sutun_basliklari_ham': header_raw.strip(),
-            'sutunlar': columns, 'alt_bolumler': sections, 'satirlar': rows, 'sorunlar': issues}
+            key = col['anahtar']
+            cells_map[key] = clean('<br>'.join(cell_parts[key])) if key in marks else value
+        temiz = ' | '.join(c for c in cleaned if c)
+        rows.append(_row(len(rows) + 1, page, raw, temiz, name_cell, section, cells_map, marks, name_mark, formats))
+    _label_columns(columns, rows)
+    rows, empty = _merge_labels(columns, rows)
+    skipped += empty
+    complex_reasons += _complex_reasons(columns, rows)
+    table = {'tablo_no': no if no is not None else ordinal, 'sayfa': page, 'tablo_basligi': caption,
+             'tablo_basligi_ham': caption_raw, 'sutun_basliklari_ham': header_raw.strip(),
+             'sutunlar': columns, 'alt_bolumler': sections, 'satirlar': rows, 'sorunlar': issues,
+             'atlanan_satirlar': skipped}
+    if footnotes:
+        table['dipnot'] = footnotes
+    if complex_reasons:
+        # Otomatik ayrıştırılmaz: satırlar kayda dönüşmez; ham satırlar elle inceleme için saklanır.
+        table['elle_inceleme_satirlari'] = [lines[i].strip() for i in range(start + 2, end) if lines[i].strip()]
+        table['satirlar'] = []
+        issues.append({'tur': 'elle_inceleme_gerekli', 'parca': sorted(set(complex_reasons)),
+                       'aciklama': 'Karmaşık tablo (çok seviyeli / bölünmüş başlık, iç içe tablo); otomatik '
+                                   'ayrıştırılmadı, kayıt üretilmedi; elle inceleme gerekli'})
+    return table
+
+
+def _row(number, page, raw, temiz, name_cell, section, cells_map, marks, name_mark, formats):
+    """Satır sözlüğü. Mevcut anahtarlar aynı; yeni anahtarlar (isaretler, ad_isareti, bicim_etiketi) yalnız doluysa."""
+    parts = br_parts(name_cell)
+    name_raw = clean(parts[-1]) if parts else ''
+    variable, unit = split_unit(name_raw)
+    row = {'satir_no': number, 'sayfa': page, 'ham': raw.strip(), 'temiz': temiz, 'degisken_ham': name_raw,
+           'ad': row_name(name_cell), 'degisken': variable, 'unit': unit, 'alt_bolum': section,
+           'sutun_degerleri': cells_map}
+    if marks:
+        row['isaretler'] = dict(marks)
+    if name_mark:
+        row['ad_isareti'] = name_mark
+    if formats:
+        row['bicim_etiketi'] = dict(formats)
+    return row
+
+
+def _label_columns(columns, rows):
+    """Başlığı boş sütun: değerleri etiketse (rakamsız, ör. 'A-B') hasta grubu değil etiket sütunu ('etiket');
+    hiç değer taşımıyorsa boş sütun ('bos'). İkisi de grup kaydı üretmez."""
+    for col in columns[1:]:
+        if col['rol'] != 'grup' or clean(col['baslik']):
+            continue
+        filled = [v for v in (r['sutun_degerleri'].get(col['anahtar'], '') for r in rows) if v]
+        if not filled:
+            col['rol'] = 'bos'
+        elif not any(ch.isdigit() for v in filled for ch in v):
+            col['rol'] = 'etiket'
+
+
+def _merge_labels(columns, rows):
+    """Etiket sütunlu satır blokları: etiket satır adına eklenir; birleşik hücrenin adı (blokta tek dolu ad, ör.
+    ortadaki 'Pairwise comparation') bloktaki bütün satırlara taşınır. Ad yine boşsa satır atılır ('bos_ad')."""
+    label_keys = [c['anahtar'] for c in columns if c['rol'] == 'etiket']
+
+    def label_of(row):
+        return next((row['sutun_degerleri'][key] for key in label_keys if row['sutun_degerleri'].get(key)), None)
+
+    kept, skipped, k = [], [], 0
+    while k < len(rows):
+        if label_of(rows[k]) is None:
+            if rows[k]['ad'] or rows[k]['degisken']:
+                kept.append(rows[k])
+            else:
+                skipped.append({'tur': 'bos_ad', 'ham': rows[k]['ham']})
+            k += 1
+            continue
+        block = [rows[k]]
+        k += 1
+        while k < len(rows) and label_of(rows[k]) is not None \
+                and not (rows[k]['degisken'] and any(r['degisken'] for r in block)):
+            block.append(rows[k])
+            k += 1
+        names = [r['degisken'] for r in block if r['degisken']]
+        base = names[0] if len(names) == 1 else None
+        for r in block:
+            own = label_of(r)
+            r['degisken'] = f'{base} {own}' if base else own
+            r['ad'] = own  # kanıtta birebir geçen parça; birleşik ad başka satırın kanıtında olabilir
+            r['etiket'] = own
+            kept.append(r)
+    for number, r in enumerate(kept, 1):
+        r['satir_no'] = number
+    return kept, skipped
+
+
+def _complex_reasons(columns, rows):
+    """Genel karmaşık tablo kuralları (makaleye özel değil): değer sütununda çoğunluk metin (iç içe / yan yana
+    tablo) ya da sayısal satır adı (birleşik hücreli model / grup numarası)."""
+    reasons = []
+    for col in columns[1:]:
+        if col['rol'] in ('etiket', 'bos'):
+            continue
+        filled = [v for v in (r['sutun_degerleri'].get(col['anahtar'], '') for r in rows) if v]
+        if filled and sum(not VALUE_START.match(v) for v in filled) * 2 > len(filled):
+            reasons.append(f'metin değerli sütun (iç içe tablo): {col["baslik"] or col["anahtar"]}')
+    if any(re.fullmatch(r'\d+', r['degisken'] or '') for r in rows):
+        reasons.append('sayısal satır adı (birleşik hücre / model numarası)')
+    return reasons
 
 
 def row_analyses(table, row):
@@ -325,20 +577,69 @@ def row_groups(table, row):
 # Kayıt eşleme ve zenginleştirme
 # ---------------------------------------------------------------------------
 
-def load_records(path=None):
-    """(kayıtlar, kaynak). JSON ana girdi; yoksa CSV yedeği. Her kayda v2_sira eklenir (JSON'da indeks+1)."""
+class FindingsError(ValueError):
+    """Bulgu girdisi (findings) eksik ya da bu PDF'e ait değil."""
+
+
+def load_records(path):
+    """(kayıtlar, kaynak). JSON ana girdi (kayıt listesi ya da {"document_id", "kayitlar"}); CSV yedeği.
+    Her kayda v2_sira eklenir (JSON'da indeks+1). Varsayılan girdi YOK: başka makalenin kayıtlarına sessizce
+    dönülmez (path=None -> FindingsError)."""
     if path is None:
-        path = DEFAULT_JSON if DEFAULT_JSON.exists() else DEFAULT_CSV
+        raise FindingsError('Bulgu girdisi (--findings) zorunlu: pilot_auto_extract çıktısı gibi, bu PDF\'in '
+                            'kayıtlarını içeren JSON/CSV verin. Varsayılan pilot girdisine dönülmez.')
     path = Path(path)
     if path.suffix.lower() == '.json':
         data = json.loads(path.read_text(encoding='utf-8'))
+        if isinstance(data, dict) and isinstance(data.get('kayitlar'), list):
+            data = data['kayitlar']
         if not isinstance(data, list):
-            raise ValueError('JSON kökünde kayıt listesi olmalı')
+            raise ValueError('JSON kökünde kayıt listesi (ya da "kayitlar" listesi) olmalı')
         records = [dict(item, v2_sira=item.get('v2_sira', index)) for index, item in enumerate(data, 1)]
     else:
         with path.open(encoding='utf-8-sig', newline='') as handle:
             records = [dict(row, v2_sira=int(row['v2_sira']), sayfa=int(row['sayfa'])) for row in csv.DictReader(handle)]
     return records, str(path)
+
+
+def declared_document_ids(path):
+    """Findings dosyasının beyan ettiği belge kimlikleri: JSON kökünde "document_id", kayıtlarda "document_id",
+    pilot_auto_extract checkpoint'inde (<ad>.checkpoint.json) "source_id". Hiçbiri yoksa boş küme."""
+    path = Path(path)
+    ids = set()
+    if path.suffix.lower() == '.json':
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if isinstance(data, dict):
+            ids.add(data.get('document_id'))
+            data = data.get('kayitlar') or []
+        ids.update(item.get('document_id') for item in data if isinstance(item, dict))
+    checkpoint = path.with_suffix('.checkpoint.json')
+    if checkpoint.exists():
+        try:
+            ids.add(json.loads(checkpoint.read_text(encoding='utf-8')).get('source_id'))
+        except (ValueError, AttributeError):
+            pass
+    return {i for i in ids if i}
+
+
+def check_findings_document(records, declared, doc, pages):
+    """Findings ile PDF aynı belge mi. Beyan edilen document_id varsa PDF'inkiyle aynı olmalı; yoksa içerikten:
+    tablo kayıtlarının (pilot_tablo yalnız bunları kullanır) kanıtı bu PDF'in belirtilen sayfasında birebir olmalı."""
+    document_id = doc.get('document_id')
+    if declared:
+        if declared != {document_id}:
+            raise FindingsError(f'Findings başka belgeye ait: beyan edilen document_id {sorted(declared)}, '
+                                f'PDF ({doc.get("filename")}) {document_id}')
+        return 'document_id'
+    tables = [r for r in records if r.get('kanit_turu') == 'tablo']
+    if not tables:
+        raise FindingsError('Findings document_id taşımıyor ve tablo kaydı yok; bu PDF\'e ait olduğu doğrulanamadı')
+    missing = [r.get('v2_sira') for r in tables
+               if not _needle(r.get('kanit_cumle')) or _needle(r.get('kanit_cumle')) not in (pages.get(r.get('sayfa')) or '')]
+    if missing:
+        raise FindingsError(f'Findings bu PDF\'e ait görünmüyor: {len(missing)}/{len(tables)} tablo kaydının kanıtı '
+                            f'{doc.get("filename")} sayfasında birebir yok (ilk sıra no: {missing[:5]})')
+    return 'icerik'
 
 
 def _needle(quote):
@@ -350,17 +651,32 @@ def _needle(quote):
     return text.strip()
 
 
-def match_record(record, tables):
-    """('eslesti', tablo, satır) | ('eslesmedi', None, None) | ('belirsiz', None, adaylar)."""
+def match_rows(record, tables):
+    """('eslesti', tablo, [satırlar]) | ('eslesmedi', None, None) | ('belirsiz', None, adaylar) |
+    ('elle_inceleme', tablo, None). <br> ile alt satırlara bölünmüş tek PDF satırı (aynı ham satır) birden fazla
+    satır olarak eşleşir; karmaşık (elle inceleme) tablonun satırı kayıt üretmez."""
     needle = _needle(record.get('kanit_cumle'))
     if not needle:
         return 'eslesmedi', None, None
-    hits = [(t, r) for t in tables if t['sayfa'] == record.get('sayfa') for r in t['satirlar'] if needle in r['ham']]
-    if len(hits) == 1:
-        return 'eslesti', hits[0][0], hits[0][1]
+    on_page = [t for t in tables if t['sayfa'] == record.get('sayfa')]
+    hits = [(t, r) for t in on_page for r in t['satirlar'] if needle in r['ham']]
     if not hits:
-        return 'eslesmedi', None, None
+        manual = next((t for t in on_page if any(needle in h for h in t.get('elle_inceleme_satirlari', []))), None)
+        return ('elle_inceleme', manual, None) if manual else ('eslesmedi', None, None)
+    if len(hits) == 1 or (len({id(t) for t, _ in hits}) == 1 and len({r['ham'] for _, r in hits}) == 1):
+        return 'eslesti', hits[0][0], [r for _, r in hits]
     return 'belirsiz', None, [(t['tablo_no'], r['satir_no']) for t, r in hits]
+
+
+def match_record(record, tables):
+    """('eslesti', tablo, satır) | ('eslesmedi', None, None) | ('belirsiz', None, adaylar) | ('elle_inceleme', tablo, None).
+    Alt satırlara bölünmüş PDF satırı için match_rows kullanılır."""
+    status, table, rows = match_rows(record, tables)
+    if status == 'eslesti':
+        if len(rows) == 1:
+            return status, table, rows[0]
+        return 'belirsiz', None, [(table['tablo_no'], r['satir_no']) for r in rows]
+    return status, table, rows
 
 
 def table_info(table, row):
@@ -388,8 +704,44 @@ def is_medication(row):
 # SQL önizleme (yazma yok)
 # ---------------------------------------------------------------------------
 
-def sql_preview(record, table, row, document_id=None):
+def format_matches(label, value):
+    """Ara başlıktaki biçim etiketi bu değerle tutarlı mı: n (%) -> "44 (38.6)"; median/IQR/aralık -> "64 (53-74)";
+    ortalama ± SS -> "62±10.3". Tutarsızsa (ör. n (%) etiketi altındaki medyan satırı) etiket yazılmaz."""
+    low = (label or '').casefold()
+    if 'n' in low.replace('min', '').replace('mean', '') and '%' in low:
+        return bool(N_PCT.match(value or ''))
+    if any(k in low for k in ('median', 'iqr', 'q1', 'range', 'min')):
+        return bool(VAL_RANGE.match(value or ''))
+    if '±' in low or 'sd' in low:
+        return bool(MEAN_SD.match(value or ''))
+    return False
+
+
+def _extra_note(row, column_key=None, value=None, column=None):
+    """Yalnız doluysa eklenen taslak_notu alanları (pilot satırlarında hiçbiri yok, kayıtlar değişmez)."""
+    extra = {}
+    marks = row.get('isaretler') or {}
+    if column_key and marks.get(column_key):
+        extra['posthoc_isareti'] = marks[column_key]
+    p_marks = sorted({v for k, v in marks.items() if k != column_key and TEST_MARK.match(v)})
+    if p_marks:
+        extra['p_test_isareti'] = p_marks[0] if len(p_marks) == 1 else p_marks
+    if row.get('ad_isareti'):
+        extra['test_isareti'] = row['ad_isareti']
+    formats = row.get('bicim_etiketi') or {}
+    if column_key and formats.get(column_key) and format_matches(formats[column_key], value):
+        extra['bicim_etiketi'] = formats[column_key]
+    if row.get('etiket'):
+        extra['etiket'] = row['etiket']
+    if column and column.get('etiket'):
+        extra['sutun_etiketi'] = column['etiket']
+    return extra
+
+
+def sql_preview(record, table, row, document_id=None, skipped=None):
     """klinik_bulgular sütunlarıyla önizleme satırları. Mevcut sütunlar; yeni sütun yok.
+
+    - Boş değerli grup / analiz için kayıt üretilmez; skipped listesi verilirse oraya yazılır.
 
     - Küme alanları (etki_turu, mudahale_turu, outcome_type) src.clinical_validation kümelerinden.
     - Grup n'leri hasta_sayisi'na yazılmaz (ekip kararı); taslak_notu'da (grup_n, comparator_n) kalır.
@@ -402,23 +754,36 @@ def sql_preview(record, table, row, document_id=None):
                  'baglam': record.get('baglam'), 'tablo_no': table['tablo_no'], 'tablo_basligi': table['tablo_basligi'],
                  'alt_bolum': row['alt_bolum'], 'degisken': row['degisken'], 'satir_no': row['satir_no']}
     out = []
+    columns = {c['anahtar']: c for c in table['sutunlar']}
     analyses = row_analyses(table, row)
     if analyses:
         for item in analyses:
+            if not item['deger']:
+                if skipped is not None:
+                    skipped.append({'tur': 'bos_deger', 'tablo_no': table['tablo_no'], 'satir_no': row['satir_no'],
+                                    'degisken': row['degisken'], 'sutun': item['sutun']})
+                continue
             note = dict(note_base, analiz=item['analiz'], sutun=item['sutun'], p_sutun=item['p_sutun'],
                         outcome_type_bos_nedeni='Retrospektif ilişki/prediktör analizi; "prognostik değer" '
                                                 'boylamsal izlem gerektirir, emin olunamadı',
-                        mudahale_turu_bos_nedeni=MUDAHALE_BOS_NEDENI)
+                        mudahale_turu_bos_nedeni=MUDAHALE_BOS_NEDENI,
+                        **_extra_note(row, item['sutun'], item['deger'], columns.get(item['sutun'])))
             out.append(dict(base, sonuc_olcutu_tr=row['degisken'], unit=row['unit'], hasta_grubu=None,
                             hasta_sayisi=None, comparator=None, mudahale_en=None, mudahale_turu=None,
-                            etki_turu=item['etki_turu'], deger=item['deger'], ci95=item['ci95'], p=item['p'],
+                            etki_turu=item['etki_turu'], deger=item['deger'], ci95=item['ci95'], p=item['p'] or None,
                             outcome_type=None, taslak_notu=json.dumps(note, ensure_ascii=False)))
         return out
     medication = is_medication(row)
     for group in row_groups(table, row):
+        if not group['deger']:
+            if skipped is not None:
+                skipped.append({'tur': 'bos_deger', 'tablo_no': table['tablo_no'], 'satir_no': row['satir_no'],
+                                'degisken': row['degisken'], 'sutun': group['sutun']})
+            continue
         note = dict(note_base, sutun=group['sutun'], grup_n=group['n'], comparator_sutun=group['comparator_sutun'],
                     comparator_n=group['comparator_n'], p_sutun=group['p_sutun'], deger_bicimi=group['deger_bicimi'],
-                    hasta_sayisi_bos_nedeni='Ekip kararı: grup n\'leri taslak_notu\'da (grup_n, comparator_n) kalır')
+                    hasta_sayisi_bos_nedeni='Ekip kararı: grup n\'leri taslak_notu\'da (grup_n, comparator_n) kalır',
+                    **_extra_note(row, group['sutun'], group['deger'], columns.get(group['sutun'])))
         if medication:
             note['not'] = 'Kullanım oranı n (%); doz değil.'
             mudahale_turu, mudahale_en, outcome, measure = MUDAHALE_ILAC, row['degisken'], OUTCOME_KULLANIM, 'kullanım oranı'
@@ -428,7 +793,7 @@ def sql_preview(record, table, row, document_id=None):
         out.append(dict(base, sonuc_olcutu_tr=measure, unit=row['unit'], hasta_grubu=group['grup'], hasta_sayisi=None,
                         comparator=group['comparator'], mudahale_en=mudahale_en, mudahale_turu=mudahale_turu,
                         etki_turu=ETKI_N_PCT if group['deger_bicimi'] == 'n (%)' else ETKI_OTHER,
-                        deger=group['deger'], ci95=None, p=group['p'], outcome_type=outcome,
+                        deger=group['deger'], ci95=None, p=group['p'] or None, outcome_type=outcome,
                         taslak_notu=json.dumps(note, ensure_ascii=False)))
     return out
 
@@ -452,31 +817,38 @@ def transfer_record(record, preview_row, row=None):
 
 def enrich(records, pages, document_id=None):
     tables = parse_tables(pages)
-    enriched, preview, transfer, by_row = [], [], [], {}
+    enriched, preview, transfer, by_row, skipped = [], [], [], {}, []
     for record in records:
         if record.get('kanit_turu') != 'tablo':
             continue
-        status, table, row = match_record(record, tables)
+        status, table, rows_or_candidates = match_rows(record, tables)
         item = dict(record, eslesme=status)
         if status == 'eslesti':
-            item['tablo'] = table_info(table, row)
-            by_row.setdefault((table['tablo_no'], row['satir_no']), []).append(record.get('v2_sira'))
-            rows = sql_preview(record, table, row, document_id)
-            preview.extend(rows)
-            transfer.extend(transfer_record(record, p, row) for p in rows)
-            if not row['ad'] or row['ad'] not in (record.get('kanit_cumle') or ''):
-                table['sorunlar'].append({'tur': 'temiz_ad_kanitta_yok', 'satir_no': row['satir_no'], 'ad': row['ad'],
-                                          'aciklama': 'Temiz satır adı kanit_cumle içinde birebir yok; '
-                                                      'klinik_bilgi_en kayıttaki değerle bırakıldı'})
+            matched = rows_or_candidates
+            item['tablo'] = table_info(table, matched[0])
+            if len(matched) > 1:  # <br> ile alt satırlara bölünmüş PDF satırı
+                item['alt_satirlar'] = [table_info(table, r) for r in matched[1:]]
+            for row in matched:
+                by_row.setdefault((table['tablo_no'], row['satir_no']), []).append(record.get('v2_sira'))
+                rows = sql_preview(record, table, row, document_id, skipped)
+                preview.extend(rows)
+                transfer.extend(transfer_record(record, p, row) for p in rows)
+                if not row['ad'] or row['ad'] not in (record.get('kanit_cumle') or ''):
+                    table['sorunlar'].append({'tur': 'temiz_ad_kanitta_yok', 'satir_no': row['satir_no'], 'ad': row['ad'],
+                                              'aciklama': 'Temiz satır adı kanit_cumle içinde birebir yok; '
+                                                          'klinik_bilgi_en kayıttaki değerle bırakıldı'})
         elif status == 'belirsiz':
-            item['adaylar'] = row
+            item['adaylar'] = rows_or_candidates
+        elif status == 'elle_inceleme':
+            item['tablo_no'] = table['tablo_no']
         enriched.append(item)
     missing = [{'tablo_no': t['tablo_no'], 'sayfa': t['sayfa'], 'satir_no': r['satir_no'], 'alt_bolum': r['alt_bolum'],
                 'degisken': r['degisken'], 'ham': r['ham']}
                for t in tables for r in t['satirlar'] if (t['tablo_no'], r['satir_no']) not in by_row]
     duplicates = {f'Table {k[0]} satır {k[1]}': v for k, v in by_row.items() if len(v) > 1}
     return {'tablolar': tables, 'kayitlar': enriched, 'sql_onizleme': preview, 'aktarim': transfer,
-            'pilot_kaydinda_yok': missing, 'ayni_satira_birden_fazla_kayit': duplicates}
+            'pilot_kaydinda_yok': missing, 'ayni_satira_birden_fazla_kayit': duplicates,
+            'atlanan_kayitlar': skipped}
 
 
 def mudahale_pending(preview):
@@ -505,6 +877,11 @@ def summarize(result, source):
         'tablo_veri_satiri': sum(len(t['satirlar']) for t in result['tablolar']),
         'tablo_kaydi': len(records),
         'eslesen': count('eslesti'), 'eslesmeyen': count('eslesmedi'), 'belirsiz': count('belirsiz'),
+        'elle_inceleme': count('elle_inceleme'),
+        'elle_inceleme_tablolari': [t['tablo_no'] for t in result['tablolar'] if 'elle_inceleme_satirlari' in t],
+        'atlanan_satirlar': [dict(s, tablo_no=t['tablo_no']) for t in result['tablolar']
+                             for s in t.get('atlanan_satirlar', [])],
+        'atlanan_kayitlar': list(result.get('atlanan_kayitlar', [])),
         'eslesmeyen_kayitlar': [r.get('v2_sira') for r in records if r['eslesme'] != 'eslesti'],
         'pilot_kaydinda_yok': len(result['pilot_kaydinda_yok']),
         'ayni_satira_birden_fazla_kayit': len(result['ayni_satira_birden_fazla_kayit']),
@@ -530,6 +907,9 @@ def report_markdown(summary, result):
         f'| Eşleşen | {s["eslesen"]} |',
         f'| Eşleşmeyen | {s["eslesmeyen"]} |',
         f'| Belirsiz | {s["belirsiz"]} |',
+        f'| Elle inceleme gereken tablodaki kayıt (kayıt üretilmedi) | {s["elle_inceleme"]} |',
+        f'| Atlanan tablo satırı (dipnot / biçim satırı / sütun etiketi / boş ad) | {len(s["atlanan_satirlar"])} |',
+        f'| Üretilmeyen kayıt (boş değer) | {len(s["atlanan_kayitlar"])} |',
         f'| Pilot kaydında olmayan tablo satırı | {s["pilot_kaydinda_yok"]} |',
         f'| Aynı satıra birden fazla kayıt | {s["ayni_satira_birden_fazla_kayit"]} |',
         f'| SQL önizleme satırı | {s["sql_onizleme_satiri"]} |',
@@ -545,6 +925,16 @@ def report_markdown(summary, result):
     lines += ['', '## Eşleşmeyen / belirsiz kayıtlar', '']
     lines += [f'- v2_sira {r.get("v2_sira")} ({r["eslesme"]}): `{r.get("kanit_cumle")}`'
               for r in result['kayitlar'] if r['eslesme'] != 'eslesti'] or ['- Yok']
+    if s['elle_inceleme_tablolari']:
+        lines += ['', '## Elle inceleme gereken tablolar (otomatik ayrıştırılmadı, kayıt üretilmedi)', '']
+        lines += [f'- Table {t["tablo_no"]} (s.{t["sayfa"]}): '
+                  + '; '.join(next(i['parca'] for i in t['sorunlar'] if i['tur'] == 'elle_inceleme_gerekli'))
+                  for t in result['tablolar'] if 'elle_inceleme_satirlari' in t]
+    if s['atlanan_satirlar'] or s['atlanan_kayitlar']:
+        lines += ['', '## Atlanan satırlar ve üretilmeyen kayıtlar', '']
+        lines += [f'- Table {a["tablo_no"]} `{a["tur"]}`: `{a.get("ham", "")}`' for a in s['atlanan_satirlar']]
+        lines += [f'- Table {a["tablo_no"]} satır {a["satir_no"]} ({a["degisken"]}) `{a["tur"]}`: sütun `{a["sutun"]}`'
+                  for a in s['atlanan_kayitlar']]
     lines += ['', '## Pilot kaydında olmayan tablo satırları', '']
     lines += [f'- Table {m["tablo_no"]} satır {m["satir_no"]} ({m["alt_bolum"] or "bölüm yok"}): {m["degisken"]} — `{m["ham"]}`'
               for m in result['pilot_kaydinda_yok']] or ['- Yok']
@@ -586,38 +976,85 @@ def report_markdown(summary, result):
     return '\n'.join(lines) + '\n'
 
 
-def run(pdf, findings=None):
-    from src.pilot_clinical import pdf_pages
-    doc, pages = pdf_pages(pdf)
+def run(pdf, findings, doc=None, pages=None):
+    """Findings zorunlu; findings ile PDF aynı belge olmalı (check_findings_document)."""
+    if doc is None or pages is None:
+        from src.pilot_clinical import pdf_pages
+        doc, pages = pdf_pages(pdf)
     records, source = load_records(findings)
+    check = check_findings_document(records, declared_document_ids(findings), doc, pages)
     result = enrich(records, pages, doc.get('document_id'))
     summary = summarize(result, source)
+    summary['belge_kontrolu'] = check
     return dict({'surum': VERSION, 'pdf': doc.get('filename'), 'document_id': doc.get('document_id'),
                  'rapor': summary}, **result)
+
+
+def output_paths(output):
+    output = Path(output)
+    report = output.with_name(output.stem.replace('_zengin', '') + '_raporu.md')
+    transfer = output.with_name(output.stem.replace('_zengin', '') + '_aktarim.json')
+    return output, report, transfer
+
+
+def default_output(doc):
+    """Bu belgenin varsayılan çıktısı. Var olan pilot çıktısı (pilot_tablo_zengin.json) yalnız aynı belgeye aittse
+    kullanılır; başka belge kendi adını alır (pilot_tablo_<pdf adı>_zengin.json), pilot çıktısının üzerine yazılmaz."""
+    if DEFAULT_OUTPUT.exists() and _output_document(DEFAULT_OUTPUT) == doc.get('document_id'):
+        return DEFAULT_OUTPUT
+    stem = re.sub(r'[^A-Za-z0-9]+', '_', Path(doc.get('filename') or 'belge').stem).strip('_')[:60] or 'belge'
+    return PILOT_DIR / f'pilot_tablo_{stem}_zengin.json'
+
+
+def _output_document(path):
+    try:
+        return json.loads(Path(path).read_text(encoding='utf-8')).get('document_id')
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def check_outputs(paths, doc, overwrite):
+    """Var olan çıktı: --overwrite yoksa hata; --overwrite varsa yalnız AYNI belgenin çıktısının üzerine yazılır
+    (zengin JSON'daki document_id). Başka belgenin ya da belgesi doğrulanamayan çıktının üzerine yazılmaz."""
+    output = paths[0]
+    existing = [p for p in paths if p.exists()]
+    if not existing:
+        return
+    if not overwrite:
+        raise FileExistsError(f'Mevcut çıktı var (--overwrite ile yazılır): {" / ".join(map(str, existing))}')
+    owner = _output_document(output) if output.exists() else None
+    if owner != doc.get('document_id'):
+        raise FileExistsError(f'{output} başka bir belgenin çıktısı (document_id {owner}) ya da belgesi doğrulanamadı; '
+                              f'--overwrite ile bile üzerine yazılmaz. Başka bir --output verin.')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Pilot tablo kayıtlarını başlıklarla eşle (deterministik, SQL yazmaz)')
     parser.add_argument('--pdf', required=True)
-    parser.add_argument('--findings', help='Varsayılan: pilot_findings_v3_2.json, yoksa pilot_findings_v2.json, yoksa '
-                             '02_zehra_klinik_incelemesi.csv')
-    parser.add_argument('--output', default=str(DEFAULT_OUTPUT))
-    parser.add_argument('--overwrite', action='store_true', help='Mevcut çıktıların üzerine yaz')
+    parser.add_argument('--findings', required=True,
+                        help='Bu PDF\'in bulgu kayıtları (pilot_auto_extract çıktısı, JSON/CSV); varsayılan yok')
+    parser.add_argument('--output', help='Varsayılan: pilot_tablo_<pdf adı>_zengin.json (pilot belgesinde '
+                                         'mevcut pilot_tablo_zengin.json)')
+    parser.add_argument('--overwrite', action='store_true', help='Aynı belgenin mevcut çıktılarının üzerine yaz')
     args = parser.parse_args()
-    output = Path(args.output)
-    report = output.with_name(output.stem.replace('_zengin', '') + '_raporu.md')
-    transfer = output.with_name(output.stem.replace('_zengin', '') + '_aktarim.json')
-    if not args.overwrite and (output.exists() or report.exists() or transfer.exists()):
-        raise FileExistsError(f'Mevcut çıktı var (--overwrite ile yazılır): {output} / {report} / {transfer}')
-    result = run(args.pdf, args.findings)
+    from src.pilot_clinical import pdf_pages
+    doc, pages = pdf_pages(args.pdf)
+    paths = output_paths(args.output or default_output(doc))
+    check_outputs(paths, doc, args.overwrite)
+    try:
+        result = run(args.pdf, args.findings, doc, pages)
+    except FindingsError as exc:
+        raise SystemExit(f'Hata: {exc}')
+    output, report, transfer = paths
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     report.write_text(report_markdown(result['rapor'], result), encoding='utf-8')
     transfer.write_text(json.dumps(result['aktarim'], ensure_ascii=False, indent=2), encoding='utf-8')
     s = result['rapor']
-    print(f"Girdi: {s['girdi']} | Tablo: {s['tablo_sayisi']} ({s['tablo_veri_satiri']} satır) | "
-          f"Tablo kaydı: {s['tablo_kaydi']} | Eşleşen: {s['eslesen']} | Eşleşmeyen: {s['eslesmeyen']} | "
-          f"Belirsiz: {s['belirsiz']} | Pilot kaydında yok: {s['pilot_kaydinda_yok']} | "
-          f"SQL önizleme: {s['sql_onizleme_satiri']} satır | Aktarım kaydı: {s['aktarim_kaydi']}")
+    print(f"Girdi: {s['girdi']} (belge kontrolü: {s['belge_kontrolu']}) | Tablo: {s['tablo_sayisi']} "
+          f"({s['tablo_veri_satiri']} satır) | Tablo kaydı: {s['tablo_kaydi']} | Eşleşen: {s['eslesen']} | "
+          f"Eşleşmeyen: {s['eslesmeyen']} | Belirsiz: {s['belirsiz']} | Elle inceleme: {s['elle_inceleme']} | "
+          f"Pilot kaydında yok: {s['pilot_kaydinda_yok']} | SQL önizleme: {s['sql_onizleme_satiri']} satır | "
+          f"Aktarım kaydı: {s['aktarim_kaydi']}")
     print(f'Çıktı: {output} | Rapor: {report} | Aktarım: {transfer} | SQL değişmedi')
 
 
