@@ -9,6 +9,8 @@ A) Veritabanı gerektirmeyenler: normalizasyon, her kontrol için pozitif/negati
    Pilot satır kontrolleri (check_pilot_row) ve --pilot sürüm ayrımı da burada.
    Troponin tabloları (sentetik kayıtlar, bellekte): Total sütunu, p sütunu etkisi ve tanısal performans
    kayıtlarında iki grup varsayan kontroller yanlış alarm vermez; gerçek tutarsızlık yine yakalanır.
+   Grup içi test satırları (karsilastirma_turu = 'grup_ici' ya da notsuz, PDF satırından tanınan) grup çifti
+   kontrollerine ve _group_pairs'e girmez; karşı grubu comparator yazmak yine tablo_cift_tutarsiz.
 B) MySQL gerektirenler: kalite tabloları yoksa transaction DIŞINDA kurulur (DDL
    örtük commit yapar). Sahte klinik_bulgular satırları tek transaction'da eklenir,
    işaretler aynı bağlantıda yazılır, sonra ROLLBACK. JSONL ve --referans modları
@@ -430,6 +432,46 @@ def test_troponin_tables():
           (True, True),
           (any(f["kontrol_kodu"] == "tablo_cift_tutarsiz" and "çiftte p değerleri farklı" in f["aciklama"] for f in bad),
            any(f["kontrol_kodu"] == "tablo_cift_tutarsiz" and "deger '99.9%'" in f["aciklama"] for f in bad)))
+    # Grup içi test satırları (P value for intra groups, Pairwise A-B / A-C / B-C): gruplar arası çift değil.
+    def within(r):
+        return (json.loads(r["taslak_notu"]) or {}).get("karsilastirma_turu") == "grup_ici"
+
+    inner = [r for r in rows if within(r)]
+    check("troponin grup içi: 12 kayıt (4 satır x Total + 2 grup), comparator yok, çift işareti yok",
+          (12, {None}, []),
+          (len(inner), {r.get("comparator") for r in inner},
+           [f["kontrol_kodu"] for f in flags if f["satir_hash"] in {r["satir_hash"] for r in inner}
+            and f["kontrol_kodu"] in ("tablo_cift_eksik", "tablo_cift_tutarsiz")]))
+    # İnsan doğrulamasındaki biçim: comparator boş ama taslak_notu'da karsilastirma_turu yok -> PDF satırından
+    # grup içi tanınır, yine çift işareti yok.
+    def strip_note(r):
+        note = json.loads(r["taslak_notu"])
+        note.pop("karsilastirma_turu", None)
+        note.pop("grup_ici_nedeni", None)
+        return dict(r, taslak_notu=json.dumps(note, ensure_ascii=False))
+
+    plain = [strip_note(r) if within(r) else r for r in rows]
+    plain_flags, _ = run_pilot_checks(plain, sources)
+    check("troponin grup içi: karsilastirma_turu notu olmadan da (PDF satırından) çift işareti yok", [],
+          [f["aciklama"][:80] for f in plain_flags if f["kontrol_kodu"] in ("tablo_cift_eksik", "tablo_cift_tutarsiz")])
+    # Negatif: eski çıktıdaki gibi grup içi satıra karşı grubu comparator yazmak hâlâ hata (PDF'e göre comparator yok).
+    inner_hashes = {r["satir_hash"] for r in inner}
+    old = [dict(r, comparator="ACS Present" if r.get("hasta_grubu") == "ACS Absent" else "ACS Absent")
+           if r["satir_hash"] in inner_hashes and r.get("hasta_grubu") in ("ACS Absent", "ACS Present") else r
+           for r in plain]
+    old_flags, _ = run_pilot_checks(old, sources)
+    wrong = [f for f in old_flags if f["kontrol_kodu"] == "tablo_cift_tutarsiz"]
+    check("troponin grup içi negatif: karşı grup comparator olarak yazılırsa tablo_cift_tutarsiz [hata] (8 kayıt, "
+          "\"comparator ≠ PDF 'None'\"; karşılıklılık hatası yok)", (8, True, False),
+          (len(wrong), all("≠ PDF 'None'" in f["aciklama"] for f in wrong),
+           any("karşılıklı değil" in f["aciklama"] for f in wrong)))
+    # _group_pairs: grup içi kayıtlar comparator'ları karşılıklı olsa bile istatistik çiftine girmez.
+    from src.data_quality import _group_pairs
+    untagged = [dict(r, p="<0.001") for r in old if r["satir_hash"] in inner_hashes]
+    tagged = [dict(r, taslak_notu=json.dumps(dict(json.loads(r["taslak_notu"]), karsilastirma_turu="grup_ici"),
+                                             ensure_ascii=False)) for r in untagged]
+    check("troponin grup içi: karsilastirma_turu = grup_ici kayıtlar _group_pairs'e girmez (etiketsiz 4 çift olurdu)",
+          (4, 0), (len(list(_group_pairs(untagged))), len(list(_group_pairs(tagged)))))
 
 
 def test_collisions(tmp):

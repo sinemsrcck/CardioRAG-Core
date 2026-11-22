@@ -26,6 +26,11 @@ Kontroller:
   Ekip kararları: Total sütunu (sutun_rolu=toplam, comparator / p yok, n başlıktan), p sütunundaki OR'ler etki
   kaydı, tekrar eden ad ("Non risc") bölümüyle, Table II tanısal performans (test x ölçü, P -> AUC, ikili AUC
   karşılaştırması), "(SE.)" birim değil. Bilinen: validate_records'un tekrar anahtarında mudahale_en yok (3 kayıt).
+  Grup içi test satırları (P value for intra groups, Pairwise A-B / A-C / B-C; dipnot Friedman / Dunn): comparator /
+  p yok, karsilastirma_turu = 'grup_ici'; comparator'lar insan doğrulamasıyla (zehra_troponin_tablo_dogrulanmis.json,
+  varsa, yalnız okunur) aynı.
+- Grup içi kuralı (sentetik): ad ve dipnot işareti yolları; Mann-Whitney işareti, p değeri olmayan "Pairwise" ve
+  p sütunu dolu "Post hoc" satırı grup içi sayılmaz; gruplar arası satırlar değişmez.
 - Girdi: findings zorunlu; başka belgenin findings'i (içerik ya da document_id) reddedilir; başka belgenin
   çıktısının üzerine --overwrite ile bile yazılmaz.
 - Temiz satır adı (row_name): istatistik etiketi (n (%), mean ± SD, median (IQR) …) atılır, klinik birim
@@ -82,6 +87,8 @@ def note(row):
 
 V33 = Path('data/review/pilot/zehra_dogrulanmis_v3_3.json')
 TROPONIN_PDF = Path('data/pdfs/who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf')
+# İnsan doğrulaması (yalnız okunur): grup içi satırlarda comparator boşaltılmış hali.
+VERIFIED_TROPONIN = Path('data/review/troponin/zehra_troponin_tablo_dogrulanmis.json')
 # main'deki (genel tablo kurallarından önceki) kodun pilot çıktısının parmak izleri. Pilot çıktısı değişirse
 # bilerek güncellenir; bu değişiklik pilot kayıtlarını (ve satir_hash'leri) değiştirmemeli.
 PILOT_FINGERPRINTS = {
@@ -291,6 +298,51 @@ def check_synthetic_decisions():
           ('tanisal_performans', 8, 2, True, True),
           (t5.get('tablo_turu'), len(rows5), len(p_rows), all('p_baglanamadi' in n for n in p_rows),
            any(s['tur'] == 'p_satiri_baglanamadi' for s in t5['sorunlar'])))
+    check_synthetic_within_group()
+
+
+SYNTHETIC_WITHIN = """**Table 6: Within-group changes.**
+
+|**Variable**|**Total (n=40)**|**Group A (n=20)**|**Group B (n=20)**|**p**|
+|---|---|---|---|---|
+|Weight|70 (60-80)|68 (58-78)|72 (62-82)|0.300<br>u|
+|Within-group p|<0.001|0.010|0.200||
+|Change 0-6 mo<br>w|0.004|0.020|0.150||
+|Change 0-12 mo<br>u|0.004|0.020|0.150||
+|Pairwise score|12 (40.0)|5 (25.0)|7 (35.0)|0.410|
+|Post hoc p|0.010|0.020|0.030|0.040|
+|_w Wilcoxon signed-rank test, u Mann-Whitney U test_|||||
+"""
+
+
+def check_synthetic_within_group():
+    """Grup içi test satırı genel kuralı (makaleye özel değil). Yapı şartı: grup hücreleri (Total dahil) p değeri ve
+    satırın p sütunu boş; ayrıca satır adı grup içi diyor ya da test işaretinin dipnot anlamı grup içi test."""
+    pages = {10: SYNTHETIC_WITHIN}
+    table = pt.parse_tables(pages)[0]
+    reasons = {r['degisken']: pt.within_group_reason(table, r) for r in table['satirlar']}
+    check('sentetik grup içi: ad ("Within-group") ve dipnot işareti (w Wilcoxon signed-rank) tanınıyor; Mann-Whitney '
+          'işareti, p değeri olmayan "Pairwise" ve p sütunu dolu "Post hoc" satırı tanınmıyor',
+          {'Weight': False, 'Within-group p': True, 'Change 0-6 mo': True, 'Change 0-12 mo': False,
+           'Pairwise score': False, 'Post hoc p': False},
+          {name: reason is not None for name, reason in reasons.items()})
+    check('sentetik grup içi: gerekçe ad / işaret yolunu söylüyor', (True, True),
+          ("'Within-group'" in (reasons['Within-group p'] or ''), "işareti 'w'" in (reasons['Change 0-6 mo'] or '')))
+    records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': 10, 'kanit_cumle': r['ham'], 'bilgi_turu': 'olcum',
+                'baglam': 'study_finding', 'klinik_bilgi_en': r['ham']} for i, r in enumerate(table['satirlar'], 1)]
+    rows = pt.enrich(records, pages)['aktarim']
+
+    def summary(name):
+        return [(r['hasta_grubu'], r.get('comparator'), r.get('p'), json.loads(r['taslak_notu']).get('karsilastirma_turu'),
+                 json.loads(r['taslak_notu']).get('p_sutun'))
+                for r in rows if json.loads(r['taslak_notu'])['degisken'] == name]
+
+    check('sentetik grup içi: "Within-group p" kayıtlarında comparator / p / p_sutun yok, karsilastirma_turu grup_ici',
+          [('Total', None, None, 'grup_ici', None), ('Group A', None, None, 'grup_ici', None),
+           ('Group B', None, None, 'grup_ici', None)], summary('Within-group p'))
+    check('sentetik grup içi: gruplar arası satırlar değişmedi (comparator karşılıklı, p sütunu, karsilastirma_turu yok)',
+          [('Total', None, None, None, None), ('Group A', 'Group B', '0.040', None, 'p'),
+           ('Group B', 'Group A', '0.040', None, 'p')], summary('Post hoc p'))
 
 
 def check_troponin():
@@ -341,10 +393,34 @@ def check_troponin():
           (19, {('Total', None, None, 114)}),
           (len(total), {(r['hasta_grubu'], r.get('comparator'), r.get('p'), json.loads(r['taslak_notu'])['grup_n'])
                         for r in total}))
-    check('troponin Table I: comparator yalnız gerçek gruplar arasında (ACS Absent <-> ACS Present)',
+    check('troponin Table I: comparator yalnız gerçek gruplar arasında (ACS Absent <-> ACS Present; grup içi hariç)',
           {('ACS Absent', 'ACS Present'), ('ACS Present', 'ACS Absent')},
           {(r['hasta_grubu'], r.get('comparator')) for r, n in zip(t1, notes1)
-           if r.get('hasta_grubu') and n.get('sutun_rolu') != 'toplam'})
+           if r.get('hasta_grubu') and n.get('sutun_rolu') != 'toplam' and n.get('karsilastirma_turu') != 'grup_ici'})
+    # Grup içi test satırları (dipnot: f Friedman; Post Hoc Dunn): her sütun kendi grubunun zaman noktalarını
+    # karşılaştırır; gruplar arası değil -> comparator / p sütunu yok, karsilastirma_turu = 'grup_ici'.
+    within = [(r['klinik_bilgi_en'], r['hasta_grubu'], r.get('comparator'), r.get('p'), n.get('comparator_sutun'),
+               n.get('comparator_n'), n.get('p_sutun')) for r, n in zip(t1, notes1) if n.get('karsilastirma_turu') == 'grup_ici']
+    check('troponin Table I: grup içi satırlar (P value for intra groups, Pairwise A-B / A-C / B-C) -> 12 kayıt, '
+          'comparator / p / p_sutun yok',
+          (12, ['P value for intra groups', 'A-B', 'A-C', 'B-C'], {(None, None, None, None, None)}),
+          (len(within), list(dict.fromkeys(w[0] for w in within)), {w[2:] for w in within}))
+    check('troponin Table I: grup içi kural yalnız bu 4 satırda; gerekçe satır adından',
+          [16, 17, 18, 19], [r['satir_no'] for r in tables[0]['satirlar'] if pt.within_group_reason(tables[0], r)])
+    check('troponin Table I: "P value for intra groups" işareti f -> dipnotta Friedman (işaret yolu da grup içi)',
+          True, bool(pt.WITHIN_GROUP_TEST.search(pt.footnote_mark_meaning(tables[0], 'f') or '')))
+    check('troponin Table I: Mann-Whitney işareti (u) grup içi test sayılmıyor', False,
+          bool(pt.WITHIN_GROUP_TEST.search(pt.footnote_mark_meaning(tables[0], 'u') or '')))
+    if VERIFIED_TROPONIN.exists():
+        verified = json.loads(VERIFIED_TROPONIN.read_text(encoding='utf-8'))
+        def unit(r):
+            n = json.loads(r['taslak_notu'])
+            return n['tablo_no'], n['satir_no'], n.get('sutun'), r.get('etki_turu'), r['kanit_cumle']
+
+        human = {unit(r): r.get('comparator') for r in verified}
+        check('troponin: comparator\'lar insan doğrulamasıyla aynı (zehra_troponin_tablo_dogrulanmis.json, 84 kayıt)',
+              (84, []), (len(human), [(unit(r)[:3], r.get('comparator'), human.get(unit(r), 'yok'))
+                                      for r in result['aktarim'] if human.get(unit(r), 'yok') != r.get('comparator')][:5]))
     check('troponin Table I: Total Age biçimi başlıktan (Median (Q1-Q3); ara satırdaki "n (%)" değerle uymuyor)',
           'Median (Q1-Q3)', json.loads(total[0]['taslak_notu']).get('bicim_etiketi'))
     # Madde 8: p sütunundaki "7.8 (2.4-25.1)<br>or" -> OR etki kaydı; p sütununun asıl p'leri değişmez.
