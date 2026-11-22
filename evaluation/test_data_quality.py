@@ -11,6 +11,8 @@ A) Veritabanı gerektirmeyenler: normalizasyon, her kontrol için pozitif/negati
    kayıtlarında iki grup varsayan kontroller yanlış alarm vermez; gerçek tutarsızlık yine yakalanır.
    Grup içi test satırları (karsilastirma_turu = 'grup_ici' ya da notsuz, PDF satırından tanınan) grup çifti
    kontrollerine ve _group_pairs'e girmez; karşı grubu comparator yazmak yine tablo_cift_tutarsiz.
+   Ön deneme (Eozinofil, sentetik): <br> alt satırları, tablo içi başlık + birleşik sütunlar ve ortalama±SS (min–maks)
+   kayıtları hata / çift işareti vermez, eksiksizlik 16/16; değer karışırsa tablo_cift_tutarsiz.
 B) MySQL gerektirenler: kalite tabloları yoksa transaction DIŞINDA kurulur (DDL
    örtük commit yapar). Sahte klinik_bulgular satırları tek transaction'da eklenir,
    işaretler aynı bağlantıda yazılır, sonra ROLLBACK. JSONL ve --referans modları
@@ -472,6 +474,47 @@ def test_troponin_tables():
                                              ensure_ascii=False)) for r in untagged]
     check("troponin grup içi: karsilastirma_turu = grup_ici kayıtlar _group_pairs'e girmez (etiketsiz 4 çift olurdu)",
           (4, 0), (len(list(_group_pairs(untagged))), len(list(_group_pairs(tagged)))))
+
+
+EOZINOFIL_PDF = Path("data/pdfs/TK-cardiovascular37-2-1.pdf")
+
+
+def test_on_deneme_tables():
+    """Ön deneme düzeltmeleri (Eozinofil, sentetik kayıtlar, bellekte): bölüm adsız <br> alt satırları (T2 Male /
+    Female), tablo içindeki başlık + birleşik sütunlar (T3 B / OR / p) ve ortalama±SS (min–maks) (T1) kayıtları
+    grup / analiz kontrollerinde yanlış alarm vermez; tablo eksiksizliği tam."""
+    import src.pilot_tablo as pt
+    from src.data_quality import run_pilot_checks
+    from src.pilot_clinical import pdf_pages
+
+    if not EOZINOFIL_PDF.exists():
+        check("ön deneme: Eozinofil PDF var (yoksa bu bölüm sınanmaz)", True, False)
+        return
+    doc, pages = pdf_pages(EOZINOFIL_PDF)
+    tables = pt.parse_tables(pages)
+    hams = list(dict.fromkeys((t["sayfa"], r["ham"]) for t in tables for r in t["satirlar"]))
+    records = [{"v2_sira": i, "kanit_turu": "tablo", "sayfa": s, "kanit_cumle": h, "bilgi_turu": "olcum",
+                "baglam": "study_finding", "klinik_bilgi_en": h} for i, (s, h) in enumerate(hams, 1)]
+    transfer = pt.enrich(records, pages, doc["document_id"])["aktarim"]
+    rows = [make_row(**{k: r.get(k) for k in ("bilgi_turu", "baglam", "klinik_bilgi_en", "kanit_cumle", "kanit_turu",
+                                             *pt.STRUCTURED_FIELDS)},
+                     document_id=doc["document_id"], kanit_sayfa=r["sayfa"], chunk_id=None, makale_id=None, v=i)
+            for i, r in enumerate(transfer)]
+    sources = {doc["document_id"]: {"dosya": doc["filename"], "pages": pages, "tables": tables}}
+    flags, report = run_pilot_checks(rows, sources)
+    flags += run_checks(rows, pilot=True)
+    got = Counter(f"{f['kontrol_kodu']} [{f['seviye']}]" for f in flags)
+    check("ön deneme Eozinofil: 42 kayıt; hata yok, grup / analiz çifti işareti yok",
+          (42, [], []), (len(rows), [k for k in got if k.endswith("[hata]")], [k for k in got if k.startswith("tablo_cift")]))
+    item = report["eksiksizlik"][0]
+    check("ön deneme Eozinofil: eksiksizlik 16/16 (T1 11, T2 2, T3 3), eksik grup / analiz yok", (16, 16, 0),
+          (item["pdf_tablo_satiri"], item["temsil_edilen"], len(report["eksik_grup_analiz"])))
+    # Negatif: Male / Female değerleri karışırsa (eski okuma) tablo_cift_tutarsiz yakalar.
+    swapped = [dict(r, deger="152 37") if r["klinik_bilgi_en"] == "Male" and r.get("hasta_grubu") == "Total" else r
+               for r in rows]
+    bad, _ = run_pilot_checks(swapped, sources)
+    check("ön deneme Eozinofil negatif: Male Total değeri PDF'ten farklı -> tablo_cift_tutarsiz [hata]", True,
+          any(f["kontrol_kodu"] == "tablo_cift_tutarsiz" and "deger '152 37'" in f["aciklama"] for f in bad))
 
 
 def test_collisions(tmp):
@@ -990,6 +1033,7 @@ def main():
     test_determinism_and_version()
     test_pilot_unit()
     test_troponin_tables()
+    test_on_deneme_tables()
     with tempfile.TemporaryDirectory() as tmp:
         test_collisions(tmp)
     with tempfile.TemporaryDirectory() as tmp:

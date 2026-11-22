@@ -61,6 +61,24 @@ Ekip kararları (Troponin tablo denemesi; Zehra + Sinem). Hepsi genel kural; pil
   ayrı kayıt + 'p_satiri_baglanamadi' sorunu. "P (A-B)=0.291" satırı karşılaştırma kaydı (mudahale_en A testi,
   comparator B testi, p).
 - "Odds Ratio (SE.)": "(SE.)" istatistik etiketi, birim değil (STAT_LABEL).
+- Ön deneme okuma kuralları (4 makale; hepsi genel kural, pilot ve Troponin çıktısı değişmez):
+  - Literatür / özet tablosu (literature_reasons): en az iki değer sütunu başlığı ya da satır adlarının yarısı atıf
+    görünümünde ("et al", yıl, [12]) ya da ilk sütun "Study / Source / Reference / Author / Trial" ve başlık başka
+    çalışmaları özetliyor ("selected studies", "trials of", "meta-analysis" …): 'literatur_tablosu' + elle inceleme,
+    kayıt yok. Veri satırları arasındaki kalın başlık satırı da (ikinci başlık seviyesi) elle incelemeye gönderir.
+  - Bölüm adı olmadan <br> alt satırları ("Male<br>Female" + her grup hücresinde aynı sayıda parça): ayrı satırlar;
+    ortak tek hücre (p) hepsine gelir.
+  - Tablo çerçevesinin içindeki başlık (_caption_in_header: ilk satırın hücreleri boşluksuz birleşince "TABLE n:");
+    sütun başlıkları sonraki kalın satırdan.
+  - Birleşik sütunlar (_merged_column_splits): başlık hücresi k kalın parça ve o sütundaki her dolu hücre k sayısal
+    parça ("B<br>Exp (B) (OR)<br>p value" / "7.912<br>2,735.621<br>0.002") -> k sütun; ham satır değişmez.
+    "Exp (B) (OR)" gibi kısaltmalı başlık etki sütunu (EFFECT_ABBR); "B" katsayı sütunu (COEFFICIENT_HEADER):
+    değeri analiz kaydının taslak_notu.regresyon_katsayisi alanında (sunumda gösterimi ekip kararı bekliyor).
+  - Binlik ayraçlı sayılar (NUM: "2,735.621", "1,225"); ondalık virgül ("0,5") binlik sayılmaz.
+  - "ortalama±SS (min–maks)" değeri ("71.43±7.67 (56-90)") ve başlık biçimi "(X±SD) (minimum-maximum)".
+  - Ayraçsız kalın başlık ("**Table 1 Characteristics …**"; CAPTION_BOLD). Devam sayfası (_mark_continuations):
+    "Table n. Cont." ya da başlıksız, aynı sütun başlıklı, bir sonraki sayfadaki tablo -> önceki tablonun numarası,
+    satır numaraları devam eder (tablo + satır anahtarı çakışmaz), kanıt sayfası kendi sayfası.
 - Grup içi test satırı (within_group_reason; ör. "P value for intra groups", "Pairwise comparison A-B"): grup
   sütunlarındaki (Total dahil) bütün dolu hücreler p değeri ve satırın p sütunu boş; ayrıca satır adı / bölüm grup
   içi diyor (WITHIN_GROUP_NAME) ya da satırın test işaretinin dipnot anlamı grup içi / tekrarlı ölçüm testi
@@ -104,6 +122,12 @@ OUTCOME_KULLANIM = 'uygulama oranı'
 OUTCOME_POPULASYON = 'çalışma popülasyonu'
 EFFECT_TYPES = (('odds ratio', 'OR'), ('hazard ratio', 'HR'), ('relative risk', 'RR'),
                 ('risk ratio', 'RR'), ('incidence rate ratio', 'IRR'))
+# Başlıkta büyük harfli kısaltma ayrı bir kelime olarak: "Exp (B) (OR)", "HR (95% CI)", "OR" (büyük/küçük harf duyarlı).
+EFFECT_ABBR = re.compile(r'(?:^|[\s(/\[])(OR|HR|RR|IRR)(?=$|[\s)/\],])')
+# Regresyon katsayısı sütunu ("B", "β", "Beta", "Coefficient"): etki değil; değeri analiz kaydının
+# taslak_notu.regresyon_katsayisi alanına yazılır (sunumda gösterimi ekip kararı bekliyor).
+COEFFICIENT_HEADER = re.compile(r'^(?:b|β|beta|coefficient|regression\s+coefficient|b\s+coefficient|katsayı)$',
+                                re.IGNORECASE)
 ANALYSIS_LABELS = ('univariate', 'multivariate', 'univariable', 'multivariable', 'unadjusted', 'adjusted')
 # Ekip kararları (Troponin tablo denemesi; madde 6, 8, 12). Küme değerleri src.clinical_validation'da.
 SUTUN_TOPLAM = 'toplam'  # taslak_notu.sutun_rolu: Total sütunu veri olarak kalır, karşılaştırma grubu sayılmaz
@@ -161,11 +185,32 @@ WITHIN_GROUP_TEST = re.compile(
 SEPARATOR = re.compile(r'^\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 # Tablo başlığı: "TABLE 1:", "Table 2.", Roma rakamıyla "Table I:", "Table II." (sayıya çevrilir).
 CAPTION = re.compile(r'^[\s#>*_]*table\s*(\d+|[IVXLC]+)\s*[:.]', re.IGNORECASE)
+# Ayraçsız ama kalın başlık: "**Table 1 Characteristics of …**" (numaradan sonra boşluk ve büyük harf). Yalnız kalın
+# satırda kabul edilir; düz metindeki "Table 1 shows …" başlık sayılmaz.
+CAPTION_BOLD = re.compile(r'^[\s#>]*\*\*\s*(?i:table)\s*(\d+|[IVXLC]+)\s+(?=[A-Z])')
+# Devam sayfası başlığı: "Table 1. _Cont._", "Table 2 (continued)".
+CONTINUED = re.compile(r'(?<![a-z])cont(?:inued|\.|[\'’]d)?(?![a-z])', re.IGNORECASE)
+# Literatür / özet tablosu (başka çalışmaların sonuçları; makaleye özel değil). Atıf görünümü: "et al", yıl, [12].
+CITATION = re.compile(r'\bet\s+al\b|(?<![\d.,])(?:19|20)\d{2}[a-z]?(?![\d.,%])|\[\d+(?:\s*[,–-]\s*\d+)*\]',
+                      re.IGNORECASE)
+LIT_FIRST_COLUMN = re.compile(r'^(?:study|studies|source|sources|reference|references|author|authors|first\s+author'
+                              r'|trial|trials|kaynak|çalışma)$', re.IGNORECASE)
+LIT_CAPTION = re.compile(
+    r'\b(?:selected|included|published|previous|reviewed|eligible|individual)\s+(?:studies|trials|articles|reports)\b'
+    r'|\b(?:randomi[sz]ed\s+)?(?:controlled\s+|clinical\s+)*trials\s+(?:of|on|in|for|comparing)\b'
+    r'|\bmeta-?analys[ie]s\b|\bsystematic\s+reviews?\b|\bliterature\b', re.IGNORECASE)
 ROMAN_VALUES = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100}
 GROUP_N = re.compile(r'^(.*?)\s*\(\s*n\s*=\s*(\d+)\s*\)\s*$', re.IGNORECASE)
-MEAN_SD = re.compile(r'^-?\d+(?:\.\d+)?\s*±\s*\d+(?:\.\d+)?$')
-N_PCT = re.compile(r'^\d+\s*\(\s*\d+(?:\.\d+)?\s*\)$')
-VAL_RANGE = re.compile(r'^(-?\d+(?:\.\d+)?)\s*\(\s*(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)\s*\)$')
+# Sayı: binlik ayraçlı da olabilir ("2,735.621", "1,225"); "0,5" gibi ondalık virgül binlik sayılmaz
+# (virgülden sonra tam üç rakam ve önde en çok üç rakam gerekir).
+NUM = r'(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?'
+MEAN_SD = re.compile(rf'^-?{NUM}\s*±\s*{NUM}$')
+N_PCT = re.compile(rf'^{NUM}\s*\(\s*\d+(?:\.\d+)?\s*\)$')
+VAL_RANGE = re.compile(rf'^(-?{NUM})\s*\(\s*(-?{NUM})\s*[-–]\s*(-?{NUM})\s*\)$')
+# Ortalama ± SS (min–maks): "71.43±7.67 (56-90)" (başlıkta "(X±SD) (minimum-maximum)").
+MEAN_SD_RANGE = re.compile(rf'^-?{NUM}\s*±\s*{NUM}\s*\(\s*-?{NUM}\s*[-–]\s*-?{NUM}\s*\)$')
+# Tek başına sayı (binlik ayraçlı da): "2,735.621", "7.912".
+PLAIN_NUMBER = re.compile(rf'^-?{NUM}$')
 N_PCT_SUFFIX = re.compile(r'\s+n\s*\(%\)\s*$', re.IGNORECASE)
 UNIT_PAREN = re.compile(r'^(.*?)\s*\(([^()]+)\)\s*$')
 UNIT_TOKEN = re.compile(r'^[A-Za-zµ%]+(?:/[A-Za-zµ0-9^]+)+$')
@@ -345,6 +390,8 @@ def split_marker(cell, pattern, require=None):
 def value_format(value):
     if MEAN_SD.match(value):
         return 'ortalama±SS'
+    if MEAN_SD_RANGE.match(value):
+        return 'ortalama±SS (min–maks)'
     if N_PCT.match(value):
         return 'n (%)'
     if VAL_RANGE.match(value):
@@ -358,10 +405,26 @@ def value_format(value):
 
 def _caption(lines, start):
     for k in range(start - 1, max(-1, start - 6), -1):
-        match = CAPTION.match(lines[k])
+        match = CAPTION.match(lines[k]) or CAPTION_BOLD.match(lines[k])
         if match and table_number(match.group(1)) is not None:
             return table_number(match.group(1)), lines[k].strip()
     return None, None
+
+
+def _caption_in_header(lines, start, end):
+    """Başlık tablo çerçevesinin içinde, ilk satır olarak geldiyse ("|**TABL**|**E 3:**Multivariate …|"): hücreler
+    boşluksuz birleşince "TABLE 3:…" olur. Gerçek başlık satırı bir sonraki (kalın) satırdır. (no, başlık) ya da None."""
+    if start + 3 > end:
+        return None
+    joined = ''.join(clean(c) for c in split_cells(lines[start]))
+    match = CAPTION.match(joined)
+    if not match or table_number(match.group(1)) is None:
+        return None
+    nonempty = [c.strip() for c in split_cells(lines[start + 2]) if clean(c)]
+    if not nonempty or not all(c.startswith(('**', '__')) for c in nonempty):
+        return None
+    # Hücre sınırı kelimeyi bölmüş olabilir ("TABL" | "E 3:…"): boşluksuz birleşik metin başlık olur.
+    return table_number(match.group(1)), joined
 
 
 def _columns(headers):
@@ -387,8 +450,13 @@ def _column_roles(headers):
     for index, title in enumerate(headers):
         low = title.casefold()
         effect = next((code for key, code in EFFECT_TYPES if key in low), None)
+        if effect is None and EFFECT_ABBR.search(title):
+            effect = EFFECT_ABBR.search(title).group(1)
         if index == 0:
             roles.append({'rol': 'degisken', 'baslik': title})
+        elif COEFFICIENT_HEADER.match(title.strip()):
+            # Regresyon katsayısı (B): etki değil; sonraki etki sütununun kaydına not olarak eklenir.
+            roles.append({'rol': 'katsayi', 'baslik': title})
         elif effect:
             label = title.split(' / ')[0].strip()
             first = label.split()[0].casefold() if label else ''
@@ -438,21 +506,94 @@ def parse_tables(pages):
                 end += 1
             tables.append(_parse_table(page, lines, start, end, len(tables) + 1))
             i = end
+    _mark_continuations(tables)
     return tables
+
+
+def _mark_continuations(tables):
+    """Çok sayfalı tablonun devam sayfası (genel kural): başlığı "Table n. Cont." / "(continued)" olan ya da başlıksız,
+    önceki tabloyla aynı sütun başlıklı ve bir sonraki sayfadaki tablo. Önceki tablonun numarasını alır; satır
+    numaraları önceki parçadan devam eder (tablo + satır anahtarı çakışmaz); taslak_notu'da sayfa kendi sayfasıdır."""
+    for prev, table in zip(tables, tables[1:]):
+        issue_types = {s['tur'] for s in table['sorunlar']}
+        by_caption = bool(CONTINUED.search(table['tablo_basligi'] or '')) and table['tablo_no'] == prev['tablo_no']
+        by_header = ('tablo_basligi_yok' in issue_types and table['sayfa'] == prev['sayfa'] + 1
+                     and re.sub(r'\s+', '', table['sutun_basliklari_ham']) == re.sub(r'\s+', '', prev['sutun_basliklari_ham']))
+        if not (by_caption or by_header):
+            continue
+        offset = max([r['satir_no'] for r in prev['satirlar']] + [prev.get('son_satir_no', 0)])
+        table['tablo_no'] = prev['tablo_no']
+        if table['tablo_basligi'] is None:
+            table['tablo_basligi'] = prev['tablo_basligi']
+            table['sorunlar'] = [s for s in table['sorunlar'] if s['tur'] != 'tablo_basligi_yok']
+        for row in table['satirlar']:
+            row['satir_no'] += offset
+        table['son_satir_no'] = max([r['satir_no'] for r in table['satirlar']] + [offset])
+        table['devam_eden_tablo'] = {'tablo_no': prev['tablo_no'], 'onceki_sayfa': prev['sayfa']}
+        table['sorunlar'].append({'tur': 'tablo_devami', 'aciklama': f'Table {prev["tablo_no"]} (s.{prev["sayfa"]}) '
+                                  f'tablosunun devam sayfası ({"başlıkta Cont." if by_caption else "başlıksız, aynı sütun başlıkları"}); '
+                                  f'numarası ondan, satırlar {offset + 1}\'den devam'})
+
+
+def _merged_column_splits(header_cells, data_rows):
+    """Birden fazla değer sütunu tek hücrede <br> ile birleşmişse ({sütun indeksi: parça sayısı}): başlık hücresi k ≥ 2
+    kalın parça (hiçbiri biçim etiketi değil, ör. "B<br>Exp (B) (OR)<br>p value") ve o sütundaki her dolu veri hücresi
+    tam k parça ("7.912<br>2,735.621<br>0.002"). Çok satırlı tek başlık ("Total (n=114)<br>Median (Q1-Q3)") ya da
+    yalnız bazı satırlarda <br> olan sütun bölünmez."""
+    splits = {}
+    for index, cell in enumerate(header_cells):
+        if index == 0:
+            continue
+        parts = br_parts(cell)
+        if len(parts) < 2 or not all(p.strip().startswith(('**', '__')) for p in parts) \
+                or any(is_stat_label(clean(p)) for p in parts):
+            continue
+        values = [row[index] for row in data_rows if index < len(row) and clean(row[index])]
+        # Parçaların hepsi sayısal değer olmalı: satırı kaydırılmış metin ("Nov 2009-Apr<br>2016") bölünmez.
+        if len(values) >= 2 and all(len(br_parts(v)) == len(parts)
+                                    and all(VALUE_START.match(clean(p)) for p in br_parts(v)) for v in values):
+            splits[index] = len(parts)
+    return splits
+
+
+def _expand_cells(cells, splits):
+    """Birleşik sütun hücresini parçalarına ayırır (parça sayısı uymayan / boş hücre: ilk parça + boşlar)."""
+    out = []
+    for index, cell in enumerate(cells):
+        if index not in splits:
+            out.append(cell)
+            continue
+        parts = br_parts(cell)
+        out.extend(parts if len(parts) == splits[index] else [cell] + [''] * (splits[index] - 1))
+    return out
 
 
 def _parse_table(page, lines, start, end, ordinal):
     no, caption_raw = _caption(lines, start)
     issues = []
+    header_line = start
+    inside = _caption_in_header(lines, start, end) if no is None else None
+    if inside:
+        # Başlık tablonun ilk satırı: gerçek başlık satırı bir sonraki (ayraç satırından sonraki) satır.
+        no, caption_raw = inside
+        header_line = start + 2
+        issues.append({'tur': 'baslik_tablo_icinde', 'aciklama': 'Tablo başlığı tablo çerçevesinin içinde (ilk satır); '
+                                                                 'başlık oradan, sütun başlıkları sonraki satırdan okundu'})
     if no is None:
         issues.append({'tur': 'tablo_basligi_yok', 'aciklama': f's.{page}: tablonun üstünde "TABLE n:" başlığı bulunamadı; sıra no kullanıldı'})
     caption = clean(caption_raw) if caption_raw else None
     if caption and SPLIT_LETTER.search(caption):
         issues.append({'tur': 'baslikta_olasi_harf_kopmasi', 'parca': SPLIT_LETTER.search(caption).group(0),
                        'aciklama': 'Tablo başlığında kelimeden kopmuş tek harf; düzeltilmedi'})
-    header_raw = lines[start]
+    header_raw = lines[header_line]
+    data_start = header_line + (2 if header_line == start else 1)
+    splits = _merged_column_splits(split_cells(header_raw), [split_cells(lines[k]) for k in range(data_start, end)])
+    if splits:
+        issues.append({'tur': 'birlesik_sutun_ayrildi', 'parca': {str(k): v for k, v in splits.items()},
+                       'aciklama': 'Birden fazla sütun tek hücrede <br> ile birleşik; başlık ve bütün dolu hücreler '
+                                   'aynı sayıda parça olduğu için sütunlara ayrıldı (ham satır değişmedi)'})
     headers, stray_header = [], []
-    for cell in split_cells(header_raw):
+    for cell in _expand_cells(split_cells(header_raw), splits):
         title, stray = header_cell(cell)
         headers.append(title)
         stray_header.extend(stray)
@@ -462,9 +603,9 @@ def _parse_table(page, lines, start, end, ordinal):
     columns = _columns(headers)
     rows, sections, section, first_data = [], [], None, True
     skipped, footnotes, formats, complex_reasons = [], [], {}, []
-    for line_no in range(start + 2, end):
+    for line_no in range(data_start, end):
         raw = lines[line_no]
-        cells = split_cells(raw)
+        cells = _expand_cells(split_cells(raw), splits)
         cleaned = [clean(c) for c in cells]
         if is_footnote_row(cells):  # dipnot (_…_): veri değil, kayıt üretmez
             footnotes.append(' '.join(c for c in cleaned if c))
@@ -494,6 +635,9 @@ def _parse_table(page, lines, start, end, ordinal):
             continue
         if first_data and cleaned[0] and len(filled) >= 2 and all_bold:
             complex_reasons.append('çok seviyeli başlık: ilk veri satırı kalın ikinci bir başlık satırı')
+        elif not first_data and cleaned[0] and len(filled) >= 2 and all_bold \
+                and sum(not VALUE_START.match(v) for _, v in filled) * 2 > len(filled):
+            complex_reasons.append('çok seviyeli başlık: veri satırları arasında kalın başlık satırı')
         name_cell, name_mark = split_marker(cells[0], TEST_MARK)
         parts = br_parts(name_cell)
         marks, cell_parts, p_effects = {}, {}, {}
@@ -529,6 +673,17 @@ def _parse_table(page, lines, start, end, ordinal):
                                  name_mark, formats, p_effects))
             first_data = False
             continue
+        if len(parts) >= 2 and len(group_parts) >= 2 and all(len(g) == len(parts) for g in group_parts):
+            # Bölüm adı olmadan <br> ile alt satırlar: "Male<br>Female" + "152<br>37" | "79<br>17" -> iki satır
+            # (her ad kendi değerleriyle; ortak tek hücre, ör. p, iki satıra da gelir). Bölüm, varsa geçerli bölüm.
+            for k in range(len(parts)):
+                cells_map = {key: clean(vals[k] if len(vals) == len(parts) else '<br>'.join(vals))
+                             for key, vals in cell_parts.items()}
+                temiz = ' | '.join(c for c in [clean(parts[k]), *cells_map.values()] if c)
+                rows.append(_row(len(rows) + 1, page, raw, temiz, parts[k], section, cells_map, marks,
+                                 name_mark, formats, p_effects))
+            first_data = False
+            continue
         name_raw = clean(parts[-1]) if parts else ''
         fused = [clean(p) for p in parts[:-1]]
         if fused:
@@ -553,6 +708,12 @@ def _parse_table(page, lines, start, end, ordinal):
     skipped += empty
     diagnostic = _mark_diagnostic(columns, rows)
     complex_reasons += _complex_reasons(columns, rows)
+    literature = literature_reasons(caption, columns, rows)
+    if literature:
+        complex_reasons += [f'literatür / özet tablosu: {reason}' for reason in literature]
+        issues.append({'tur': 'literatur_tablosu', 'parca': literature,
+                       'aciklama': 'Başka çalışmaların sonuçlarını özetleyen tablo (makalenin kendi verisi değil); '
+                                   'otomatik okunmaz, kayıt üretilmez; elle inceleme'})
     table = {'tablo_no': no if no is not None else ordinal, 'sayfa': page, 'tablo_basligi': caption,
              'tablo_basligi_ham': caption_raw, 'sutun_basliklari_ham': header_raw.strip(),
              'sutunlar': columns, 'alt_bolumler': sections, 'satirlar': rows, 'sorunlar': issues,
@@ -563,7 +724,7 @@ def _parse_table(page, lines, start, end, ordinal):
         table['dipnot'] = footnotes
     if complex_reasons:
         # Otomatik ayrıştırılmaz: satırlar kayda dönüşmez; ham satırlar elle inceleme için saklanır.
-        table['elle_inceleme_satirlari'] = [lines[i].strip() for i in range(start + 2, end) if lines[i].strip()]
+        table['elle_inceleme_satirlari'] = [lines[i].strip() for i in range(data_start, end) if lines[i].strip()]
         table['satirlar'] = []
         issues.append({'tur': 'elle_inceleme_gerekli', 'parca': sorted(set(complex_reasons)),
                        'aciklama': 'Karmaşık tablo (çok seviyeli / bölünmüş başlık, iç içe tablo); otomatik '
@@ -673,6 +834,29 @@ def _mark_diagnostic(columns, rows):
     return True
 
 
+def literature_reasons(caption, columns, rows):
+    """Literatür / özet tablosu mu (genel kural, makaleye özel değil); gerekçe listesi (boşsa değil).
+
+    - En az iki değer sütunu başlığı atıf görünümünde ("Odutayo et al^38", "Smith 2019", "[12]"): sütunlar
+      hasta grubu değil, başka çalışmalar.
+    - Satır adlarının en az yarısı (en az iki satır) atıf görünümünde ("Al Hasan, 2019 (14)", "RAAFT-1,^86 2005").
+    - İlk sütun başlığı "Study / Source / Reference / Author / Trial" ve tablo başlığı başka çalışmaları özetlediğini
+      söylüyor ("selected studies", "trials of …", "meta-analysis", "systematic review", "literature")."""
+    reasons = []
+    cited = [c['baslik'] for c in columns[1:] if CITATION.search(c.get('baslik') or '')]
+    if len(cited) >= 2:
+        reasons.append(f'sütun başlıkları çalışma / yazar: {", ".join(cited[:3])}')
+    names = [r.get('degisken_ham') or r.get('ad') or '' for r in rows]
+    names = [n for n in names if n]
+    cited_rows = [n for n in names if CITATION.search(n)]
+    if len(names) >= 2 and len(cited_rows) >= 2 and len(cited_rows) * 2 >= len(names):
+        reasons.append(f'satır adları çalışma / yazar ({len(cited_rows)}/{len(names)}): {", ".join(cited_rows[:2])}')
+    first = clean(columns[0].get('baslik') or '') if columns else ''
+    if LIT_FIRST_COLUMN.match(first) and LIT_CAPTION.search(caption or ''):
+        reasons.append(f"ilk sütun '{first}', başlık başka çalışmaları özetliyor ('{LIT_CAPTION.search(caption).group(0)}')")
+    return reasons
+
+
 def _complex_reasons(columns, rows):
     """Genel karmaşık tablo kuralları (makaleye özel değil): değer sütununda çoğunluk metin (iç içe / yan yana
     tablo) ya da sayısal satır adı (birleşik hücreli model / grup numarası)."""
@@ -697,11 +881,23 @@ def row_analyses(table, row):
         value = row['sutun_degerleri'].get(col['anahtar'], '')
         match = VAL_RANGE.match(value)
         p_col = next((c for c in table['sutunlar'] if c['rol'] == 'p' and c.get('etki_sutunu') == index), None)
-        out.append({'analiz': col['analiz'], 'etki_turu': col['etki_turu'], 'sutun': col['anahtar'],
-                    'deger': match.group(1) if match else value,
-                    'ci95': f'{match.group(2)}-{match.group(3)}' if match else None,
-                    'p': row['sutun_degerleri'].get(p_col['anahtar']) if p_col else None,
-                    'p_sutun': p_col['anahtar'] if p_col else None})
+        item = {'analiz': col['analiz'], 'etki_turu': col['etki_turu'], 'sutun': col['anahtar'],
+                'deger': match.group(1) if match else value,
+                'ci95': f'{match.group(2)}-{match.group(3)}' if match else None,
+                'p': row['sutun_degerleri'].get(p_col['anahtar']) if p_col else None,
+                'p_sutun': p_col['anahtar'] if p_col else None}
+        # Etki sütunundan önceki (araya başka etki sütunu girmeyen) regresyon katsayısı sütunu ("B").
+        coef = None
+        for prev in reversed(table['sutunlar'][1:index]):
+            if prev['rol'] == 'etki':
+                break
+            if prev['rol'] == 'katsayi':
+                coef = prev
+                break
+        if coef is not None and row['sutun_degerleri'].get(coef['anahtar']):
+            item['katsayi'] = row['sutun_degerleri'][coef['anahtar']]
+            item['katsayi_sutun'] = coef['anahtar']
+        out.append(item)
     return out
 
 
@@ -930,6 +1126,9 @@ def format_matches(label, value):
     """Ara başlıktaki biçim etiketi bu değerle tutarlı mı: n (%) -> "44 (38.6)"; median/IQR/aralık -> "64 (53-74)";
     ortalama ± SS -> "62±10.3". Tutarsızsa (ör. n (%) etiketi altındaki medyan satırı) etiket yazılmaz."""
     low = (label or '').casefold()
+    if ('±' in low or 'sd' in low) and any(k in low for k in ('min', 'max', 'range')):
+        # "(X±SD) (minimum-maximum)" -> "71.43±7.67 (56-90)"
+        return bool(MEAN_SD_RANGE.match(value or ''))
     if 'n' in low.replace('min', '').replace('mean', '') and '%' in low:
         return bool(N_PCT.match(value or ''))
     if any(k in low for k in ('median', 'iqr', 'q1', 'range', 'min')):
@@ -996,6 +1195,10 @@ def sql_preview(record, table, row, document_id=None, skipped=None):
                                                 'boylamsal izlem gerektirir, emin olunamadı',
                         mudahale_turu_bos_nedeni=MUDAHALE_BOS_NEDENI,
                         **_extra_note(row, item['sutun'], item['deger'], columns.get(item['sutun'])))
+            if item.get('katsayi'):
+                # Regresyon katsayısı (B): ayrı alan; sunumda gösterimi ekip kararı bekliyor.
+                note['regresyon_katsayisi'] = item['katsayi']
+                note['katsayi_sutunu'] = item['katsayi_sutun']
             out.append(dict(base, sonuc_olcutu_tr=row['degisken'], unit=row['unit'], hasta_grubu=None,
                             hasta_sayisi=None, comparator=None, mudahale_en=None, mudahale_turu=None,
                             etki_turu=item['etki_turu'], deger=item['deger'], ci95=item['ci95'], p=item['p'] or None,
