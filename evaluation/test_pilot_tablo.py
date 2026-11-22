@@ -29,6 +29,10 @@ Kontroller:
   Grup içi test satırları (P value for intra groups, Pairwise A-B / A-C / B-C; dipnot Friedman / Dunn): comparator /
   p yok, karsilastirma_turu = 'grup_ici'; comparator'lar insan doğrulamasıyla (zehra_troponin_tablo_dogrulanmis.json,
   varsa, yalnız okunur) aynı.
+- Ön deneme okuma kuralları (sentetik, olumlu + olumsuz): bölüm adsız <br> alt satırları, tablo içindeki başlık,
+  birleşik sütunlar (B taslak_notu.regresyon_katsayisi, OR etki), binlik ayraç, ortalama±SS (min–maks), literatür
+  tablosu (kayıt yok), ayraçsız kalın başlık, devam sayfası. Gerçek PDF'ler (varsa): Eozinofil T1 33 / T2 6 / T3 3
+  kayıt doğru; OHCA, AF, CAD kayıt üretmiyor (AF T1 / T3 literatür, AF s.28 ve CAD "Cont." devam sayfası).
 - Grup içi kuralı (sentetik): ad ve dipnot işareti yolları; Mann-Whitney işareti, p değeri olmayan "Pairwise" ve
   p sütunu dolu "Post hoc" satırı grup içi sayılmaz; gruplar arası satırlar değişmez.
 - Girdi: findings zorunlu; başka belgenin findings'i (içerik ya da document_id) reddedilir; başka belgenin
@@ -345,6 +349,165 @@ def check_synthetic_within_group():
            ('Group B', 'Group A', '0.040', None, 'p')], summary('Post hoc p'))
 
 
+ON_DENEME_PAGES = {
+    # a1: bölüm adı olmadan <br> alt satırları (ortak p iki satıra da)
+    31: "**Table 7: Gender split.**\n\n|**Gender**|**Total**|**Group A**|**Group B**|**p value**|\n|---|---|---|---|---|\n"
+        "|Male<br>Female|30<br>20|14<br>11|16<br>9|0.500|\n",
+    # a2 + a3 + a4: başlık tablonun içinde; B / Exp (B) (OR) / p tek hücrede; binlik ayraçlı OR
+    32: "Metin paragrafı.\n\n|**TABL**|**E 8:** Logistic regression for<br>outcome|\n|---|---|\n"
+        "|**Variable**|**B**<br>**Exp (B) (OR)**<br>**p value**|\n|X1|1.234<br>1,234.5<br>0.010|\n|X2|0.100<br>1.105<br>0.200|\n",
+    # a8: ortalama±SS (min–maks)
+    33: "**Table 9: Mean and range.**\n\n|**Variable**|**Group A (n=10)**<br>**(X±SD) (minimum-maximum)**|"
+        "**Group B (n=12)**<br>**(X±SD) (minimum-maximum)**|**p value**|\n|---|---|---|---|\n"
+        "|Age|50.1±5.2 (40-60)|52.3±4.1 (45-61)|0.300|\n",
+    # a7: sütun başlıkları atıf
+    34: "**Table 10: Risks across cohorts.**\n\n||**Smith et al**<sup>**12**</sup>|**Jones 2019**|\n|---|---|---|\n"
+        "|Stroke|2.1 (1.5-2.9)|3.4|\n|Death|1.2 (1.0-1.4)|2.2|\n",
+    # a7: satır adları atıf
+    35: "**Table 11: Outcomes.**\n\n|**Variable**|**Rate, %**|\n|---|---|\n"
+        "|Smith, 2019 [3]|12.1|\n|Lee, 2020 [4]|15.0|\n|Kim et al|9.0|\n",
+    # a7: ilk sütun "Study" + başlık başka çalışmaları özetliyor
+    36: "**Table 12: Characteristics of the selected studies.**\n\n|**Study**|**Group A (n=5)**|**Group B (n=6)**|\n|---|---|---|\n"
+        "|Alpha cohort|12|13|\n|Beta registry|10|11|\n",
+    # a7 negatif: ilk sütun "Study" ama başlık / satırlar literatür değil
+    37: "**Table 13: Study groups.**\n\n|**Study**|**Group A (n=5)**|**Group B (n=6)**|**p**|\n|---|---|---|---|\n"
+        "|Age|50 (40-60)|52 (41-63)|0.400|\n",
+    # a5: ayraçsız kalın başlık
+    38: "**Table 14 Baseline values**\n\n|**Variable**|**Group A**|**Group B**|**p**|\n|---|---|---|---|\n|Age|50|52|0.400|\n",
+    # a5 negatif: düz metindeki "Table 15 shows" başlık değil
+    39: "Table 15 shows the data\n\n|**Variable**|**Group C**|**Group D**|**p**|\n|---|---|---|---|\n|Age|50|52|0.400|\n",
+    # a6: başlıksız devam (sonraki sayfa, aynı sütun başlıkları)
+    40: "**Table 16. Long table.**\n\n|**Variable**|**Group A**|**Group B**|**p**|\n|---|---|---|---|\n"
+        "|Age|50|52|0.400|\n|BMI|25|26|0.500|\n",
+    41: "|**Variable**|**Group A**|**Group B**|**p**|\n|---|---|---|---|\n|SBP|120|125|0.300|\n",
+    # a6: "Cont." başlıklı devam
+    42: "**Table 17. Labs.**\n\n|**Variable**|**Group A**|**Group B**|**p**|\n|---|---|---|---|\n|Hb|13|12|0.200|\n",
+    43: "**Table 17. _Cont._**\n\n|**Variable**|**Group A**|**Group B**|**p**|\n|---|---|---|---|\n|WBC|7|8|0.100|\n",
+    # a3 negatif: iki satırlı başlık + satırı kaydırılmış metin hücreleri bölünmez
+    44: "**Table 18: Trials list.**\n\n|**Name**|**Enrollment**<br>**period**|\n|---|---|\n"
+        "|X|Nov 2009-Apr<br>2016|\n|Y|Jan 2010-Feb<br>2012|\n",
+}
+
+
+def check_on_deneme_rules():
+    """Ön deneme okuma kuralları (sentetik, makaleye özel değil): a1 <br> alt satırları, a2 tablo içindeki başlık,
+    a3 birleşik sütunlar (B ayrı not, OR etki), a4 binlik ayraç, a5 ayraçsız kalın başlık, a6 devam sayfası,
+    a7 literatür / özet tablosu, a8 ortalama±SS (min–maks); olumsuz örnekler de."""
+    pages = ON_DENEME_PAGES
+    tables = pt.parse_tables(pages)
+    by_page = {}
+    for t in tables:
+        by_page.setdefault(t['sayfa'], t)
+    hams = list(dict.fromkeys((t['sayfa'], r['ham']) for t in tables for r in t['satirlar']))
+    records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': s, 'kanit_cumle': h, 'bilgi_turu': 'olcum',
+                'baglam': 'study_finding', 'klinik_bilgi_en': h} for i, (s, h) in enumerate(hams, 1)]
+    transfer = pt.enrich(records, pages)['aktarim']
+
+    def recs(page):
+        return [(r['klinik_bilgi_en'], r.get('hasta_grubu'), r.get('deger'), r.get('p'), r.get('etki_turu'),
+                 json.loads(r['taslak_notu']).get('regresyon_katsayisi')) for r in transfer if r['sayfa'] == page]
+
+    def issues(page):
+        return {s['tur'] for t in tables if t['sayfa'] == page for s in t['sorunlar']}
+
+    check('a1: bölüm adsız <br> alt satırları (Male / Female ayrı, ortak p ikisine de, Total p yok)',
+          [('Male', 'Total', '30', None, 'diger', None), ('Male', 'Group A', '14', '0.500', 'diger', None),
+           ('Male', 'Group B', '16', '0.500', 'diger', None), ('Female', 'Total', '20', None, 'diger', None),
+           ('Female', 'Group A', '11', '0.500', 'diger', None), ('Female', 'Group B', '9', '0.500', 'diger', None)],
+          recs(31))
+    t8 = by_page[32]
+    check('a2: tablonun içindeki başlık (no 8, başlık birleşik, sütunlar sonraki satırdan)',
+          (8, 'TABLE 8: Logistic regression for outcome', ['Variable', 'B', 'Exp (B) (OR)', 'p value'],
+           ['katsayi', 'etki', 'p'], True),
+          (t8['tablo_no'], t8['tablo_basligi'], [c['baslik'] for c in t8['sutunlar']], [c['rol'] for c in t8['sutunlar'][1:]],
+           'baslik_tablo_icinde' in issues(32)))
+    check('a3 + a4: birleşik sütun ayrıldı; OR etki (binlik ayraçlı değer ham), p, B taslak_notu.regresyon_katsayisi',
+          [('X1', None, '1,234.5', '0.010', 'OR', '1.234'), ('X2', None, '1.105', '0.200', 'OR', '0.100')], recs(32))
+    check('a3 negatif: iki satırlı başlık + kaydırılmış metin hücresi bölünmez', False, 'birlesik_sutun_ayrildi' in issues(44))
+    check('a4: binlik ayraçlı sayılar değer kalıplarında; ondalık virgül binlik sayılmaz',
+          (True, True, True, False), (bool(pt.VAL_RANGE.match('1,234 (1,100-1,300)')), bool(pt.N_PCT.match('1,225 (45.2)')),
+                                      bool(pt.MEAN_SD.match('2,735.6±12.1')), bool(pt.VAL_RANGE.match('0,5 (0,1-0,9)'))))
+    notes9 = [json.loads(r['taslak_notu']) for r in transfer if r['sayfa'] == 33]
+    check('a8: "(X±SD) (minimum-maximum)" -> deger_bicimi ortalama±SS (min–maks), bicim_etiketi başlıktan',
+          {('ortalama±SS (min–maks)', '(X±SD) (minimum-maximum)')}, {(n['deger_bicimi'], n.get('bicim_etiketi')) for n in notes9})
+    lit = {page: ('literatur_tablosu' in issues(page), len(recs(page))) for page in (34, 35, 36, 37)}
+    check('a7: literatür tablosu (atıf sütunları / atıf satırları / "Study" + "selected studies") kayıt üretmez; '
+          '"Study" ilk sütunu tek başına literatür değil',
+          {34: (True, 0), 35: (True, 0), 36: (True, 0), 37: (False, 2)}, lit)
+    check('a7: literatür tablosu elle incelemeye ayrılır (ham satırlar saklanır)', True,
+          all('elle_inceleme_satirlari' in by_page[p] for p in (34, 35, 36)))
+    check('a5: ayraçsız kalın başlık tanınır; düz metindeki "Table 15 shows" başlık değil',
+          (14, False, True), (by_page[38]['tablo_no'], 'tablo_basligi_yok' in issues(38), 'tablo_basligi_yok' in issues(39)))
+    cont = [(t['sayfa'], t['tablo_no'], [r['satir_no'] for r in t['satirlar']], 'tablo_devami' in {s['tur'] for s in t['sorunlar']})
+            for t in tables if t['sayfa'] in (40, 41, 42, 43)]
+    check('a6: devam sayfaları (başlıksız aynı başlıklı sonraki sayfa / "Cont.") aynı numara, satırlar devam ediyor',
+          [(40, 16, [1, 2], False), (41, 16, [3], True), (42, 17, [1], False), (43, 17, [2], True)], cont)
+    check('a6: devam sayfası kaydı kendi sayfasıyla (kanıt sayfası 41, satır 3)', [(41, 3)],
+          [(r['sayfa'], json.loads(r['taslak_notu'])['satir_no']) for r in transfer
+           if r['klinik_bilgi_en'] == 'SBP' and r.get('hasta_grubu') == 'Group A'])
+    accepted, errors = validate_records([dict(r, review_status='verified') for r in transfer], pages)
+    check('ön deneme sentetik: validate_records hatasız', (len(transfer), []), (len(accepted), errors))
+
+
+ON_DENEME_PDFS = {
+    'eosinofil': Path('data/pdfs/TK-cardiovascular37-2-1.pdf'),
+    'ohca': Path('data/pdfs/who-Out-of-hospital cardiac arrest in countries of the Gulf Cooperation.pdf'),
+    'af': Path('data/pdfs/pubM-Atrial Fibrillation.pdf'),
+    'cad': Path('data/pdfs/pubM-Clinical Updates in Coronary Artery Disease A comprehensive review.pdf'),
+}
+
+
+def check_on_deneme_pdfs():
+    """Ön deneme makaleleri (sentetik kayıtlar, bellekte): Eozinofil T1–T3 doğru; OHCA, AF, CAD kayıt üretmiyor."""
+    found = {}
+    for name, path in ON_DENEME_PDFS.items():
+        if not path.exists():
+            check(f'ön deneme: {name} PDF var (yoksa bu bölüm sınanmaz)', True, False)
+            continue
+        doc, pages = pdf_pages(path)
+        tables = pt.parse_tables(pages)
+        hams = list(dict.fromkeys((t['sayfa'], r['ham']) for t in tables for r in t['satirlar']))
+        records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': s, 'kanit_cumle': h, 'bilgi_turu': 'olcum',
+                    'baglam': 'study_finding', 'klinik_bilgi_en': h} for i, (s, h) in enumerate(hams, 1)]
+        found[name] = (tables, pt.enrich(records, pages, doc['document_id'])['aktarim'], pages)
+    if 'eosinofil' in found:
+        tables, transfer, pages = found['eosinofil']
+        per = [(t['tablo_no'], sum(json.loads(r['taslak_notu'])['tablo_no'] == t['tablo_no'] for r in transfer)) for t in tables]
+        check('Eozinofil: T1 33, T2 6 (Male / Female), T3 3 (OR) kayıt', [(1, 33), (2, 6), (3, 3)], per)
+        t2 = [(r['klinik_bilgi_en'], r['hasta_grubu'], r['deger'], r.get('p')) for r in transfer
+              if json.loads(r['taslak_notu'])['tablo_no'] == 2]
+        check('Eozinofil T2: Male 152 / 79 / 73, Female 37 / 17 / 20, p 0.584',
+              [('Male', 'Total', '152', None), ('Male', 'Study group', '79', '0.584'), ('Male', 'Control group', '73', '0.584'),
+               ('Female', 'Total', '37', None), ('Female', 'Study group', '17', '0.584'), ('Female', 'Control group', '20', '0.584')], t2)
+        t3 = [(r['klinik_bilgi_en'], r['etki_turu'], r['deger'], r.get('p'), json.loads(r['taslak_notu']).get('regresyon_katsayisi'))
+              for r in transfer if json.loads(r['taslak_notu'])['tablo_no'] == 3]
+        check('Eozinofil T3: başlık tablonun içinden; OR etki, p, B taslak_notu\'da; hasta grubu yok (clinical_outcomes)',
+              [('ELR', 'OR', '2,735.621', '0.002', '7.912'), ('PLR', 'OR', '1.005', '0.007', '0.005'),
+               ('Neu%', 'OR', '1.021', '0.062', '0.021')], t3)
+        check('Eozinofil T1: biçim ortalama±SS (min–maks)', {'ortalama±SS (min–maks)'},
+              {json.loads(r['taslak_notu'])['deger_bicimi'] for r in transfer if json.loads(r['taslak_notu'])['tablo_no'] == 1})
+        accepted, errors = validate_records([dict(r, review_status='verified') for r in transfer], pages)
+        check('Eozinofil: validate_records hatasız (42)', (42, []), (len(accepted), errors))
+    for name in ('ohca', 'af', 'cad'):
+        if name in found:
+            check(f'ön deneme {name}: kayıt yok, bütün tablolar elle inceleme', (0, True),
+                  (len(found[name][1]), all('elle_inceleme_satirlari' in t for t in found[name][0])))
+    if 'af' in found:
+        tables = found['af'][0]
+        check('AF: T1 ve T3 literatür tablosu; s.28 Table 3\'ün devamı (Table 4 yok)',
+              ([(1, 24, True), (2, 25, False), (3, 27, True), (3, 28, False)], True),
+              ([(t['tablo_no'], t['sayfa'], any(s['tur'] == 'literatur_tablosu' for s in t['sorunlar'])) for t in tables],
+               any(s['tur'] == 'tablo_devami' for s in tables[3]['sorunlar'])))
+    if 'ohca' in found:
+        t = found['ohca'][0][0]
+        check('OHCA: ayraçsız başlık tanındı, literatür tablosu', (1, False, True),
+              (t['tablo_no'], any(s['tur'] == 'tablo_basligi_yok' for s in t['sorunlar']),
+               any(s['tur'] == 'literatur_tablosu' for s in t['sorunlar'])))
+    if 'cad' in found:
+        check('CAD: "Table 1. Cont." devam sayfası', [(1, 2, False), (1, 3, True), (2, 3, False), (3, 7, False)],
+              [(t['tablo_no'], t['sayfa'], any(s['tur'] == 'tablo_devami' for s in t['sorunlar'])) for t in found['cad'][0]])
+
+
 def check_troponin():
     """İkinci makale (Troponin, 3 tablo): sentetik kayıtlarla (her ham satır bir kayıt), bellekte."""
     if not TROPONIN_PDF.exists():
@@ -620,6 +783,8 @@ def main():
     t2 = next(t for t in tables if t['tablo_no'] == 2)
 
     check_row_name_rules()
+    check_on_deneme_rules()
+    check_on_deneme_pdfs()
 
     # --- Tablolar ve başlıklar ---
     check('tablo sayısı / sayfalar', [(1, 4), (2, 5)], [(t['tablo_no'], t['sayfa']) for t in tables])
