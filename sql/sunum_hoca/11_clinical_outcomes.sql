@@ -23,6 +23,8 @@
 -- Etki bilgisi OLMAYAN tedavi / ilaç türündeki TABLO satırları (bilgi_turu ilac / doz / tedavi ve etki_turu, deger, p
 --   üçü de NULL ya da boş; ör. AF Table 2 öneri satırları) burada gösterilmez (finding boş kalırdı); treatments
 --   view'ında görünürler. Bu alanlardan biri dolu olan ilaç / tedavi satırı (ör. OR / HR) burada kalır.
+--   Aynı kural tanı yöntemi (teshis_yontemi) tablo satırlarına da uygulanır (ör. CAD Table 1 yöntem karşılaştırması,
+--   Table 3 öneri satırları); bunlar diagnostics view'ında görünür. Etki bilgisi dolu tanı yöntemi satırı burada kalır.
 --   Metin kayıtları değişmedi.
 CREATE OR REPLACE VIEW `{{SUNUM_DB}}`.`clinical_outcomes` AS
 SELECT
@@ -76,7 +78,7 @@ LEFT JOIN `{{KAYNAK_DB}}`.`v_sunum_taban` AS lp
     AND lp.p_baglandigi_satir = f.satir_no AND lp.tablo_no = f.tablo_no AND lp.filename <=> f.filename
     AND lp.ilac <=> f.ilac AND lp.kanit_turu = 'tablo'
 WHERE (f.kanit_turu = 'tablo' AND f.satir_grup_karsilastirmasi = 0 AND f.p_baglandigi_satir IS NULL
-        AND NOT (f.bilgi_turu IN ('ilac', 'doz', 'tedavi')
+        AND NOT (f.bilgi_turu IN ('ilac', 'doz', 'tedavi', 'teshis_yontemi')
                  AND NULLIF(TRIM(f.etki_turu), '') IS NULL
                  AND NULLIF(TRIM(f.deger), '') IS NULL
                  AND NULLIF(TRIM(f.p), '') IS NULL))
