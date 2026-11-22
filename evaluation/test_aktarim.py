@@ -20,6 +20,10 @@ Kontroller:
 - --yeniden + ikinci makale tek çağrıda: pilot 243 (satir_hash'ler mevcutla aynı, eski 87 kalite işareti silindi),
   Troponin 84; diğer satırlar (RAG) ve kalite işaretleri değişmedi; Troponin'deki mudahale_en farkı olan 3 "tekrar"
   kabul edildi ve listelendi; kalite hata 0 (pilot uyarı 48 / bilgi 39; Troponin eksiksizlik 27/27).
+- Sayfa sınırı (src.pilot_clinical.fact_in_parts): Troponin s.1–2 dışlama kriterlerinden bellekte kurulan kayıt
+  ("those who applied to the Emergency Room within the last 24 hours"; birlestirme = sayfa) kabul edilir ve
+  Troponin'e ikinci dosya olarak aktarılır; aynı kayıtta PDF'te olmayan ifade (48 hours) kontrol 4'te reddedilir.
+  Taslak metin dosyası (data/review/who_jcpsp_2020/…) yalnız okunur.
 """
 
 import copy
@@ -82,6 +86,29 @@ def load(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+DRAFT_TEXT = Path('data/review/who_jcpsp_2020/who_findings_text_reviewed_draft.json')
+BOUNDARY_FACT = 'those who applied to the Emergency Room within the last 24 hours'
+
+
+def boundary_records():
+    """Troponin s.1–2 dışlama kriterleri (taslak metin dosyasındaki çok parçalı kayıttan, yalnız bellekte):
+    bilgi s.1'in sonu ("…within the last 24") ile s.2'nin başı ("hours, …") arasında. (olumlu, olumsuz)."""
+    draft = load(DRAFT_TEXT)
+    base = next(r for r in draft if r.get('kanit_parcalari') and r.get('birlestirme') == 'sayfa'
+                and r['kanit_parcalari'][0]['metin'].endswith('within the last 24'))
+    good = dict(copy.deepcopy(base), klinik_bilgi_en=BOUNDARY_FACT, review_status='verified')
+    bad = dict(copy.deepcopy(base), klinik_bilgi_en=BOUNDARY_FACT.replace('24', '48'), review_status='verified')
+    return good, bad
+
+
+def load_error(path):
+    try:
+        ak.makaleyi_kontrol_et({'pdf': TROP_PDF, 'dosyalar': [path]})
+    except ak.AktarimHatasi as exc:
+        return exc.ayrinti
+    return None
+
+
 def test_backup_and_args(tmp):
     check('--yaz, --yedek yok -> reddedildi', (True, 'yedek'), raises(lambda: ak.yedek_kontrolu(None))[:2])
     check('--yedek dosyası yok -> reddedildi', (True, 'yedek'),
@@ -141,6 +168,15 @@ def test_file_checks(tmp):
     result = raises(lambda: ak.makaleyi_kontrol_et({'pdf': PILOT_PDF, 'dosyalar': [same_file]}))
     check('kontrol 5 yalnız dosyalar arası: aynı dosyada farklı tür çakışma sayılmaz', False, result[0])
 
+    good, bad = boundary_records()
+    ok = write_json(tmp, 'sinir_olumlu.json', [good])
+    no = write_json(tmp, 'sinir_olumsuz.json', [bad])
+    result = raises(lambda: ak.makaleyi_kontrol_et({'pdf': TROP_PDF, 'dosyalar': [ok]}))
+    check('sayfa sınırı: bilgi s.1 sonu + s.2 başında (birlestirme = sayfa) -> kabul', False, result[0])
+    result = raises(lambda: ak.makaleyi_kontrol_et({'pdf': TROP_PDF, 'dosyalar': [no]}))
+    check('sayfa sınırı: aynı kayıtta PDF\'te olmayan ifade (48 hours) -> kontrol 4 reddedildi', (True, 4, True),
+          (result[0], result[1], 'ardışık iki sayfanın' in str(load_error(no))))
+
     report = ak.makaleyi_kontrol_et({'pdf': TROP_PDF, 'dosyalar': [TROP_FILE]})
     accepted = report['kontrol']['mudahale_farkli_tekrar']
     check('Troponin: mudahale_en farkı olan 3 "tekrar" kabul edildi ve listelendi (#66, #77, #78)',
@@ -186,21 +222,25 @@ def test_database(start_pilot):
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM klinik_bulgular WHERE cikarma_yontemi = 'rag'")
         rag_before = cursor.fetchone()[0]
-        report = ak.aktar(conn, [dict(pilot), {'pdf': TROP_PDF, 'dosyalar': [TROP_FILE]}], yeniden=True,
+        boundary_dir = tempfile.TemporaryDirectory()
+        boundary_file = write_json(boundary_dir.name, 'sinir_olumlu.json', [boundary_records()[0]])
+        report = ak.aktar(conn, [dict(pilot), {'pdf': TROP_PDF, 'dosyalar': [TROP_FILE, boundary_file]}], yeniden=True,
                           out=lambda *_: None)
+        boundary_dir.cleanup()
         by_pdf = {m['pdf']: m for m in report['makaleler']}
         p, t = by_pdf[PILOT_PDF.name], by_pdf[TROP_PDF.name]
         check('--yeniden: pilot 243 yazıldı, eski 243 satır + 87 kalite işareti silindi, satir_hash\'ler aynı',
               (243, 243, 87, {'ayni': 243, 'yeni': 0, 'cikan': 0}),
               (p['yazilan'], p['silinen_onceki'], p['silinen_kalite_isareti'], p['hash_karsilastirma']))
         check('--yeniden: pilot dosya başına (zehra 207, sinem 36)', [207, 36], list(p['dosya_basina'].values()))
-        check('ikinci makale: Troponin 84 yazıldı, önceki satır yok', (84, 0), (t['yazilan'], t['silinen_onceki']))
+        check('ikinci makale: Troponin 84 tablo + 1 sayfa sınırı kaydı (iki dosya) yazıldı, önceki satır yok',
+              (85, [84, 1], 0), (t['yazilan'], list(t['dosya_basina'].values()), t['silinen_onceki']))
         check('Troponin: mudahale_en farklı 3 "tekrar" kabul edildi', 3, len(t['kontrol']['mudahale_farkli_tekrar']))
         cursor.execute("SELECT COUNT(*) FROM klinik_bulgular WHERE cikarma_yontemi = 'rag'")
         check('--yeniden yalnız o makaleye dokundu: RAG satırları ve diğer satırların parmak izi aynı',
               (rag_before, report['baslangic']['klinik_bulgular'] - 243),
               (cursor.fetchone()[0], report['diger_satirlar']['satir']))
-        check('transaction içinde klinik_bulgular 292 -> 376', (292, 376),
+        check('transaction içinde klinik_bulgular 292 -> 377', (292, 377),
               (report['baslangic']['klinik_bulgular'], report['sonra']['klinik_bulgular']))
         cursor.close()
         q = {v['dosya']: v for v in report['kalite'].values()}
