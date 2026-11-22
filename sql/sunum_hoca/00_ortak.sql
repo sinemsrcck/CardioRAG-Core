@@ -10,7 +10,7 @@
 -- view'lara dokunulmaz; yalnız bu view eklenir / yenilenir.
 -- Kaynak: {{KAYNAK_DB}}.v_pilot_bulgular (python -m src.sunum --kur ile kurulur), yalnız
 -- review_status = 'verified' satırlar. pilot_tablo'nun taslak_notu alanlarından v_pilot_bulgular'da
--- olmayanlar (sutun_rolu, etiket, se, se_bicimi, p_baglandigi_satir, tani_olcusu) klinik_bulgular.taslak_notu'dan
+-- olmayanlar (sutun_rolu, etiket, se, se_bicimi, p_baglandigi_satir, tani_olcusu, regresyon_katsayisi) klinik_bulgular.taslak_notu'dan
 -- JSON_VALID korumalı okunur (yalnız okuma; alan yoksa NULL).
 -- Ortak kurallar burada BİR KEZ yazılır:
 --   clinical_context  : hasta_grubu -> 'study population'; diğerleri baglam'dan
@@ -74,6 +74,8 @@ FROM (
             THEN JSON_UNQUOTE(JSON_EXTRACT(n.notu, '$.se')) END AS se,
         CASE WHEN JSON_TYPE(JSON_EXTRACT(n.notu, '$.se_bicimi')) = 'STRING'
             THEN JSON_UNQUOTE(JSON_EXTRACT(n.notu, '$.se_bicimi')) END AS se_bicimi,
+        CASE WHEN JSON_TYPE(JSON_EXTRACT(n.notu, '$.regresyon_katsayisi')) = 'STRING'
+            THEN JSON_UNQUOTE(JSON_EXTRACT(n.notu, '$.regresyon_katsayisi')) END AS regresyon_katsayisi,
         CASE WHEN JSON_TYPE(JSON_EXTRACT(n.notu, '$.p_baglandigi_satir')) IN ('INTEGER', 'UNSIGNED INTEGER')
             THEN CAST(JSON_EXTRACT(n.notu, '$.p_baglandigi_satir') AS UNSIGNED) END AS p_baglandigi_satir,
         CASE

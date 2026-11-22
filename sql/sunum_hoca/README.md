@@ -27,6 +27,7 @@ Herkes yalnız kendi dosyalarını düzenler; böylece çakışma olmaz.
   - Tablo satırları **kaydın içeriğine** göre gider, tablo numarasına bakılmaz (`f.satir_grup_karsilastirmasi`):
     - Aynı tablo satırında hasta grubu kaydı var (grup karşılaştırması) → `measurements` / `measurements_by_group`. O satırın p sütunundaki etki ölçüsü (hasta grubu olmayan OR kaydı) `measurements.effect`'te görünür.
     - Hasta grubu kaydı yok → `clinical_outcomes`: etki tabloları (univariate / multivariate OR / HR) ve tanısal performans kayıtları (`outcome_type = 'tanısal performans'`, test × ölçü).
+    - Regresyon tablosu (ekip kararı): B katsayısı ayrı sütun değildir. OR etki alanında, B `taslak_notu.regresyon_katsayisi`'nda durur. `statistical_result` şöyle görünür: "multivariate B 7.912, OR 2,735.621, p=0.002". B yoksa biçim aynıdır: "univariate OR 1.254 (95% CI 0.892-1.372), p=0.002".
     - Pilotta bu yine Table 1 → `measurements`, Table 2 → `clinical_outcomes` demektir; pilot verisinde yeni alan gerekmez.
   - Ad türündeki tablo satırları (tani, ilac) ayrıca kendi view'larında görünür (`diseases`, `treatments`). `diagnostics` yalnız tanı yöntemi / kriteri gösterir (tanısal performans değerleri `clinical_outcomes`'ta).
   - Metin kayıtları türüne göre gider. `olcum`, `diger` ve `hasta_grubu` metin kayıtları `general_clinical_findings`'e gider; `measurements` yalnız tablo satırıdır.
@@ -51,9 +52,10 @@ Herkes yalnız kendi dosyalarını düzenler; böylece çakışma olmaz.
 | `sutun_rolu` | `'toplam'`: Total sütunu kaydı; diğerleri NULL |
 | `satir_adi` / `bolum_oneki` | Gösterilen satır adı (etiketli satırda birleşik ad) / tekrar eden adda bölüm (yoksa NULL) |
 | `tani_olcusu`, `se`, `se_bicimi`, `p_baglandigi_satir` | Tanısal performans kaydı: ölçü türü, standart hata ve biçimi (`±` / `parantez`), AUC'ye bağlı P kaydında AUC satırının no'su |
+| `regresyon_katsayisi` | Regresyon tablosundaki B katsayısı (etki kaydının `taslak_notu`'su; yoksa NULL) |
 | Diğer | `bilgi_turu`, `baglam`, `kanit_turu`, `tablo_no`, `satir_no`, `alt_bolum`, `klinik_bilgi_en`, `degisken`, `ilac`, `mudahale_turu`, `hasta_grubu`, `grup_n`, `comparator`, `deger`, `unit`, `etki_turu`, `ci95`, `p`, `outcome_type`, `analiz`, `bulgu_id` |
 
-`v_pilot_bulgular`'da olmayan `taslak_notu` alanları (`sutun_rolu`, `etiket`, `se`, `se_bicimi`, `p_baglandigi_satir`, `tani_olcusu`) taban view'da `klinik_bulgular.taslak_notu`'dan JSON_VALID korumalı okunur (yalnız okuma).
+`v_pilot_bulgular`'da olmayan `taslak_notu` alanları (`sutun_rolu`, `etiket`, `se`, `se_bicimi`, `p_baglandigi_satir`, `tani_olcusu`, `regresyon_katsayisi`) taban view'da `klinik_bulgular.taslak_notu`'dan JSON_VALID korumalı okunur (yalnız okuma).
 
 ## Örnek: `20_diseases.sql` (Sinem için iskelet; bu klasörde çalıştırılmaz)
 

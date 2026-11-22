@@ -423,6 +423,20 @@ def check_on_deneme_rules():
            'baslik_tablo_icinde' in issues(32)))
     check('a3 + a4: birleşik sütun ayrıldı; OR etki (binlik ayraçlı değer ham), p, B taslak_notu.regresyon_katsayisi',
           [('X1', None, '1,234.5', '0.010', 'OR', '1.234'), ('X2', None, '1.105', '0.200', 'OR', '0.100')], recs(32))
+    check('analiz etiketi: tablo başlığında analiz etiketi yoksa sütun başlığı kalır ("Exp (B) (OR)")',
+          {'Exp (B) (OR)'}, {json.loads(r['taslak_notu'])['analiz'] for r in transfer if r['sayfa'] == 32})
+
+    def analysis(caption, header='Exp (B) (OR)'):
+        cols = [{'rol': 'degisken'}, {'rol': 'etki', 'analiz': header}, {'rol': 'p'}]
+        pt._analysis_from_caption(cols, caption)
+        return cols[1]['analiz']
+
+    check('analiz etiketi (genel kural): başlıkta tek etiket -> o etiket; iki farklı etiket ya da hiç yok -> sütun '
+          'başlığı; sütunun kendi analiz etiketi (pilot "Univariate analysis") değişmez',
+          ['multivariate', 'univariate', 'Exp (B) (OR)', 'Exp (B) (OR)', 'univariate', 'Exp (B) (OR)'],
+          [analysis('TABLE 3: Multivariate logistic regression'), analysis('Table 4. Univariate Cox analysis'),
+           analysis('Table 5: Univariate and multivariate analysis'), analysis('Table 6: Logistic regression'),
+           analysis('TABLE 2: Multivariate analysis', header='univariate'), analysis(None)])
     check('a3 negatif: iki satırlı başlık + kaydırılmış metin hücresi bölünmez', False, 'birlesik_sutun_ayrildi' in issues(44))
     check('a4: binlik ayraçlı sayılar değer kalıplarında; ondalık virgül binlik sayılmaz',
           (True, True, True, False), (bool(pt.VAL_RANGE.match('1,234 (1,100-1,300)')), bool(pt.N_PCT.match('1,225 (45.2)')),
@@ -484,6 +498,9 @@ def check_on_deneme_pdfs():
         check('Eozinofil T3: başlık tablonun içinden; OR etki, p, B taslak_notu\'da; hasta grubu yok (clinical_outcomes)',
               [('ELR', 'OR', '2,735.621', '0.002', '7.912'), ('PLR', 'OR', '1.005', '0.007', '0.005'),
                ('Neu%', 'OR', '1.021', '0.062', '0.021')], t3)
+        check('Eozinofil T3: analiz etiketi tablo başlığından ("Multivariate logistic regression") -> multivariate',
+              {'multivariate'}, {json.loads(r['taslak_notu'])['analiz'] for r in transfer
+                                 if json.loads(r['taslak_notu'])['tablo_no'] == 3})
         check('Eozinofil T1: biçim ortalama±SS (min–maks)', {'ortalama±SS (min–maks)'},
               {json.loads(r['taslak_notu'])['deger_bicimi'] for r in transfer if json.loads(r['taslak_notu'])['tablo_no'] == 1})
         accepted, errors = validate_records([dict(r, review_status='verified') for r in transfer], pages)
