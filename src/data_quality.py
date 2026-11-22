@@ -306,7 +306,12 @@ def check_duplicates(rows, embedder=None, embedding_threshold=EMBEDDING_THRESHOL
         v = views[row["satir_hash"]]
         if not v["mudahale"]:
             continue
-        exact[(v["makale"], v["mudahale"], v["doz"], v["deger"], v["unit"], v["hasta"], v["sonuc"])].append(row)
+        # Tanısal tablonun ikili karşılaştırma kaydı (pilot_tablo, taslak_notu.tani_olcusu = 'karsilastirma'): sonucu
+        # p'de, karşılaştırılan test comparator'da; ikisi anahtara girer (A-B ile A-C aynı bilgi değildir).
+        # Diğer bütün satırlarda bu alan boştur, anahtar değişmez.
+        pair = ((_note(row) or {}).get("tani_olcusu") == "karsilastirma"
+                and f"{norm_text(row.get('comparator'))}|{norm_value(row.get('p'))}") or ""
+        exact[(v["makale"], v["mudahale"], v["doz"], v["deger"], v["unit"], v["hasta"], v["sonuc"], pair)].append(row)
     exact_key_of = {}
     for key, members in exact.items():
         if len(members) < 2:
@@ -689,11 +694,13 @@ def check_ci_p(row):
 
 
 def _group_pairs(rows):
-    """Aynı belge + tablo + satırdaki iki grup kaydı (karşılıklı comparator). Üç+ grup atlanır."""
+    """Aynı belge + tablo + satırdaki iki grup kaydı (karşılıklı comparator). Üç+ grup atlanır.
+    Total sütunu kaydı (taslak_notu.sutun_rolu = 'toplam') karşılaştırma grubu değildir, sayılmaz."""
     buckets = defaultdict(list)
     for row in rows:
         note = _note(row) or {}
-        if note.get("tablo_no") is None or note.get("satir_no") is None or not row.get("hasta_grubu"):
+        if note.get("tablo_no") is None or note.get("satir_no") is None or not row.get("hasta_grubu") \
+                or note.get("sutun_rolu") == "toplam":
             continue
         doc = row.get("document_id") or row.get("makale_id") or ""
         buckets[(doc, str(note["tablo_no"]), str(note["satir_no"]))].append((row, note))
@@ -1053,7 +1060,9 @@ def check_pilot_row(row, source):
                            f"baglam '{row.get('baglam')}' ama kanit_turu=tablo (tablo çalışmanın kendi verisi)"))
     if row.get("kanit_turu") == "tablo":
         value = str(row.get("deger") or "").strip()
-        if not value:
+        if not value and note.get("tani_olcusu") in ("p", "karsilastirma") and str(row.get("p") or "").strip():
+            pass  # tanısal tablonun P / ikili karşılaştırma kaydı: sonucu p alanında, deger'in boş olması doğru
+        elif not value:
             flags.append(_flag(row, "pilot_tablo_bos_deger", "uyari",
                                "tablo kaydında deger boş (boş grup / etiket sütunu kaydı olabilir)"))
         elif not any(ch.isdigit() for ch in value):
@@ -1081,8 +1090,13 @@ def _same(a, b):
 
 
 def check_table_groups(pilot_rows, sources):
-    """Aynı tablo satırının beklenen grup/analiz satırları SQL'de tam mı ve PDF hücreleriyle tutarlı mı."""
-    from src.pilot_tablo import _needle, row_analyses, row_groups
+    """Aynı tablo satırının beklenen grup/analiz satırları SQL'de tam mı ve PDF hücreleriyle tutarlı mı.
+
+    Beklenen kayıtlar src.pilot_tablo.expected_units'ten (pilot_tablo'nun aynı satırdan üreteceği kayıtlar):
+    grup / Total / p sütunu etkisi / tanısal test x ölçü. İki grup varsayan çift kontrolleri (aynı p, karşılıklı
+    comparator) yalnız karşılaştırma grubu kayıtlarına uygulanır: Total sütunu (taslak_notu.sutun_rolu = 'toplam'),
+    etki ve tanısal performans kayıtları (hasta_grubu yok) bu kontrollere girmez; 3+ grupta karşılıklılık aranmaz."""
+    from src.pilot_tablo import _needle, expected_units, record_unit
 
     flags, partial = [], []
     groups = defaultdict(list)
@@ -1103,13 +1117,8 @@ def check_table_groups(pilot_rows, sources):
                 flags.append(_flag(m, "tablo_cift_tutarsiz", "hata",
                                    f"Table {key[1]} satır {key[2]} PDF'te bulunamadı", gid, {"uyeler": hashes}))
             continue
-        analyses = row_analyses(table, pdf_row)
-        if analyses:
-            expected = {a["analiz"]: a for a in analyses}
-            unit_of = lambda m: (_note(m) or {}).get("analiz")  # noqa: E731
-        else:
-            expected = {g["sutun"]: g for g in row_groups(table, pdf_row)}
-            unit_of = lambda m: (_note(m) or {}).get("sutun")  # noqa: E731
+        analyses, expected = expected_units(table, pdf_row)
+        unit_of = lambda m: record_unit(m, analyses)  # noqa: E731
         present = {unit_of(m) for m in members}
         missing = sorted(set(expected) - present)
         info = {"tablo_no": key[1], "satir_no": key[2], "degisken": pdf_row["degisken"], "uyeler": hashes,
@@ -1129,17 +1138,17 @@ def check_table_groups(pilot_rows, sources):
                 continue
             if _needle(m.get("kanit_cumle")) not in pdf_row["ham"]:
                 problems[m["satir_hash"]].append("kanıt bu tablo satırı değil")
-            checks = [("deger", "deger"), ("p", "p")] + (
-                [("ci95", "ci95")] if analyses else [("hasta_grubu", "grup"), ("comparator", "comparator")])
-            for column, cell_key in checks:
-                if not _same(m.get(column), cell.get(cell_key)):
-                    problems[m["satir_hash"]].append(f"{column} '{m.get(column)}' ≠ PDF '{cell.get(cell_key)}'")
-        if not analyses and len(members) > 1:
-            if len({str(m.get("p") or "").strip() for m in members}) > 1:
-                for m in members:
+            for column, want in cell.items():
+                if not _same(m.get(column), want):
+                    problems[m["satir_hash"]].append(f"{column} '{m.get(column)}' ≠ PDF '{want}'")
+        # Çift kontrolleri yalnız karşılaştırma grubu kayıtlarında (Total / etki / tanısal kayıtlar hariç).
+        groups = [m for m in members if m.get("hasta_grubu") and (_note(m) or {}).get("sutun_rolu") != "toplam"]
+        if not analyses and len(groups) > 1:
+            if len({str(m.get("p") or "").strip() for m in groups}) > 1:
+                for m in groups:
                     problems[m["satir_hash"]].append("çiftte p değerleri farklı")
-            if len(members) == 2:
-                a, b = members
+            if len(groups) == 2:
+                a, b = groups
                 if not (_same(a.get("comparator"), b.get("hasta_grubu")) and _same(b.get("comparator"), a.get("hasta_grubu"))):
                     for m in members:
                         problems[m["satir_hash"]].append("comparator ↔ hasta_grubu karşılıklı değil")
