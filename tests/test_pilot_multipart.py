@@ -9,7 +9,7 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
-from src.pilot_clinical import check_evidence_parts, import_records, validate_records
+from src.pilot_clinical import check_evidence_parts, fact_in_parts, import_records, validate_records
 
 PAGES = {
     1: 'Intro text. The patients were evaluated by two experienced',
@@ -75,8 +75,30 @@ class RejectedParts(unittest.TestCase):
                         kanit_cumle=stitched, sayfa=1, sayfa_bitis=2)
         self.assertRejected(no_parts, 'birebir bulunamadı')
 
-    def test_fact_spanning_parts_rejected(self):
-        self.assertRejected(rec(ECHO, 'two experienced cardiologists'), 'tek bir kanıt parçasında')
+    def test_fact_spanning_parts_only_at_page_word_boundary(self):
+        # Kabul: 'sayfa' bağlı ardışık iki sayfa, kelime sınırı, tek boşluk, eşleşme sınırı geçiyor.
+        self.assertEqual(errors_of(rec(ECHO, 'two experienced cardiologists')), [])
+        self.assertTrue(fact_in_parts('experienced cardiologists using', ECHO, PAGES))
+        # Red: birleştirme biçimi farklı, sınırın ötesine taşan metin, tireli kelime, ara_blok bağı.
+        for parts, fact in ((ECHO, 'experiencedcardiologists'), (ECHO, 'experienced  cardiologists'),
+                            (ECHO, 'two experienced cardiologists using an echo device. The ratio'),
+                            (HYPHEN, 'C-pep- tide'), (HYPHEN, 'C-peptide'), (HYPHEN, 'C-pep-tide'),
+                            (FIGURE, '68% specificity'), (SKIP, '7 patients (1.88%)')):
+            self.assertRejected(rec(parts, fact), 'tek bir kanıt parçasında')
+        # Red: kaydın bir bağı 'ara_blok' ise (birlestirme = 'ara_blok') 'sayfa' bağı üzerinden de birleştirilmez.
+        mixed_pages = {1: 'Intro. alpha beta', 2: 'gamma delta \n\n**FIGURE 1:** Caption.\n\n epsilon end.'}
+        mixed = [{'sayfa': 1, 'metin': 'alpha beta'}, {'sayfa': 2, 'metin': 'gamma delta'},
+                 {'sayfa': 2, 'metin': 'epsilon end.'}]
+        self.assertEqual(check_evidence_parts(mixed, mixed_pages), 'ara_blok')
+        mixed_rec = dict(bilgi_turu='diger', klinik_bilgi_en='beta gamma', kanit_cumle='alpha beta', sayfa=1,
+                         sayfa_bitis=2, birlestirme='ara_blok', kanit_parcalari=mixed, kanit_turu='metin')
+        self.assertRejected(mixed_rec, 'tek bir kanıt parçasında', pages=mixed_pages)
+        self.assertEqual(errors_of(dict(mixed_rec, klinik_bilgi_en='gamma delta'), pages=mixed_pages), [])
+        # Red: parçalar kesintisiz değilse (önceki parça sayfa sonu değil) sınır araması yapılmaz.
+        not_page_end = [{'sayfa': 1, 'metin': 'The patients were evaluated'}, ECHO[1]]
+        self.assertFalse(fact_in_parts('evaluated cardiologists', not_page_end, PAGES))
+        self.assertFalse(fact_in_parts('', ECHO, PAGES))
+        self.assertFalse(fact_in_parts(None, ECHO, PAGES))
 
     def test_part_must_be_exact_on_its_own_page(self):
         parts = [ECHO[0], {'sayfa': 2, 'metin': 'cardiologists  using an echo device.'}]
