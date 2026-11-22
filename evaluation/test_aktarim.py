@@ -12,14 +12,19 @@ Gerçek veri değişmez:
 - data/review/ JSON'larına yazılmaz; geçici dosyalar sistem geçici dizininde.
 
 Kontroller:
-- Prova (main, --yaz yok): ROLLBACK, tablolar ve pilot satırları değişmedi; prova koruması commit'i engelliyor.
+- Prova (main, --yaz yok): Troponin veritabanında yoksa normal prova (ROLLBACK, "veritabanı değişmedi"), varsa
+  "zaten aktarılmış" (kontrol 6, çıkış 1); ikisi de doğru davranış. Her iki durumda tablolar ve pilot satırları
+  değişmedi; prova koruması commit'i engelliyor.
 - --yaz: --yedek olmadan / yok / boş / 24 saatten eski yedekle reddediliyor; --kalite / --kur yalnız --yaz ile.
 - Kontrol 3: verified olmayan kayıt; kontrol 2: başka PDF'in JSON'u; kontrol 4: gerçek tekrar;
   kontrol 5: dosyalar arası aynı kanıt + bilgi, farklı bilgi_turu -> reddediliyor.
 - Kontrol 6: zaten aktarılmış makale (--yeniden olmadan) reddediliyor.
-- --yeniden + ikinci makale tek çağrıda: pilot 243 (satir_hash'ler mevcutla aynı, eski 87 kalite işareti silindi),
-  Troponin 84; diğer satırlar (RAG) ve kalite işaretleri değişmedi; Troponin'deki mudahale_en farkı olan 3 "tekrar"
-  kabul edildi ve listelendi; kalite hata 0 (pilot uyarı 48 / bilgi 39; Troponin eksiksizlik 27/27).
+- --yeniden + ikinci makale tek çağrıda: pilot 243 (satir_hash'ler mevcutla aynı; silinen eski kalite işareti =
+  test öncesi pilot satırlarına bağlı işaret sayısı), Troponin 84 + 1 (silinen önceki = test öncesi Troponin satırı,
+  aktarılmamışsa 0); diğer satırlar (RAG) değişmedi; transaction içindeki klinik_bulgular sayısı test öncesi
+  sayıdan hesaplanır (sabit toplam yok); Troponin'deki mudahale_en farkı olan 3 "tekrar" kabul edildi ve
+  listelendi; kalite hata 0 (pilot uyarı 48 / bilgi 39; Troponin eksiksizlik 27/27).
+- Toplam satır ve kalite işareti sayıları sabit beklenmez: test öncesi = test sonrası (test iz bırakmıyor).
 - Sayfa sınırı (src.pilot_clinical.fact_in_parts): Troponin s.1–2 dışlama kriterlerinden bellekte kurulan kayıt
   ("those who applied to the Emergency Room within the last 24 hours"; birlestirme = sayfa) kabul edilir ve
   Troponin'e ikinci dosya olarak aktarılır; aynı kayıtta PDF'te olmayan ifade (48 hours) kontrol 4'te reddedilir.
@@ -72,6 +77,26 @@ def table_counts():
         cursor.close()
         conn.rollback()
         return counts
+    finally:
+        conn.close()
+
+
+def article_state(pdf):
+    """Ayrı bağlantıdan: makalenin pilot satırı (bilgi_turu dolu) ve bu satırlara bağlı kalite işareti sayısı."""
+    from src.database import get_connection
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*), (SELECT COUNT(*) FROM kalite_isaretleri AS q JOIN klinik_bulgular AS k "
+                       "ON k.id = q.klinik_bulgu_id JOIN pdf_belgeleri AS d ON d.document_id = k.document_id "
+                       "WHERE d.filename = %s AND k.bilgi_turu IS NOT NULL) "
+                       "FROM klinik_bulgular AS b JOIN pdf_belgeleri AS p ON p.document_id = b.document_id "
+                       "WHERE p.filename = %s AND b.bilgi_turu IS NOT NULL", (pdf.name, pdf.name))
+        rows, flags = cursor.fetchone()
+        cursor.close()
+        conn.rollback()
+        return {'satir': int(rows), 'kalite_isareti': int(flags)}
     finally:
         conn.close()
 
@@ -184,9 +209,15 @@ def test_file_checks(tmp):
 
 
 def test_prova_main(start):
+    trop = article_state(TROP_PDF)
     lines = []
     code = ak.main(['--makale', str(TROP_PDF), str(TROP_FILE)], out=lines.append)
-    check('prova (main): çıkış 0, "veritabanı değişmedi"', (0, True), (code, any('değişmedi' in x for x in lines)))
+    if trop['satir'] == 0:
+        check('prova (main, Troponin veritabanında yok): çıkış 0, "veritabanı değişmedi"', (0, True),
+              (code, any('değişmedi' in x for x in lines)))
+    else:
+        check(f"prova (main, Troponin zaten aktarılmış: {trop['satir']} satır): çıkış 1, kontrol 6 'zaten … var'",
+              (1, True), (code, any('[kontrol 6]' in x and 'zaten' in x for x in lines)))
     check('prova (main): tablo sayıları başlangıçla aynı', start, table_counts())
 
     from src.database import get_connection
@@ -205,8 +236,10 @@ def test_prova_main(start):
         conn.close()
 
 
-def test_database(start_pilot):
+def test_database(start_pilot, start_counts):
     from src.database import get_connection
+
+    pilot_before, trop_before = article_state(PILOT_PDF), article_state(TROP_PDF)
 
     conn = get_connection()
     conn.autocommit = False
@@ -229,18 +262,21 @@ def test_database(start_pilot):
         boundary_dir.cleanup()
         by_pdf = {m['pdf']: m for m in report['makaleler']}
         p, t = by_pdf[PILOT_PDF.name], by_pdf[TROP_PDF.name]
-        check('--yeniden: pilot 243 yazıldı, eski 243 satır + 87 kalite işareti silindi, satir_hash\'ler aynı',
-              (243, 243, 87, {'ayni': 243, 'yeni': 0, 'cikan': 0}),
+        check(f"--yeniden: pilot 243 yazıldı, eski 243 satır + {pilot_before['kalite_isareti']} kalite işareti "
+              f"(test öncesi pilota bağlı) silindi, satir_hash'ler aynı",
+              (243, 243, pilot_before['kalite_isareti'], {'ayni': 243, 'yeni': 0, 'cikan': 0}),
               (p['yazilan'], p['silinen_onceki'], p['silinen_kalite_isareti'], p['hash_karsilastirma']))
         check('--yeniden: pilot dosya başına (zehra 207, sinem 36)', [207, 36], list(p['dosya_basina'].values()))
-        check('ikinci makale: Troponin 84 tablo + 1 sayfa sınırı kaydı (iki dosya) yazıldı, önceki satır yok',
-              (85, [84, 1], 0), (t['yazilan'], list(t['dosya_basina'].values()), t['silinen_onceki']))
+        check(f"ikinci makale: Troponin 84 tablo + 1 sayfa sınırı kaydı (iki dosya) yazıldı, silinen önceki satır = "
+              f"test öncesi Troponin satırı ({trop_before['satir']})",
+              (85, [84, 1], trop_before['satir']), (t['yazilan'], list(t['dosya_basina'].values()), t['silinen_onceki']))
         check('Troponin: mudahale_en farklı 3 "tekrar" kabul edildi', 3, len(t['kontrol']['mudahale_farkli_tekrar']))
         cursor.execute("SELECT COUNT(*) FROM klinik_bulgular WHERE cikarma_yontemi = 'rag'")
-        check('--yeniden yalnız o makaleye dokundu: RAG satırları ve diğer satırların parmak izi aynı',
-              (rag_before, report['baslangic']['klinik_bulgular'] - 243),
-              (cursor.fetchone()[0], report['diger_satirlar']['satir']))
-        check('transaction içinde klinik_bulgular 292 -> 377', (292, 377),
+        others = report['baslangic']['klinik_bulgular'] - pilot_before['satir'] - trop_before['satir']
+        check('--yeniden yalnız o makalelere dokundu: RAG satırları aynı, diğer satırlar = başlangıç - pilot - Troponin',
+              (rag_before, others), (cursor.fetchone()[0], report['diger_satirlar']['satir']))
+        check('transaction içinde klinik_bulgular: başlangıç = test öncesi; sonra = diğer satırlar + 243 + 85',
+              (start_counts['klinik_bulgular'], others + 243 + 85),
               (report['baslangic']['klinik_bulgular'], report['sonra']['klinik_bulgular']))
         cursor.close()
         q = {v['dosya']: v for v in report['kalite'].values()}
@@ -251,8 +287,9 @@ def test_database(start_pilot):
         # --yaz sonrası satır listesi (geçici dizine; COMMIT yok): makale başına dosya, ikinci yazım öncekini silmez.
         with tempfile.TemporaryDirectory() as out_dir:
             when = datetime.now()
-            first = ak.satir_dosyalarini_yaz(report, when, 292, 376, hedef=out_dir)
-            second = ak.satir_dosyalarini_yaz(report, when, 292, 376, hedef=out_dir)
+            before_n, after_n = report['baslangic']['klinik_bulgular'], report['sonra']['klinik_bulgular']
+            first = ak.satir_dosyalarini_yaz(report, when, before_n, after_n, hedef=out_dir)
+            second = ak.satir_dosyalarini_yaz(report, when, before_n, after_n, hedef=out_dir)
             data = json.loads(first[0].read_text(encoding='utf-8'))
             check('satır listesi: makale başına zaman damgalı dosya; ikinci yazım yeni ad (öncekini silmez)',
                   (2, 4, True), (len(first), len(list(Path(out_dir).iterdir())), set(first).isdisjoint(second)))
@@ -282,7 +319,7 @@ def main():
         test_backup_and_args(tmp)
         test_file_checks(tmp)
     test_prova_main(start)
-    test_database(start_pilot)
+    test_database(start_pilot, start)
     check('sonda tablo sayıları başlangıçla aynı (klinik_bulgular, kalite_isaretleri, rag)', start, table_counts())
     print(f"\nBaşlangıç: {start}")
     failed = results.count(False)

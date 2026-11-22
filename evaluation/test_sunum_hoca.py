@@ -14,22 +14,28 @@ Kontroller:
 - Sunum veritabanında yalnız hocaya gösterilen view'lar: '_' ile başlayan view yok, hiçbir view'da teknik
   sütun yok; taban view kaynakta (v_sunum_taban), eski _findings_base kurulumda silinir; kaynaktaki
   diğer view'lar değişmez.
-- Sabit satır sayıları (measurements 51, measurements_by_group 102, clinical_outcomes 66, treatments 13,
-  general_clinical_findings 44).
-- Sıra: clinical_outcomes'ta metin 'study finding' -> Table 2 -> 'literature', grup içinde sayfaya göre;
-  general_clinical_findings'te 'literature' en sonda.
+- Pilot makalenin (TK-cardiovascular36-2-1.pdf; view'larda source = makale başlığı) sabit satır sayıları
+  (measurements 51, measurements_by_group 102, clinical_outcomes 66, treatments 13, general_clinical_findings 44,
+  diseases 20, diagnostics 17, symptoms 0). Yalnız pilot satırları sayılır: başka makaleler aktarıldıkça
+  beklentiler değişmez.
+- Sıra (pilot satırlarında): clinical_outcomes'ta metin 'study finding' -> Table 2 -> 'literature', grup içinde
+  sayfaya göre; general_clinical_findings'te 'literature' en sonda.
+- measurements grup sütunu sayısı sabit değil: kurulum verideki en fazla karşılaştırma grubuna göre (en az
+  MIN_GROUPS) kurar; test bunu max_group_count ile karşılaştırır. Pilotun kendi tablosu 2 gruplu.
 - Her view: beklenen sütunlar, teknik sütun yok, satır sayısı doğrudan klinik_bulgular sorgusuyla tutarlı,
   ad sütunlarında '|' ve " n (%)" yok, clinical_context değerleri izinli kümede.
 - evidence: tablo satırında "Table N – satır adı" ('|', '<br>', '**', '<sup>' yok), metin satırında değişmedi.
 - Yönlendirme içeriğe göre (tablo numarasına değil): hasta grubu kaydı olan tablo satırı measurements /
   measurements_by_group'ta, olmayan (etki / tanısal) clinical_outcomes'ta; pilotta bu yine Table 1 / Table 2 demek.
-  Metin olcum general_clinical_findings'te. Pilotta total_group / total_value / effect boş.
-- measurements: grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu
+  Metin olcum general_clinical_findings'te. Pilot satırlarında total_group / total_value / effect boş.
+- measurements: grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view en az 3 grubu
   gösterir, taban view'da veri kaybı yok.
 - Troponin (sentetik kayıtlar, transaction + ROLLBACK): Total ayrı sütunda, OR effect'te, tekrar eden ad bölüm
-  önekli, tanısal performans clinical_outcomes'ta (AUC + P birleşik).
-- Regresyon (Eozinofil Table 3, sentetik kayıtlar, transaction + ROLLBACK): B ayrı sütun değil; statistical_result
-  "multivariate B 7.912, OR 2,735.621, p=0.002"; B'siz etki satırında (pilot Table 2) biçim aynı.
+  önekli, tanısal performans clinical_outcomes'ta (AUC + P birleşik). Troponin veritabanına aktarılmışsa gerçek
+  satırları aynı transaction'da ayrılır (evaluation/pilot_izolasyon), ROLLBACK geri getirir.
+- Regresyon (Eozinofil Table 3, sentetik kayıtlar, transaction + ROLLBACK; gerçek satırlar aynı şekilde ayrılır):
+  B ayrı sütun değil; statistical_result "multivariate B 7.912, OR 2,735.621, p=0.002"; B'siz etki satırında
+  (pilot Table 2) biçim aynı.
 """
 
 import json
@@ -37,7 +43,8 @@ import re
 import sys
 from pathlib import Path
 
-from src.sunum_hoca import (BASE_VIEW, EXPECTED_COLUMNS, OLD_BASE_VIEW, TECHNICAL_COLUMNS, database_names,
+from evaluation.pilot_izolasyon import gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu, korumayi_kaldir
+from src.sunum_hoca import (BASE_VIEW, EXPECTED_COLUMNS, MIN_GROUPS, OLD_BASE_VIEW, TECHNICAL_COLUMNS, database_names,
                             expected_measurement_columns, install, max_group_count)
 
 PDF = Path("data/pdfs/TK-cardiovascular36-2-1.pdf")
@@ -48,11 +55,13 @@ TNO = "CASE WHEN JSON_VALID(taslak_notu) THEN JSON_UNQUOTE(JSON_EXTRACT(taslak_n
 SNO = "CASE WHEN JSON_VALID(taslak_notu) THEN JSON_UNQUOTE(JSON_EXTRACT(taslak_notu, '$.satir_no')) END"
 BASE = "bilgi_turu IS NOT NULL AND review_status = 'verified'"
 HOCA_VIEWS = {"measurements", *EXPECTED_COLUMNS}  # sunum veritabanında yalnız bunlar olmalı
-# Pilot veride sabit satır sayıları (veri değişirse bilerek güncellenir).
+# Pilot makalenin view satır sayıları: yalnız source = pilot başlığı olan satırlar sayılır (başka makale aktarımı
+# bunları değiştirmez; pilot verisi değişirse bilerek güncellenir).
 FIXED_COUNTS = {"measurements": 51, "measurements_by_group": 102, "clinical_outcomes": 66, "treatments": 13,
                 "general_clinical_findings": 44, "diseases": 20, "diagnostics": 17, "symptoms": 0}
 
 results = []
+PILOT = {}  # main() doldurur: document_id, source (view'lardaki makale adı)
 
 
 def check(name, expected, actual, passed=None):
@@ -82,6 +91,21 @@ def view_state(cur, schema, only=None):
         params.append(only)
     cur.execute(sql + " ORDER BY 1", params)
     return {dec(n): dec(d) for n, d in cur.fetchall()}
+
+
+def article_source(cur, filename):
+    """(document_id, source): view'lardaki source = makale başlığı, yoksa dosya adı (v_sunum_taban ile aynı kural)."""
+    cur.execute("SELECT p.document_id, COALESCE(NULLIF(m.baslik, ''), p.filename) FROM pdf_belgeleri AS p "
+                "LEFT JOIN makaleler AS m ON m.document_id = p.document_id WHERE p.filename = %s", (filename,))
+    row = cur.fetchone()
+    return (dec(row[0]), dec(row[1])) if row else (None, None)
+
+
+def pilot_group_count(cur, source_db, pilot_source):
+    """max_group_count'un yalnız pilot satırlarına süzülmüşü (pilot tablosunun karşılaştırma grubu sayısı)."""
+    return int(scalar(cur, f"SELECT COALESCE(MAX(n), 0) FROM (SELECT COUNT(*) AS n FROM `{source_db}`.`{BASE_VIEW}` "
+                           f"WHERE source = %s AND kanit_turu = 'tablo' AND hasta_grubu IS NOT NULL "
+                           f"AND COALESCE(sutun_rolu, '') <> 'toplam' GROUP BY row_key) AS g", (pilot_source,)))
 
 
 def page_num(page):
@@ -132,7 +156,8 @@ def check_views(conn, target, n_groups, label):
     for view, n in expected.items():
         check(f"{label}{view}: satır sayısı = doğrudan klinik_bulgular sorgusu", n, scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}`"))
     for view, n in FIXED_COUNTS.items():
-        check(f"{label}{view}: satır sayısı değişmedi (sabit)", n, scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}`"))
+        check(f"{label}{view}: pilot satır sayısı değişmedi (sabit, source = pilot)", n,
+              scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE source = %s", (PILOT["source"],)))
     source = dec(scalar(cur, "SELECT DATABASE()"))
     check(f"{label}{BASE_VIEW}: satır sayısı = verified klinik_bulgular", scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {BASE}"),
           scalar(cur, f"SELECT COUNT(*) FROM `{source}`.`{BASE_VIEW}`"))
@@ -165,10 +190,12 @@ def check_evidence_rules(cur, target, label=""):
     tablo = scalar(cur, f"SELECT COUNT(*) FROM {base} WHERE kanit_turu = 'tablo'")
     ok = scalar(cur, f"SELECT COUNT(*) FROM {base} WHERE kanit_turu = 'tablo' AND {TABLE_EVIDENCE} AND NOT {DIRTY}")
     check(f"{label}tablo satırı evidence 'Table N – ad' biçiminde, '|' '<br>' '**' '<sup>' yok", tablo, ok)
-    cur.execute(f"SELECT DISTINCT evidence FROM {base} WHERE kanit_turu = 'tablo' AND satir_no = 1 ORDER BY 1")
-    check(f"{label}tablo evidence örneği (satır 1)", ["Table 1 – Age (years)", "Table 2 – Age"], [dec(r[0]) for r in cur.fetchall()])
-    check(f"{label}tablo evidence <sup> -> ^ (BMI)", 1, scalar(cur, f"SELECT COUNT(DISTINCT evidence) FROM {base} "
-                                                                 f"WHERE evidence = 'Table 1 – BMI kg/m^2'"))
+    pilot = PILOT["source"]
+    cur.execute(f"SELECT DISTINCT evidence FROM {base} WHERE kanit_turu = 'tablo' AND satir_no = 1 AND source = %s "
+                f"ORDER BY 1", (pilot,))
+    check(f"{label}pilot tablo evidence örneği (satır 1)", ["Table 1 – Age (years)", "Table 2 – Age"], [dec(r[0]) for r in cur.fetchall()])
+    check(f"{label}pilot tablo evidence <sup> -> ^ (BMI)", 1, scalar(cur, f"SELECT COUNT(DISTINCT evidence) FROM {base} "
+                                                                       f"WHERE evidence = 'Table 1 – BMI kg/m^2' AND source = %s", (pilot,)))
     changed = scalar(cur, f"SELECT COUNT(*) FROM {base} AS f JOIN `{source}`.v_pilot_bulgular AS b "
                           f"ON b.bulgu_id = f.bulgu_id WHERE f.kanit_turu = 'metin' AND NOT (f.evidence <=> b.kanit_gosterim)")
     check(f"{label}metin satırı evidence değişmedi (= kanit_gosterim)", 0, changed)
@@ -179,10 +206,11 @@ def check_evidence_rules(cur, target, label=""):
         text_rows = scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE NOT {TABLE_EVIDENCE}")
         check(f"{label}{view}: metin satırı yok (hepsi tablo satırı)", 0, text_rows)
         check(f"{label}{view}: pilotta hepsi Table 1 (grup karşılaştırması olan tek tablo)", 0,
-              scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE evidence NOT LIKE 'Table 1 – %%'"))
+              scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE source = %s AND evidence NOT LIKE 'Table 1 – %%'",
+                     (pilot,)))
     check(f"{label}measurements: pilotta total_group / total_value / effect boş (Total sütunu ve p sütunu etkisi yok)", 0,
-          scalar(cur, f"SELECT COUNT(*) FROM `{target}`.measurements WHERE total_group IS NOT NULL "
-                      f"OR total_value IS NOT NULL OR effect IS NOT NULL"))
+          scalar(cur, f"SELECT COUNT(*) FROM `{target}`.measurements WHERE source = %s AND (total_group IS NOT NULL "
+                      f"OR total_value IS NOT NULL OR effect IS NOT NULL)", (pilot,)))
     check(f"{label}measurements: her satırda group_1 dolu", 0, scalar(cur, f"SELECT COUNT(*) FROM `{target}`.measurements WHERE group_1 IS NULL"))
     olcum_text = scalar(cur, "SELECT COUNT(*) FROM klinik_bulgular WHERE bilgi_turu = 'olcum' AND kanit_turu = 'metin' AND review_status = 'verified'")
     in_gcf = scalar(cur, f"SELECT COUNT(*) FROM `{target}`.general_clinical_findings AS g JOIN {base} AS f "
@@ -205,9 +233,11 @@ def check_group_order(conn, target):
     table1 = next(t for t in parse_tables(pages) if t["tablo_no"] == 1)
     header = [c["grup"] for c in table1["sutunlar"] if c["rol"] == "grup"]
     cur = conn.cursor()
-    cur.execute(f"SELECT group_1, group_2 FROM `{target}`.measurements WHERE group_1 IS NOT NULL")
+    cur.execute(f"SELECT group_1, group_2 FROM `{target}`.measurements WHERE group_1 IS NOT NULL AND source = %s",
+                (PILOT["source"],))
     rows = [tuple(map(dec, r)) for r in cur.fetchall()]
-    cur.execute(f"SELECT COUNT(*) FROM `{target}`.measurements_by_group WHERE group_order IS NOT NULL")
+    cur.execute(f"SELECT COUNT(*) FROM `{target}`.measurements_by_group WHERE group_order IS NOT NULL AND source = %s",
+                (PILOT["source"],))
     by_group = cur.fetchone()[0]
     cur.close()
     conn.rollback()
@@ -235,11 +265,12 @@ def check_hoca_only(conn, source, target, label=""):
 
 
 def check_ordering(conn, target, label=""):
-    """clinical_outcomes: metin 'study finding' -> Table 2 -> 'literature'; general_clinical_findings: literature sonda.
+    """Pilot satırlarında (view'lar önce source'a göre sıralı; pilot satırları view sırasıyla süzülür):
+    clinical_outcomes: metin 'study finding' -> Table 2 -> 'literature'; general_clinical_findings: literature sonda.
     Her grup içinde sayfa artmayan sırada değil (page_sort'a göre)."""
     cur = conn.cursor()
-    cur.execute(f"SELECT clinical_context, evidence, page FROM `{target}`.clinical_outcomes")
-    rows = [tuple(map(dec, r)) for r in cur.fetchall()]
+    cur.execute(f"SELECT clinical_context, evidence, page, source FROM `{target}`.clinical_outcomes")
+    rows = [tuple(map(dec, r[:3])) for r in cur.fetchall() if dec(r[3]) == PILOT["source"]]
 
     def outcome_group(ctx, evidence):
         if re.match(r"^Table 2 – ", evidence):
@@ -253,8 +284,8 @@ def check_ordering(conn, target, label=""):
           {g: groups.count(g) for g in sorted(set(groups))})
     bad = [i for i in range(1, len(rows)) if groups[i] == groups[i - 1] and page_num(rows[i][2]) < page_num(rows[i - 1][2])]
     check(f"{label}clinical_outcomes: grup içinde sayfa sırası", [], bad)
-    cur.execute(f"SELECT clinical_context, page FROM `{target}`.general_clinical_findings")
-    rows = [tuple(map(dec, r)) for r in cur.fetchall()]
+    cur.execute(f"SELECT clinical_context, page, source FROM `{target}`.general_clinical_findings")
+    rows = [tuple(map(dec, r[:2])) for r in cur.fetchall() if dec(r[2]) == PILOT["source"]]
     lit = [c == "literature" for c, _ in rows]
     check(f"{label}general_clinical_findings: literature en sonda", True, sum(lit), lit == sorted(lit) and any(lit))
     bad = [i for i in range(1, len(rows)) if lit[i] == lit[i - 1] and page_num(rows[i][1]) < page_num(rows[i - 1][1])]
@@ -278,17 +309,23 @@ def check_old_base_dropped(conn, source, target):
 
 
 def check_three_groups(source, target):
-    """3 gruplu örnek: kurulum 3 grup sütunuyla (DDL, transaction dışı), örnek veri transaction içinde + ROLLBACK."""
+    """3 gruplu örnek: kurulum en az 3 grup sütunuyla (DDL, transaction dışı), örnek veri transaction içinde + ROLLBACK.
+    Verideki en fazla grup sayısı 3'ten büyükse kurulum o kadar sütun kurar (sabit beklenmez)."""
     from src.database import get_connection
     from src.pilot_clinical import import_records
 
+    conn = get_connection()
+    real = max_group_count(conn, source)
+    conn.rollback()
+    conn.close()
+    n_groups = max(3, real)
     install(min_groups=3, out=lambda *_: None)
     conn = get_connection()
     conn.autocommit = False
     try:
         cur = conn.cursor()
-        check("3 grup: measurements sütunları (group_1 … group_3)", expected_measurement_columns(3),
-              columns(cur, target, "measurements"))
+        check(f"3 grup: measurements sütunları (en az 3; veride en fazla {real} grup)",
+              expected_measurement_columns(n_groups), columns(cur, target, "measurements"))
         cur.execute("SELECT document_id, filename FROM pdf_belgeleri WHERE filename = %s", (PDF.name,))
         row = cur.fetchone()
         conn.rollback()
@@ -305,7 +342,8 @@ def check_three_groups(source, target):
         conn.start_transaction()
         written = import_records(doc, records, connection=conn)
         check("3 grup: örnek kayıtlar yazıldı (transaction içinde)", 3, written)
-        check("3 grup: kurulumun kullandığı en fazla grup sayısı (max_group_count)", 3, max_group_count(conn, source))
+        check("3 grup: en fazla grup sayısı (max_group_count) = max(3, örnekten önceki)", n_groups,
+              max_group_count(conn, source))
         cur.execute(f"SELECT group_order, group_name, group_value, unit, p_value FROM `{target}`.measurements_by_group "
                     f"WHERE parameter = %s ORDER BY group_order", (name,))
         by_group = [tuple(map(dec, r)) for r in cur.fetchall()]
@@ -316,7 +354,8 @@ def check_three_groups(source, target):
                     f"FROM `{target}`.measurements WHERE parameter = %s", (name,))
         wide = [tuple(map(dec, r)) for r in cur.fetchall()]
         check("3 grup: yan yana view'da tek satır, 3 grup", [("Group A", "1.1", "Group B", "2.2", "Group C", "3.3", "mg/dL", "0.01")], wide)
-        cur.execute(f"SELECT COUNT(*) FROM `{target}`.measurements WHERE group_3 IS NOT NULL AND parameter <> %s", (name,))
+        cur.execute(f"SELECT COUNT(*) FROM `{target}`.measurements WHERE group_3 IS NOT NULL AND parameter <> %s "
+                    f"AND source = %s", (name, PILOT["source"]))
         check("3 grup: pilot satırlarında group_3 boş (2 gruplu tablo)", 0, cur.fetchone()[0])
         cur.execute(f"SELECT evidence FROM `{target}`.measurements WHERE parameter = %s", (name,))
         check("3 grup: örnek tablo satırı evidence", [(f"Table 1 – {name}",)], [tuple(map(dec, r)) for r in cur.fetchall()])
@@ -355,7 +394,10 @@ def check_troponin(target):
             check("troponin: PDF pdf_belgeleri'de", True, False)
             return
         conn.rollback()
+        start = gercek_pilot_durumu()
         conn.start_transaction()
+        removed = gercek_pilotu_ayir(conn, doc["document_id"])  # aktarılmışsa gerçek satırlar (transaction içinde)
+        check("troponin: gerçek satırlar transaction içinde ayrıldı (aktarılmamışsa 0)", True, removed, removed >= 0)
         check("troponin: 84 kayıt yazıldı (transaction içinde)", 84, import_records(doc, transfer, connection=conn, pages=pages))
         cur.execute("SELECT COALESCE(NULLIF(m.baslik, ''), p.filename) FROM pdf_belgeleri AS p LEFT JOIN makaleler AS m "
                     "ON m.document_id = p.document_id WHERE p.document_id = %s", (doc["document_id"],))
@@ -407,7 +449,10 @@ def check_troponin(target):
         cur.close()
     finally:
         conn.rollback()
+        korumayi_kaldir(conn)
         conn.close()
+    guvenlik_kontrolu(start, "test_sunum_hoca troponin")
+    check("troponin: ROLLBACK sonrası gerçek pilot satırları başlangıçla aynı (ayrı bağlantı)", True, True)
 
 
 EOZINOFIL_PDF = Path("data/pdfs/TK-cardiovascular37-2-1.pdf")
@@ -440,7 +485,11 @@ def check_regression(target):
             check("regresyon: Eozinofil PDF pdf_belgeleri'de", True, False)
             return
         conn.rollback()
+        start = gercek_pilot_durumu()
         conn.start_transaction()
+        removed = gercek_pilotu_ayir(conn, doc["document_id"])  # aktarılmışsa gerçek satırlar (transaction içinde)
+        check("regresyon: gerçek Eozinofil satırları transaction içinde ayrıldı (aktarılmamışsa 0)", True, removed,
+              removed >= 0)
         check("regresyon: Eozinofil 42 kayıt yazıldı (transaction içinde)", 42,
               import_records(doc, transfer, connection=conn, pages=pages))
         cur.execute("SELECT COALESCE(NULLIF(m.baslik, ''), p.filename) FROM pdf_belgeleri AS p LEFT JOIN makaleler AS m "
@@ -456,14 +505,17 @@ def check_regression(target):
         check("regresyon: clinical_outcomes'ta B için ayrı sütun yok", False,
               any(c.casefold() in ("b", "regresyon_katsayisi", "coefficient") for c in columns(cur, target, "clinical_outcomes")))
         cur.execute(f"SELECT statistical_result FROM `{target}`.clinical_outcomes WHERE evidence = 'Table 2 – Age' "
-                    f"ORDER BY statistical_result")
+                    f"AND source = %s ORDER BY statistical_result", (PILOT["source"],))
         check("regresyon: B'siz etki satırı (pilot Table 2 – Age) biçimi aynı",
               ["multivariate OR 0.852 (95% CI 0.542-0.915), p=0.679", "univariate OR 1.254 (95% CI 0.892-1.372), p=0.002"],
               [dec(r[0]) for r in cur.fetchall()])
         cur.close()
     finally:
         conn.rollback()
+        korumayi_kaldir(conn)
         conn.close()
+    guvenlik_kontrolu(start, "test_sunum_hoca regresyon")
+    check("regresyon: ROLLBACK sonrası gerçek pilot satırları başlangıçla aynı (ayrı bağlantı)", True, True)
 
 
 def main():
@@ -474,6 +526,7 @@ def main():
         source, target = database_names(conn)
         cur = conn.cursor()
         before = counts(cur)
+        PILOT["document_id"], PILOT["source"] = article_source(cur, PDF.name)
         cur.close()
         conn.rollback()
     finally:
@@ -497,7 +550,10 @@ def main():
     check("kurulum iki kez: view tanımları aynı", True, state1 == state2)
     check(f"kurulum iki kez: kaynaktaki {BASE_VIEW} tanımı aynı", True, bool(base1) and base1 == base2)
     check("kurulum: beklenen view'lar", sorted(HOCA_VIEWS), sorted(state1))
-    check("kurulum: pilotta 2 grup sütunu", 2, second["groups"])
+    check("kurulum: grup sütunu sayısı = max(MIN_GROUPS, verideki en fazla grup) (sabit değil)",
+          max(MIN_GROUPS, max_group_count(conn, source)), second["groups"])
+    check("kurulum: pilot tablosu 2 gruplu (pilot satırlarına süzülmüş)", 2, pilot_group_count(cur, source, PILOT["source"]))
+    conn.rollback()
     cur.close()
 
     check_hoca_only(conn, source, target)
@@ -513,7 +569,8 @@ def main():
     check_regression(target)
     conn = get_connection()
     cur = conn.cursor()
-    check("geri kurulum: measurements yine 2 grup", expected_measurement_columns(restored["groups"]),
+    check("geri kurulum: ilk kurulumla aynı grup sayısı", second["groups"], restored["groups"])
+    check("geri kurulum: measurements sütunları", expected_measurement_columns(restored["groups"]),
           columns(cur, target, "measurements"))
     check("geri kurulum: view tanımları ilk kurulumla aynı", True, view_state(cur, target) == state1)
     source_views_after = {n: d for n, d in view_state(cur, source).items() if n != BASE_VIEW}
