@@ -1,5 +1,5 @@
 -- general_clinical_findings (Zehra). Kaynak: diger, hasta_grubu ve olcum METİN kayıtları; tablo satırları girmez.
--- Metin kaynaklı ölçüm cümleleri (olcum) measurements'ta değil burada görünür (measurements yalnız Table 1).
+-- Metin kaynaklı ölçüm cümleleri (olcum) measurements'ta değil burada görünür (measurements yalnız grup karşılaştırmalı tablo satırları).
 -- Klinik değeri olmayan genel cümleler SQL'e hiç aktarılmaz (onaylanmış JSON'dan çıkarılır);
 -- bu view aktarılmış her diger / hasta_grubu / olcum metin kaydını gösterir.
 -- clinical_context: ortak kural (v_sunum_taban); hasta_grubu -> 'study population',

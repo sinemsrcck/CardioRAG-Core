@@ -25,8 +25,10 @@ Hocanın kullanıcısı için yalnız: GRANT SELECT ON kardiyo_sunum.* TO <HOCA_
 View'lar SQL SECURITY DEFINER ile oluşur; mysqldump ile başka sunucuya taşınmamalı (DEFINER
 satırı orada hata verir), her makinede bu komutla kurulmalı.
 
-measurements view'ındaki group_N sütunları verideki en fazla grup sayısına göre üretilir;
-yeni veride daha çok grup olursa kurulum yeniden çalıştırılmalıdır.
+measurements view'ındaki group_N sütunları verideki en fazla KARŞILAŞTIRMA grubu sayısına göre üretilir
+(Total sütunu sayılmaz; o total_group / total_value'da); yeni veride daha çok grup olursa kurulum yeniden
+çalıştırılmalıdır. Tablo satırlarının view'lara yönlendirmesi tablo numarasına değil kaydın içeriğine bakar
+(sql/sunum_hoca/README.md).
 """
 
 import argparse
@@ -74,10 +76,12 @@ def measurement_columns(n_groups):
 
 
 def expected_measurement_columns(n_groups):
+    """measurements sütunları: karşılaştırma grupları (group_N), Total sütunu (total_group / total_value; Total yoksa
+    boş) ve satırın p sütunundaki etki ölçüsü (effect; yoksa boş)."""
     cols = ["parameter"]
     for k in range(1, n_groups + 1):
         cols += [f"group_{k}", f"group_{k}_value"]
-    return cols + ["unit", "p_value", "evidence", "source", "page"]
+    return cols + ["total_group", "total_value", "unit", "p_value", "effect", "evidence", "source", "page"]
 
 
 def database_names(conn):
@@ -100,11 +104,14 @@ def database_names(conn):
 
 
 def max_group_count(conn, source):
-    """Kaynaktaki v_sunum_taban'da Table 1 satırı başına en fazla grup (kayıt) sayısı."""
+    """Kaynaktaki v_sunum_taban'da tablo satırı başına en fazla KARŞILAŞTIRMA grubu sayısı (measurements'ın group_N
+    sütunları). Tablo numarasına değil içeriğe bakılır: hasta grubu kaydı; Total sütunu (sutun_rolu = 'toplam') ve
+    hasta grubu olmayan etki / tanısal kayıtlar sayılmaz."""
     cursor = conn.cursor()
     try:
         cursor.execute(f"SELECT COALESCE(MAX(n), 0) FROM (SELECT COUNT(*) AS n FROM `{source}`.`{BASE_VIEW}` "
-                       f"WHERE kanit_turu = 'tablo' AND tablo_no = 1 GROUP BY row_key) AS g")
+                       f"WHERE kanit_turu = 'tablo' AND hasta_grubu IS NOT NULL "
+                       f"AND COALESCE(sutun_rolu, '') <> 'toplam' GROUP BY row_key) AS g")
         return int(cursor.fetchone()[0])
     finally:
         cursor.close()

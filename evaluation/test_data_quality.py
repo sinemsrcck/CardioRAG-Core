@@ -7,6 +7,8 @@ Veri kalitesi işaretleri testleri.
 A) Veritabanı gerektirmeyenler: normalizasyon, her kontrol için pozitif/negatif
    örnek (sahte satırlar), determinizm, sürüm hash'i, satir_hash çakışması.
    Pilot satır kontrolleri (check_pilot_row) ve --pilot sürüm ayrımı da burada.
+   Troponin tabloları (sentetik kayıtlar, bellekte): Total sütunu, p sütunu etkisi ve tanısal performans
+   kayıtlarında iki grup varsayan kontroller yanlış alarm vermez; gerçek tutarsızlık yine yakalanır.
 B) MySQL gerektirenler: kalite tabloları yoksa transaction DIŞINDA kurulur (DDL
    örtük commit yapar). Sahte klinik_bulgular satırları tek transaction'da eklenir,
    işaretler aynı bağlantıda yazılır, sonra ROLLBACK. JSONL ve --referans modları
@@ -380,6 +382,54 @@ def test_pilot_unit():
     check("parçasız iki sayfalı alıntı sınırda yoksa -> pilot_kanit_sayfada_yok [hata]", True,
           has(flags_of(dict(boundary, kanit_cumle="proportional to C-peptide level."), {"pages": multi_pages}),
               "pilot_kanit_sayfada_yok", "hata"))
+
+
+TROPONIN_PDF = Path("data/pdfs/who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf")
+
+
+def test_troponin_tables():
+    """Troponin tabloları (sentetik kayıt: her tablo satırı kanıt = ham satır; DB'siz, bellekte): iki grup varsayan
+    kontroller Total sütununda, p sütunu etkisinde ve tanısal performans kayıtlarında yanlış alarm vermez."""
+    import src.pilot_tablo as pt
+    from src.data_quality import run_pilot_checks
+    from src.pilot_clinical import pdf_pages
+
+    if not TROPONIN_PDF.exists():
+        check("troponin: PDF var (yoksa bu bölüm sınanmaz)", True, False)
+        return
+    doc, pages = pdf_pages(TROPONIN_PDF)
+    tables = pt.parse_tables(pages)
+    hams = list(dict.fromkeys((t["sayfa"], r["ham"]) for t in tables for r in t["satirlar"]))
+    records = [{"v2_sira": i, "kanit_turu": "tablo", "sayfa": s, "kanit_cumle": h, "bilgi_turu": "olcum",
+                "baglam": "study_finding", "klinik_bilgi_en": h} for i, (s, h) in enumerate(hams, 1)]
+    transfer = pt.enrich(records, pages, doc["document_id"])["aktarim"]
+    rows = [make_row(**{k: r.get(k) for k in ("bilgi_turu", "baglam", "klinik_bilgi_en", "kanit_cumle", "kanit_turu",
+                                             *pt.STRUCTURED_FIELDS)},
+                     document_id=doc["document_id"], kanit_sayfa=r["sayfa"], chunk_id=None, makale_id=None, v=i)
+            for i, r in enumerate(transfer)]
+    sources = {doc["document_id"]: {"dosya": doc["filename"], "pages": pages, "tables": pt.parse_tables(pages)}}
+    flags, report = run_pilot_checks(rows, sources)
+    flags += run_checks(rows, pilot=True)
+    got = Counter(f"{f['kontrol_kodu']} [{f['seviye']}]" for f in flags)
+    false_alarms = ("tablo_cift_eksik", "tablo_cift_tutarsiz", "pilot_yuzde_uyumsuz", "pilot_tablo_bos_deger",
+                    "kategorik_p_yeniden_uretilemedi", "surekli_p_supheli", "tekrar_ayni_bilgi", "tekrar_yalniz_mudahale")
+    check("troponin: 84 kayıt; iki grup / Total / tanısal yanlış alarmı yok", (84, {}),
+          (len(rows), {k: v for k, v in got.items() if k.split(" ")[0] in false_alarms}))
+    check("troponin: kalan işaretler yalnız genel sayısal kontroller (birimsiz değer, gerçek negatif Q1)",
+          {"deger_birimsiz [uyari]": 27, "negatif_sayi [uyari]": 2}, dict(got))
+    item = report["eksiksizlik"][0]
+    check("troponin: eksiksizlik 27/27, eksik grup/analiz yok", (27, 27, 0),
+          (item["pdf_tablo_satiri"], item["temsil_edilen"], len(report["eksik_grup_analiz"])))
+    # Negatif örnekler: kontroller hâlâ çalışıyor (Total'siz çift p farkı, tanısal kaydın yanlış değeri).
+    pair = [r for r in rows if r["klinik_bilgi_en"] == "Age" and r.get("hasta_grubu") in ("ACS Absent", "ACS Present")]
+    broken = [dict(r, p="0.500") if r["hasta_grubu"] == "ACS Present" else r for r in pair]
+    sens = next(r for r in rows if r["klinik_bilgi_en"] == "Sensitivity")
+    bad_rows = [r for r in rows if r not in pair and r is not sens] + broken + [dict(sens, deger="99.9%")]
+    bad, _ = run_pilot_checks(bad_rows, sources)
+    check("troponin negatif: gerçek grup çiftinde p farkı ve tanısal değer farkı -> tablo_cift_tutarsiz [hata]",
+          (True, True),
+          (any(f["kontrol_kodu"] == "tablo_cift_tutarsiz" and "çiftte p değerleri farklı" in f["aciklama"] for f in bad),
+           any(f["kontrol_kodu"] == "tablo_cift_tutarsiz" and "deger '99.9%'" in f["aciklama"] for f in bad)))
 
 
 def test_collisions(tmp):
@@ -897,6 +947,7 @@ def main():
     test_source()
     test_determinism_and_version()
     test_pilot_unit()
+    test_troponin_tables()
     with tempfile.TemporaryDirectory() as tmp:
         test_collisions(tmp)
     with tempfile.TemporaryDirectory() as tmp:

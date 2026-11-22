@@ -21,9 +21,13 @@ Kontroller:
 - Her view: beklenen sütunlar, teknik sütun yok, satır sayısı doğrudan klinik_bulgular sorgusuyla tutarlı,
   ad sütunlarında '|' ve " n (%)" yok, clinical_context değerleri izinli kümede.
 - evidence: tablo satırında "Table N – satır adı" ('|', '<br>', '**', '<sup>' yok), metin satırında değişmedi.
-- measurements / measurements_by_group yalnız Table 1 tablo satırları; metin olcum general_clinical_findings'te.
+- Yönlendirme içeriğe göre (tablo numarasına değil): hasta grubu kaydı olan tablo satırı measurements /
+  measurements_by_group'ta, olmayan (etki / tanısal) clinical_outcomes'ta; pilotta bu yine Table 1 / Table 2 demek.
+  Metin olcum general_clinical_findings'te. Pilotta total_group / total_value / effect boş.
 - measurements: grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu
   gösterir, taban view'da veri kaybı yok.
+- Troponin (sentetik kayıtlar, transaction + ROLLBACK): Total ayrı sütunda, OR effect'te, tekrar eden ad bölüm
+  önekli, tanısal performans clinical_outcomes'ta (AUC + P birleşik).
 """
 
 import json
@@ -91,17 +95,24 @@ def columns(cur, target, view):
 def expected_counts(cur):
     """Görünüm satır sayıları, doğrudan klinik_bulgular'dan (v_pilot_bulgular / sunum view'ları kullanılmadan)."""
     text = f"{BASE} AND kanit_turu = 'metin'"
-    t1 = f"{BASE} AND kanit_turu = 'tablo' AND {TNO} = '1'"
-    t2 = f"{BASE} AND kanit_turu = 'tablo' AND {TNO} = '2'"
+    # Yönlendirme içeriğe göre (tablo numarasına değil): hasta grubu kaydı olan tablo satırı -> measurements;
+    # grup kaydı olmayan tablo satırı (etki / tanısal) -> clinical_outcomes (AUC'ye bağlı P kaydı ayrı satır değil).
+    group = f"{BASE} AND kanit_turu = 'tablo' AND hasta_grubu IS NOT NULL"
+    no_group = (f"{BASE} AND kanit_turu = 'tablo' AND NOT EXISTS (SELECT 1 FROM klinik_bulgular AS g WHERE "
+                f"g.bilgi_turu IS NOT NULL AND g.review_status = 'verified' AND g.kanit_turu = 'tablo' "
+                f"AND g.hasta_grubu IS NOT NULL AND g.document_id = klinik_bulgular.document_id "
+                f"AND {TNO.replace('taslak_notu', 'g.taslak_notu')} = {TNO.replace('taslak_notu', 'klinik_bulgular.taslak_notu')} "
+                f"AND {SNO.replace('taslak_notu', 'g.taslak_notu')} = {SNO.replace('taslak_notu', 'klinik_bulgular.taslak_notu')}) "
+                f"AND NOT (JSON_VALID(taslak_notu) AND JSON_EXTRACT(taslak_notu, '$.p_baglandigi_satir') IS NOT NULL)")
     distinct_rows = lambda where: scalar(cur, f"SELECT COUNT(DISTINCT document_id, {TNO}, {SNO}) FROM klinik_bulgular WHERE {where}")  # noqa: E731
     olcum_text = scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} AND bilgi_turu = 'olcum'")
     trt = "bilgi_turu IN ('ilac', 'doz', 'tedavi')"
     return {
-        "measurements_by_group": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {t1}"),
-        "measurements": distinct_rows(t1),
+        "measurements_by_group": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {group}"),
+        "measurements": distinct_rows(group),
         "treatments": distinct_rows(f"{BASE} AND kanit_turu = 'tablo' AND {trt}")
                       + scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} AND {trt}"),
-        "clinical_outcomes": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {t2}")
+        "clinical_outcomes": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {no_group}")
                              + scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} AND bilgi_turu = 'klinik_sonuc'"),
         "general_clinical_findings": scalar(cur, f"SELECT COUNT(*) FROM klinik_bulgular WHERE {text} "
                                                  f"AND bilgi_turu IN ('diger', 'hasta_grubu')") + olcum_text,
@@ -164,8 +175,12 @@ def check_evidence_rules(cur, target, label=""):
         check(f"{label}{view}: tablo evidence'ında '|' '<br>' '**' '<sup>' yok", 0, dirty)
     for view in ("measurements", "measurements_by_group"):
         text_rows = scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE NOT {TABLE_EVIDENCE}")
-        check(f"{label}{view}: metin satırı yok (hepsi Table 1)", 0, text_rows)
-        check(f"{label}{view}: hepsi Table 1", 0, scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE evidence NOT LIKE 'Table 1 – %%'"))
+        check(f"{label}{view}: metin satırı yok (hepsi tablo satırı)", 0, text_rows)
+        check(f"{label}{view}: pilotta hepsi Table 1 (grup karşılaştırması olan tek tablo)", 0,
+              scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE evidence NOT LIKE 'Table 1 – %%'"))
+    check(f"{label}measurements: pilotta total_group / total_value / effect boş (Total sütunu ve p sütunu etkisi yok)", 0,
+          scalar(cur, f"SELECT COUNT(*) FROM `{target}`.measurements WHERE total_group IS NOT NULL "
+                      f"OR total_value IS NOT NULL OR effect IS NOT NULL"))
     check(f"{label}measurements: her satırda group_1 dolu", 0, scalar(cur, f"SELECT COUNT(*) FROM `{target}`.measurements WHERE group_1 IS NULL"))
     olcum_text = scalar(cur, "SELECT COUNT(*) FROM klinik_bulgular WHERE bilgi_turu = 'olcum' AND kanit_turu = 'metin' AND review_status = 'verified'")
     in_gcf = scalar(cur, f"SELECT COUNT(*) FROM `{target}`.general_clinical_findings AS g JOIN {base} AS f "
@@ -309,6 +324,90 @@ def check_three_groups(source, target):
         conn.close()
 
 
+TROPONIN_PDF = Path("data/pdfs/who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf")
+
+
+def check_troponin(target):
+    """Troponin tabloları (sentetik kayıt: her tablo satırı kanıt = ham satır) transaction içinde yazılır, view'lar
+    okunur, ROLLBACK. Yönlendirme içeriğe göre: Table I (gruplu) measurements, Table II (tanısal) clinical_outcomes."""
+    from src.database import get_connection
+    import src.pilot_tablo as pt
+    from src.pilot_clinical import import_records, pdf_pages
+
+    if not TROPONIN_PDF.exists():
+        check("troponin: PDF var", True, False)
+        return
+    doc, pages = pdf_pages(TROPONIN_PDF)
+    tables = pt.parse_tables(pages)
+    hams = list(dict.fromkeys((t["sayfa"], r["ham"]) for t in tables for r in t["satirlar"]))
+    records = [{"v2_sira": i, "kanit_turu": "tablo", "sayfa": s, "kanit_cumle": h, "bilgi_turu": "olcum",
+                "baglam": "study_finding", "klinik_bilgi_en": h} for i, (s, h) in enumerate(hams, 1)]
+    transfer = [dict(r, review_status="verified") for r in pt.enrich(records, pages, doc["document_id"])["aktarim"]]
+    conn = get_connection()
+    conn.autocommit = False
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT filename FROM pdf_belgeleri WHERE document_id = %s", (doc["document_id"],))
+        if not cur.fetchone():
+            conn.rollback()
+            check("troponin: PDF pdf_belgeleri'de", True, False)
+            return
+        conn.rollback()
+        conn.start_transaction()
+        check("troponin: 84 kayıt yazıldı (transaction içinde)", 84, import_records(doc, transfer, connection=conn, pages=pages))
+        cur.execute("SELECT COALESCE(NULLIF(m.baslik, ''), p.filename) FROM pdf_belgeleri AS p LEFT JOIN makaleler AS m "
+                    "ON m.document_id = p.document_id WHERE p.document_id = %s", (doc["document_id"],))
+        source = dec(cur.fetchone()[0])
+        counts = {}
+        for view in ("measurements", "measurements_by_group", "clinical_outcomes", "treatments",
+                     "general_clinical_findings", "diseases", "diagnostics", "symptoms"):
+            counts[view] = scalar(cur, f"SELECT COUNT(*) FROM `{target}`.`{view}` WHERE source = %s", (source,))
+        check("troponin: view satırları (measurements 19 satır, by_group 57 = 19x3 Total dahil, clinical_outcomes 21 "
+              "= 24 tanısal - 3 AUC'ye bağlı P)",
+              {"measurements": 19, "measurements_by_group": 57, "clinical_outcomes": 21, "treatments": 0,
+               "general_clinical_findings": 0, "diseases": 0, "diagnostics": 0, "symptoms": 0}, counts)
+
+        def rows(sql):
+            cur.execute(sql, (source,))
+            return [tuple(map(dec, r)) for r in cur.fetchall()]
+
+        wide = rows(f"SELECT parameter, group_1, group_1_value, group_2, group_2_value, total_group, total_value, "
+                    f"p_value, effect, evidence FROM `{target}`.measurements WHERE source = %s")
+        by_name = {r[0]: r for r in wide}
+        check("troponin measurements: Age — gruplar yalnız karşılaştırma grupları, Total ayrı sütunda",
+              ("Age", "ACS Absent", "63 (52-72)", "ACS Present", "68 (56-79)", "Total (n=114)", "64 (53-74)", "0.100", None,
+               "Table 1 – Age"), by_name.get("Age"))
+        check("troponin measurements: tekrar eden ad bölüm önekli, OR effect'te, p boş",
+              ("delta hs Trop I (0-1)h ±20% – Risc of ACS", "ACS Absent", "32 (34.0)", "ACS Present", "16 (80.0)",
+               "Total (n=114)", "48 (42.1)", None, "OR 7.8 (95% CI 2.4–25.1)",
+               "Table 1 – delta hs Trop I (0-1)h ±20% – Risc of ACS"),
+              by_name.get("delta hs Trop I (0-1)h ±20% – Risc of ACS"))
+        check("troponin measurements: 3 bölümün 'Non risc' / 'Risc of ACS' satırları ayrı ve önekli; tekrar etmeyen "
+              "adlarda önek yok", (6, 0, 3),
+              (sum(" – Non risc" in n or " – Risc of ACS" in n for n in by_name),
+               sum(n in ("Non risc", "Risc of ACS") for n in by_name), sum(r[8] is not None for r in wide)))
+        check("troponin measurements: Pairwise satırı evidence'ta tam adıyla (klinik_bilgi_en 'A-B' kalır)",
+              "Table 1 – Pairwise comparation A-B", by_name.get("Pairwise comparation A-B", (None,) * 10)[9])
+        check("troponin measurements: group_N'de Total yok", 0, sum("Total" in (r[1] or "") + (r[3] or "") for r in wide))
+        outcomes = rows(f"SELECT finding, statistical_result, evidence FROM `{target}`.clinical_outcomes WHERE source = %s")
+        found = {r[0]: r for r in outcomes}
+        check("troponin clinical_outcomes: tanısal performans (test – ölçü; AUC + P birleşik; OR SE'li; karşılaştırma)",
+              [("Delta HS Trop I 1h-0h % – Sensitivity", "75.0%", "Table 2 – Sensitivity"),
+               ("Delta HS Trop I 1h-0h % – AUC", "AUC 0.755 ± 0.072, p<0.001", "Table 2 – AUC; Table 2 – P"),
+               ("Delta HS Trop I 1h-0h % – Odds Ratio", "OR 11.84 (SE 0.70)", "Table 2 – Odds Ratio"),
+               ("Pairwise comparation for AUC: Delta HS Trop I 1h-0h % vs Delta HS Trop I 3h-0h %", "p=0.291",
+                "Table 2 – Pairwise comparation for AUC")],
+              [found.get(k) for k in ("Delta HS Trop I 1h-0h % – Sensitivity", "Delta HS Trop I 1h-0h % – AUC",
+                                      "Delta HS Trop I 1h-0h % – Odds Ratio",
+                                      "Pairwise comparation for AUC: Delta HS Trop I 1h-0h % vs Delta HS Trop I 3h-0h %")])
+        check("troponin clinical_outcomes: Table 1 satırı yok, ayrı P satırı yok", (0, 0),
+              (sum(r[2].startswith("Table 1 –") for r in outcomes), sum(r[0].endswith("– P") for r in outcomes)))
+        cur.close()
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def main():
     from src.database import get_connection
 
@@ -352,6 +451,7 @@ def main():
 
     check_three_groups(source, target)
     restored = install(out=lambda *_: None)  # gerçek veriye göre (2 grup) geri kur
+    check_troponin(target)
     conn = get_connection()
     cur = conn.cursor()
     check("geri kurulum: measurements yine 2 grup", expected_measurement_columns(restored["groups"]),

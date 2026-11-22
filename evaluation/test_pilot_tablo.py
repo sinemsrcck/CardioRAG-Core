@@ -23,6 +23,9 @@ Kontroller:
   satırı (bölüm kapsamını bitirir), başlığı boş etiket sütunu ve birleşik hücre adı, <br> alt satırları,
   test / post-hoc işaretleri, "(A)" etiketi, "±SE", karmaşık tablo -> elle inceleme, boş değerli kayıt yok.
 - Troponin PDF'i (who-J-Coll-…pdf, varsa): 3 tablo; Table III elle inceleme, kayıt yok; boş / çöp kayıt yok.
+  Ekip kararları: Total sütunu (sutun_rolu=toplam, comparator / p yok, n başlıktan), p sütunundaki OR'ler etki
+  kaydı, tekrar eden ad ("Non risc") bölümüyle, Table II tanısal performans (test x ölçü, P -> AUC, ikili AUC
+  karşılaştırması), "(SE.)" birim değil. Bilinen: validate_records'un tekrar anahtarında mudahale_en yok (3 kayıt).
 - Girdi: findings zorunlu; başka belgenin findings'i (içerik ya da document_id) reddedilir; başka belgenin
   çıktısının üzerine --overwrite ile bile yazılmaz.
 - Temiz satır adı (row_name): istatistik etiketi (n (%), mean ± SD, median (IQR) …) atılır, klinik birim
@@ -165,8 +168,20 @@ def check_general_rules():
     check('roma rakamı', [1, 2, 3, 4, 9, 14, None], [pt.roman_to_int(x) for x in ('I', 'II', 'III', 'IV', 'IX', 'XIV', 'IIZ')])
     check('split_unit: (A) etiket, ±SE etiket', [('hs Trop I 0h (A)', 'ng/l'), ('AUC', None), ('Glucose', 'mg/dL')],
           [pt.split_unit('hs Trop I  0h  ng/l  (A)'), pt.split_unit('AUC±SE.'), pt.split_unit('Glucose (mg/dL)')])
-    check('row_name: ±SE / ± SD atılır', ['AUC', 'Weight', 'BMI kg/m<sup>2</sup>'],
-          [pt.row_name('AUC±SE.'), pt.row_name('Weight ± SD'), pt.row_name('BMI kg/m<sup>2</sup>')])
+    check('row_name: ±SE / ± SD / (SE.) atılır', ['AUC', 'Weight', 'BMI kg/m<sup>2</sup>', 'Odds Ratio', 'Disease'],
+          [pt.row_name('AUC±SE.'), pt.row_name('Weight ± SD'), pt.row_name('BMI kg/m<sup>2</sup>'),
+           pt.row_name('Odds Ratio (SE.)'), pt.row_name('Disease')])
+    check('split_unit: "(SE.)" birim değil', [('Odds Ratio', None), ('Glucose', 'mg/dL')],
+          [pt.split_unit('Odds Ratio (SE.)'), pt.split_unit('Glucose (mg/dL)')])
+    check('group_title: (n=…) her yerden, biçim ifadesi ayrı; eski başlıklar aynı',
+          [('Total', 114, 'Median (Q1-Q3)'), ('Ischemic event', 372, None), ('All patients', 50, 'n (%)'),
+           ('Group A', 10, None)],
+          [pt.group_title('Total (n=114) / Median (Q1-Q3)'), pt.group_title('Ischemic event (n=372)'),
+           pt.group_title('All patients (n=50) / n (%)'), pt.group_title('Group A (n = 10)')])
+    check('Total adı genel kural (Total / Overall / All patients / Whole cohort; grup adı değil)',
+          [True, True, True, True, True, False, False],
+          [bool(pt.TOTAL_GROUP.match(x)) for x in ('Total', 'OVERALL', 'All patients', 'Whole cohort', 'Toplam',
+                                                    'Total cholesterol', 'ACS Absent')])
     tables = pt.parse_tables({7: SYNTHETIC_PAGE})
     check('sentetik: Roma rakamlı başlık sayıya çevrildi', [(2, 'Table II: Synthetic general rules.'), (3, None)],
           [(t['tablo_no'], t['tablo_basligi'] if t['tablo_no'] == 2 else None) for t in tables])
@@ -188,8 +203,9 @@ def check_general_rules():
           ('0.100', {'P': 'u'}, '4 (33.3)', {'Group B (n=12)': 'II'}, 'f'),
           (rows['Age']['sutun_degerleri']['P'], rows['Age'].get('isaretler'), rows['Aspirin']['sutun_degerleri']['Group B (n=12)'],
            rows['Aspirin'].get('isaretler'), rows['Test value'].get('ad_isareti')))
-    check('sentetik: p hücresinde OR (or) etki olarak okunmadı (ekip kararı bekliyor)', '7.8 (2.4-25.1) or',
-          rows['Pairwise check Y-Z']['sutun_degerleri']['P'])
+    check('sentetik: p hücresinde OR (or) -> satırın etki ölçüsü (ekip kararı 8), p değil',
+          ('7.8 (2.4-25.1)', {'P': {'sutun': 'P', 'etki_turu': 'OR', 'isaret': 'or', 'deger': '7.8', 'ci95': '2.4-25.1'}}),
+          (rows['Pairwise check Y-Z']['sutun_degerleri']['P'], rows['Pairwise check Y-Z'].get('p_etki')))
     check('sentetik: atlanan satırlar', ['bicim_satiri', 'bicim_satiri', 'dipnot'],
           sorted(s['tur'] for s in t2['atlanan_satirlar']))
     check('sentetik: dipnot satırı veri değil, dipnot metni saklandı', (True, False),
@@ -210,8 +226,14 @@ def check_general_rules():
            or r.get('p') == ''])
     check('sentetik: boş değerli grup kaydı üretilmedi, raporlandı', [('Pairwise check Y-Z', 'Group B (n=12)')],
           [(a['degisken'], a['sutun']) for a in result['atlanan_kayitlar']])
-    check('sentetik: kayıt sayısı (10 satır x 2 grup - 1 boş)', 19, len(transfer))
-    notes = {(r['klinik_bilgi_en'], r['hasta_grubu']): json.loads(r['taslak_notu']) for r in transfer}
+    check('sentetik: kayıt sayısı (10 satır x 2 grup - 1 boş + 1 p sütunu etkisi)', 20, len(transfer))
+    effect = [r for r in transfer if r.get('etki_turu') == 'OR']
+    check('sentetik: p sütunu etkisi ayrı kayıt (OR, deger, ci95 ayrı; p yok; grup kaydında p boş)',
+          ([('Y-Z', 'OR', '7.8', '2.4-25.1', None, None, 'p_sutunu')], [None]),
+          ([(r['klinik_bilgi_en'], r['etki_turu'], r['deger'], r['ci95'], r.get('p'), r.get('hasta_grubu'),
+             json.loads(r['taslak_notu']).get('etki_kaynagi')) for r in effect],
+           [r.get('p') for r in transfer if r['klinik_bilgi_en'] == 'Y-Z' and r.get('hasta_grubu')]))
+    notes = {(r['klinik_bilgi_en'], r.get('hasta_grubu')): json.loads(r['taslak_notu']) for r in transfer}
     check('sentetik: taslak_notu işaretleri / biçim (değerle tutarlıysa) / etiket',
           [{'p_test_isareti': 'u'}, {'bicim_etiketi': 'n (%)', 'p_test_isareti': 'p'},
            {'posthoc_isareti': 'II', 'bicim_etiketi': 'n (%)'}, {'bicim_etiketi': 'Median (Q1-Q3)', 'p_test_isareti': 'u'},
@@ -227,7 +249,48 @@ def check_general_rules():
           bool(issue) and any(p.startswith('çok seviyeli') for p in issue['parca'])
           and any(p.startswith('metin değerli') for p in issue['parca']) and any(p.startswith('sayısal') for p in issue['parca']))
     accepted, errors = validate_records([dict(r, review_status='verified') for r in transfer], {7: SYNTHETIC_PAGE})
-    check('sentetik: validate_records', (19, 0), (len(accepted), len(errors)))
+    check('sentetik: validate_records', (20, 0), (len(accepted), len(errors)))
+    check_synthetic_decisions()
+
+
+SYNTHETIC_DECISIONS = """**Table 4: Three groups and overall.**
+
+|**Variable**|**Overall (n=30)**|**Low (n=10)**|**Mid (n=10)**|**High (n=10)**|**p**|
+|---|---|---|---|---|---|
+|Age|50±5|48±4|50±5|52±6|0.200|
+
+**Table 5: Diagnostic values.**
+
+||**Test X**|**Test Y**|
+|---|---|---|
+|Sensitivity|70%|80%|
+|Specificity|60%|90%|
+|NPV|75%|85%|
+|P|0.010|0.020|
+"""
+
+
+def check_synthetic_decisions():
+    """Ekip kararlarının genel kuralları (makaleye özel değil): 'Overall' Total sayılır; 3+ karşılaştırma grubunda
+    comparator yok; AUC'siz tanısal tabloda P bağlanamaz (ayrı kayıt + sorun)."""
+    pages = {9: SYNTHETIC_DECISIONS}
+    tables = pt.parse_tables(pages)
+    records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': 9, 'kanit_cumle': r['ham'], 'bilgi_turu': 'olcum',
+                'baglam': 'study_finding', 'klinik_bilgi_en': r['ham']}
+               for i, r in enumerate((r for t in tables for r in t['satirlar']), 1)]
+    result = pt.enrich(records, pages)
+    t4 = [r for r in result['aktarim'] if json.loads(r['taslak_notu'])['tablo_no'] == 4]
+    check('sentetik kararlar: "Overall" Total; 3 karşılaştırma grubunda comparator yok; Total p yok',
+          [('Overall', None, None, 'toplam'), ('Low', None, '0.200', None), ('Mid', None, '0.200', None),
+           ('High', None, '0.200', None)],
+          [(r['hasta_grubu'], r.get('comparator'), r.get('p'), json.loads(r['taslak_notu']).get('sutun_rolu')) for r in t4])
+    t5 = next(t for t in result['tablolar'] if t['tablo_no'] == 5)
+    rows5 = [r for r in result['aktarim'] if json.loads(r['taslak_notu'])['tablo_no'] == 5]
+    p_rows = [json.loads(r['taslak_notu']) for r in rows5 if r['klinik_bilgi_en'] == 'P']
+    check('sentetik kararlar: AUC\'siz tanısal tablo -> P bağlanamadı (ayrı kayıt, sorun raporlandı)',
+          ('tanisal_performans', 8, 2, True, True),
+          (t5.get('tablo_turu'), len(rows5), len(p_rows), all('p_baglanamadi' in n for n in p_rows),
+           any(s['tur'] == 'p_satiri_baglanamadi' for s in t5['sorunlar'])))
 
 
 def check_troponin():
@@ -244,24 +307,123 @@ def check_troponin():
     records = [{'v2_sira': i, 'kanit_turu': 'tablo', 'sayfa': s, 'kanit_cumle': h, 'bilgi_turu': 'olcum',
                 'baglam': 'study_finding', 'klinik_bilgi_en': h} for i, (s, h) in enumerate(hams, 1)]
     result = pt.enrich(records, pages, doc['document_id'])
+    tables = result['tablolar']
     per = {t['tablo_no']: [r for r in result['aktarim'] if json.loads(r['taslak_notu'])['tablo_no'] == t['tablo_no']]
            for t in tables}
-    check('troponin: satır / kayıt (Table I, II, III)', [(19, 57), (8, 24), (0, 0)],
-          [(len(t['satirlar']), len(per[t['tablo_no']])) for t in tables])
+    check('troponin: satır / kayıt (Table I: 19x3 grup + 3 OR; Table II: 8 ölçü x 3 test; Table III yok)',
+          [(19, 60), (8, 24), (0, 0)], [(len(t['satirlar']), len(per[t['tablo_no']])) for t in tables])
     check('troponin: Table III elle inceleme (kayıt yok; 8 ham satırın hepsi)', (True, 8),
           (any(s['tur'] == 'elle_inceleme_gerekli' for s in tables[2]['sorunlar']),
            sum(r['eslesme'] == 'elle_inceleme' for r in result['kayitlar'])))
+
+    def is_result_in_p(r):  # tanısal P / ikili karşılaştırma kaydı: sonucu p'de, deger boş (doğru)
+        return json.loads(r['taslak_notu']).get('tani_olcusu') in ('p', 'karsilastirma') and bool(r.get('p'))
+
     check('troponin: boş / çöp kayıt yok (boş değer, boş grup, ham satır adı, dipnot)', [],
           [(r.get('klinik_bilgi_en'), r.get('hasta_grubu'), r.get('deger')) for r in result['aktarim']
-           if not r.get('deger') or r.get('hasta_grubu') == '' or '|' in r['klinik_bilgi_en']
-           or r['klinik_bilgi_en'].startswith('_') or not any(ch.isdigit() for ch in r['deger'])][:3])
+           if (not is_result_in_p(r) and (not r.get('deger') or not any(ch.isdigit() for ch in r['deger'])))
+           or r.get('hasta_grubu') == '' or '|' in r['klinik_bilgi_en'] or r['klinik_bilgi_en'].startswith('_')][:3])
     names = [(r['degisken'], r['alt_bolum']) for r in tables[0]['satirlar']]
     check('troponin Table I: Sex alt satırları, işaretsiz ad, birleşik hücre adı',
           (('Female', 'Sex'), ('Male', 'Sex'), ('P value for intra groups', None), ('Pairwise comparation A-B', None)),
           (names[1], names[2], names[15], names[16]))
     check('troponin Table I: biçim satırı bölüm kapsamını bitirdi', None, tables[0]['satirlar'][9]['alt_bolum'])
+
+    # Madde 6: Total sütunu veri olarak kalır, karşılaştırma grubu sayılmaz.
+    t1, t2 = per[1], per[2]
+    groups1 = [(c['grup'], c['n'], c.get('bicim'), bool(c.get('toplam'))) for c in tables[0]['sutunlar'] if c['rol'] == 'grup']
+    check('troponin Table I: (n=…) başlığın her yerinden, " / Median (Q1-Q3)" addan ayrıldı, Total işaretli',
+          [('Total', 114, 'Median (Q1-Q3)', True), ('ACS Absent', 94, 'Median (Q1-Q3)', False),
+           ('ACS Present', 20, 'Median (Q1-Q3)', False)], groups1)
+    notes1 = [json.loads(r['taslak_notu']) for r in t1]
+    total = [r for r, n in zip(t1, notes1) if n.get('sutun_rolu') == 'toplam']
+    check('troponin Table I: Total kaydı 19 (sutun_rolu=toplam, hasta_grubu Total, comparator / p yok, grup_n 114)',
+          (19, {('Total', None, None, 114)}),
+          (len(total), {(r['hasta_grubu'], r.get('comparator'), r.get('p'), json.loads(r['taslak_notu'])['grup_n'])
+                        for r in total}))
+    check('troponin Table I: comparator yalnız gerçek gruplar arasında (ACS Absent <-> ACS Present)',
+          {('ACS Absent', 'ACS Present'), ('ACS Present', 'ACS Absent')},
+          {(r['hasta_grubu'], r.get('comparator')) for r, n in zip(t1, notes1)
+           if r.get('hasta_grubu') and n.get('sutun_rolu') != 'toplam'})
+    check('troponin Table I: Total Age biçimi başlıktan (Median (Q1-Q3); ara satırdaki "n (%)" değerle uymuyor)',
+          'Median (Q1-Q3)', json.loads(total[0]['taslak_notu']).get('bicim_etiketi'))
+    # Madde 8: p sütunundaki "7.8 (2.4-25.1)<br>or" -> OR etki kaydı; p sütununun asıl p'leri değişmez.
+    effects = [(r['klinik_bilgi_en'], n['alt_bolum'], r['etki_turu'], r['deger'], r['ci95'], r.get('p'), r.get('hasta_grubu'))
+               for r, n in zip(t1, notes1) if n.get('etki_kaynagi') == 'p_sutunu']
+    check('troponin Table I: p sütunundaki OR\'ler etki kaydı (OR, deger, ci95 ayrı; p yok)',
+          [('Risc of ACS', 'delta hs Trop I (0-1)h ±20%', 'OR', '7.8', '2.4-25.1', None, None),
+           ('Risc of ACS', 'delta hs Trop I (0-3)h ±20%', 'OR', '9.6', '2.6-34.9', None, None),
+           ('Risc of ACS', 'delta hs Trop I (1-3)h ±20%', 'OR', '13.4', '3.6-49.2', None, None)], effects)
+    check('troponin Table I: OR satırlarının grup kayıtlarında p yok, Non risc p\'si <0.001 (asıl p değişmedi)',
+          ({None}, {'<0.001'}),
+          ({r.get('p') for r in t1 if r['klinik_bilgi_en'] == 'Risc of ACS' and r.get('hasta_grubu')},
+           {r.get('p') for r, n in zip(t1, notes1) if r['klinik_bilgi_en'] == 'Non risc' and r.get('hasta_grubu')
+            and n.get('sutun_rolu') != 'toplam'}))
+    # Madde 11: tekrar eden ad bölümüyle kayıtta; klinik_bilgi_en değişmez.
+    check('troponin Table I: "Non risc" 3 bölümde, klinik_bilgi_en değişmedi, bölüm taslak_notu.alt_bolum',
+          ({'Non risc'}, ['delta hs Trop I (0-1)h ±20%', 'delta hs Trop I (0-3)h ±20%', 'delta hs Trop I (1-3)h ±20%']),
+          ({r['klinik_bilgi_en'] for r in t1 if r['sonuc_olcutu_tr'] == 'Non risc'},
+           sorted({n['alt_bolum'] for r, n in zip(t1, notes1) if r['sonuc_olcutu_tr'] == 'Non risc'})))
+
+    # Madde 12: tanısal performans tablosu, kayıt = test x ölçü.
+    tests = [(c['grup'], c.get('etiket_harf')) for c in tables[1]['sutunlar'] if c['rol'] == 'test']
+    check('troponin Table II: tanısal performans tablosu; sütunlar test (etiket harfiyle)',
+          ('tanisal_performans', [('Delta HS Trop I 1h-0h %', 'A'), ('Delta HS Trop I 3h-0h %', 'B'),
+                                  ('Delta HS Trop I 3h-1h %', 'C')]), (tables[1].get('tablo_turu'), tests))
+    notes2 = [json.loads(r['taslak_notu']) for r in t2]
+    check('troponin Table II: hepsi tanı testi / tanısal performans, hasta_grubu yok, test mudahale_en\'de',
+          ({'tanı testi'}, {'tanısal performans'}, {None}, {t for t, _ in tests}),
+          ({r['mudahale_turu'] for r in t2}, {r['outcome_type'] for r in t2}, {r.get('hasta_grubu') for r in t2},
+           {r['mudahale_en'] for r in t2}))
+    first = [(r['sonuc_olcutu_tr'], r['etki_turu'], r.get('deger'), r.get('p'), r.get('unit'), n['tani_olcusu'], n.get('se'))
+             for r, n in zip(t2, notes2) if r['mudahale_en'] == 'Delta HS Trop I 1h-0h %']
+    check('troponin Table II: 1h-0h testinin ölçüleri (P AUC\'ye bağlı; Odds Ratio birimsiz, SE ayrı)',
+          [('Cut off', 'diger', '>66.7', None, None, 'cutoff', None),
+           ('Sensitivity', 'oran / yuzde', '75.0%', None, None, 'sensitivity', None),
+           ('Specificity', 'oran / yuzde', '79.8%', None, None, 'specificity', None),
+           ('Accuracyrate', 'oran / yuzde', '78.95%', None, None, 'accuracy', None),
+           ('AUC', 'AUC / C-istatistigi', '0.755', None, None, 'auc', '0.072'),
+           ('AUC', 'AUC / C-istatistigi', None, '<0.001', None, 'p', None),
+           ('Pairwise comparation for AUC', 'AUC / C-istatistigi', None, '0.291', None, 'karsilastirma', None),
+           ('Pairwise comparation for AUC', 'AUC / C-istatistigi', None, '0.323', None, 'karsilastirma', None),
+           ('Odds Ratio', 'OR', '11.84', None, None, 'or', '0.70')], first)
+    link = next(n for n in notes2 if n['tani_olcusu'] == 'p')
+    check('troponin Table II: P satırı AUC satırına bağlandı (bitişik + dipnot ROC)', (5, 'AUC', True),
+          (link.get('p_baglandigi_satir'), link.get('p_baglandigi_olcu'), 'dipnot' in link.get('p_baglama_nedeni', '')))
+    check('troponin Table II: ikili AUC karşılaştırmaları test çiftine çözüldü',
+          [('A-B', 'Delta HS Trop I 1h-0h %', 'Delta HS Trop I 3h-0h %', '0.291'),
+           ('A-C', 'Delta HS Trop I 1h-0h %', 'Delta HS Trop I 3h-1h %', '0.323'),
+           ('B-C', 'Delta HS Trop I 3h-0h %', 'Delta HS Trop I 3h-1h %', '0.613')],
+          [(n['karsilastirma'], r['mudahale_en'], r['comparator'], r['p']) for r, n in zip(t2, notes2)
+           if n['tani_olcusu'] == 'karsilastirma'])
+    check('troponin Table II: "Accuracyrate" kanıt metninde de boşluksuz (pymupdf4llm layout yolu; ad kanıtta birebir)',
+          (True, False), ('|Accuracyrate|' in pages[3], '|Accuracy rate|' in pages[3]))
+    check('troponin: hiçbir kayıtta unit "SE." yok', [], [r['klinik_bilgi_en'] for r in result['aktarim']
+                                                       if (r.get('unit') or '').upper().startswith('SE')])
+    check('troponin: kayıt alanları küme değerlerinde', [],
+          [(r['klinik_bilgi_en'], name, r.get(name)) for r in result['aktarim']
+           for name, allowed in (('etki_turu', ETKI_TURU), ('mudahale_turu', MUDAHALE_TURU), ('outcome_type', OUTCOME_TYPE))
+           if r.get(name) and r[name] not in allowed])
+    # Sayı kontrolü: test adı (mudahale_en) ve hasta_grubu / comparator sütun başlığından gelir; satır kanıtında
+    # olmayan sayıları ("1h-0h") yalnız bu başlık alanlarında beklenir.
+    header_fields = {'mudahale_en', 'hasta_grubu', 'comparator'}
+    check('troponin: sayı kontrolü (başlık alanları hariç: mudahale_en / hasta_grubu / comparator)', [],
+          [(r['klinik_bilgi_en'], name) for r in result['aktarim'] for name in NUMBER_CHECKED
+           if name not in header_fields and numbers_in(r.get(name)) - numbers_in(r['kanit_cumle'])][:3])
     accepted, errors = validate_records([dict(r, review_status='verified') for r in result['aktarim']], pages)
-    check('troponin: validate_records', (81, 0), (len(accepted), len(errors)))
+    # Bilinen: src.pilot_clinical._structured_key (tekrar anahtarı) mudahale_en içermiyor; aynı değeri taşıyan iki
+    # test (Sensitivity 3h-0h / 3h-1h "80.0%", P "<0.001") "tekrar" sayılıyor. Anahtara mudahale_en eklenince tekrar yok.
+    dup = [result['aktarim'][e['satir'] - 1] for e in errors]
+    check('troponin: validate_records (bilinen: 3 tanısal kayıt "tekrar"; anahtarda mudahale_en yok)',
+          (81, [('Sensitivity', 'Delta HS Trop I 3h-1h %'), ('P', 'Delta HS Trop I 3h-0h %'), ('P', 'Delta HS Trop I 3h-1h %')]),
+          (len(accepted), [(r['klinik_bilgi_en'], r['mudahale_en']) for r in dup]),
+          len(accepted) == 81 and all(e['hata'].startswith('tekrar') for e in errors)
+          and [(r['klinik_bilgi_en'], r['mudahale_en']) for r in dup]
+          == [('Sensitivity', 'Delta HS Trop I 3h-1h %'), ('P', 'Delta HS Trop I 3h-0h %'), ('P', 'Delta HS Trop I 3h-1h %')])
+    import src.pilot_clinical as pc
+    keys = [(r['sayfa'], r['klinik_bilgi_en'].casefold(), r.get('mudahale_en')) + pc._structured_key(r)
+            for r in result['aktarim']]
+    check('troponin: tekrar anahtarına mudahale_en eklenince 84 kaydın hepsi ayrı', 84, len(set(keys)))
 
 
 def check_inputs(doc, pages):

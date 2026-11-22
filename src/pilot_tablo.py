@@ -41,6 +41,30 @@ Genel tablo kuralları (makaleye özel değil; pilot çıktısı değişmez, eva
   ise), ad hücresinde test işareti, grup hücresinde post-hoc işareti (I, II…) -> taslak_notu.
 - Karmaşık tablo (kalın ikinci başlık satırı, metin değerli değer sütunu, sayısal satır adı) otomatik
   ayrıştırılmaz: "elle_inceleme_gerekli" sorunu, kayıt üretilmez.
+
+Ekip kararları (Troponin tablo denemesi; Zehra + Sinem). Hepsi genel kural; pilot kayıtları değişmez:
+- (6) Total sütunu: (n=…) başlığın her yerinden okunur; " / Median (Q1-Q3)" gibi biçim ifadesi addan ayrılır ve
+  değer biçimi olur (ara satırdaki biçim değerle uymuyorsa). Adı TOTAL_GROUP'a uyan sütun ("Total", "Overall",
+  "All patients" …) veri olarak kalır ama karşılaştırma grubu sayılmaz: taslak_notu.sutun_rolu = 'toplam',
+  comparator / p yok; comparator yalnız gerçek gruplar arasında (tam 2 grup varsa).
+- (8) p sütununda "7.8 (2.4-25.1)<br>or" (or/hr/rr işareti): p değil, satırın etki ölçüsü -> ayrı kayıt
+  (etki_turu OR, deger, ci95; hasta_grubu yok; taslak_notu.etki_kaynagi = 'p_sutunu'); o satırın grup kayıtlarında
+  p boş. p sütununun asıl p değerleri olduğu gibi kalır.
+- (11) Aynı tabloda birden fazla bölümde geçen ad ("Non risc"): bölüm taslak_notu.alt_bolum'da, klinik_bilgi_en
+  değişmez; sunumda yalnız bu adlara bölüm öneki eklenir (sql/sunum_hoca v_sunum_taban.bolum_oneki).
+- (12) Tanısal performans tablosu (_mark_diagnostic: p / etki sütunu yok, satırlarda en az iki çekirdek ölçü —
+  sensitivity, specificity, PPV, NPV, accuracy, AUC): sütunlar test (rol 'test', "( A )" etiket harfi), kayıt =
+  test x ölçü (_diagnostic_preview): mudahale_en = test, mudahale_turu 'tanı testi', sonuc_olcutu_tr = ölçü,
+  outcome_type 'tanısal performans'; AUC 'AUC / C-istatistigi', odds ratio OR, oranlar 'oran / yuzde', diğerleri
+  'diger'; "±SE" / "(SE.)" değerden ayrılır (taslak_notu.se, se_bicimi). P satırı p_link ile AUC'ye bağlanır
+  (taslak_notu.p_baglandigi_satir; p sayısı AUC satırının kanıtında olmadığı için AUC kaydına yazılmaz), bağlanamazsa
+  ayrı kayıt + 'p_satiri_baglanamadi' sorunu. "P (A-B)=0.291" satırı karşılaştırma kaydı (mudahale_en A testi,
+  comparator B testi, p).
+- "Odds Ratio (SE.)": "(SE.)" istatistik etiketi, birim değil (STAT_LABEL).
+- Not: Troponin Table II'de "Accuracyrate" kanıt metninde de boşluksuz: PDF metin katmanında "Accuracy rate"
+  (gerçek boşluk karakteri) var, ama pymupdf4llm 2.1'in layout yolu (pymupdf_layout kuruluyken varsayılan) bu
+  hücrenin boşluğunu düşürüyor; eski rag yolu ve page.find_tables().to_markdown() boşluğu koruyor. Ad kanıtta
+  birebir olmak zorunda olduğu için burada düzeltilmez (src/pdf_loader.py / kütüphane düzeyinde bir karar).
 """
 import argparse
 import csv
@@ -75,6 +99,47 @@ OUTCOME_POPULASYON = 'çalışma popülasyonu'
 EFFECT_TYPES = (('odds ratio', 'OR'), ('hazard ratio', 'HR'), ('relative risk', 'RR'),
                 ('risk ratio', 'RR'), ('incidence rate ratio', 'IRR'))
 ANALYSIS_LABELS = ('univariate', 'multivariate', 'univariable', 'multivariable', 'unadjusted', 'adjusted')
+# Ekip kararları (Troponin tablo denemesi; madde 6, 8, 12). Küme değerleri src.clinical_validation'da.
+SUTUN_TOPLAM = 'toplam'  # taslak_notu.sutun_rolu: Total sütunu veri olarak kalır, karşılaştırma grubu sayılmaz
+ETKI_AUC = 'AUC / C-istatistigi'
+MUDAHALE_TANI = 'tanı testi'
+OUTCOME_TANISAL = 'tanısal performans'
+TABLO_TANISAL = 'tanisal_performans'  # table['tablo_turu']
+# Toplam sütunu adı (makaleye özel değil): "Total", "Overall", "All patients", "Whole cohort", "Toplam" …
+TOTAL_GROUP = re.compile(
+    r'^(?:total|overall|all|all\s+(?:patients|subjects|participants|cases|individuals|groups)|combined'
+    r'|(?:whole|entire|total|overall)\s+(?:cohort|sample|population|group|study\s+population)|study\s+population'
+    r'|toplam|tüm\s+hastalar|tümü)$', re.IGNORECASE)
+GROUP_N_ANY = re.compile(r'\s*\(\s*n\s*=\s*(\d+)\s*\)', re.IGNORECASE)
+# p sütununda değer + etki işareti ("7.8 (2.4-25.1)<br>or"): p değil, o satırın etki ölçüsü (dipnot: "or Odds Ratio").
+EFFECT_MARKS = {'or': 'OR', 'hr': 'HR', 'rr': 'RR'}
+# Tanısal performans tablosu satır türleri (satır adına göre, makaleye özel değil). Sıra önemli: ilk eşleşen.
+DIAG_KINDS = (
+    ('cutoff', r'cut[\s-]?off|threshold|kesim'),
+    ('sensitivity', r'sensitivity|duyarl'),
+    ('specificity', r'specificity|özgüll|ozgull'),
+    ('ppv', r'\bppv\b|positive\s+predictive'),
+    ('npv', r'\bnpv\b|negative\s+predictive'),
+    ('accuracy', r'accuracy|doğruluk|dogruluk'),
+    ('auc', r'\bauc\b|area\s+under|c[\s-]?statistic|c[\s-]?index'),
+    ('youden', r'youden'),
+    ('lr', r'likelihood\s+ratio'),
+    ('or', r'odds\s+ratio'),
+    ('hr', r'hazard\s+ratio'),
+    ('rr', r'relative\s+risk|risk\s+ratio'),
+)
+DIAG_CORE = {'sensitivity', 'specificity', 'ppv', 'npv', 'accuracy', 'auc'}
+DIAG_PROPORTION = {'sensitivity', 'specificity', 'ppv', 'npv', 'accuracy'}
+DIAG_EFFECT = {'auc': ETKI_AUC, 'or': 'OR', 'hr': 'HR', 'rr': 'RR'}
+P_ROW = re.compile(r'^p(?:\s*-?\s*value)?\.?$|^p\s+değeri$', re.IGNORECASE)
+# İkili karşılaştırma hücresi: "P (A-B)=0.291" (harfler sütun etiketleri: "( A )").
+PAIR_P = re.compile(r'^p\s*\(\s*([A-Za-z])\s*[-–]\s*([A-Za-z])\s*\)\s*([=<>≤≥]?)\s*(\d*\.?\d+)$', re.IGNORECASE)
+LETTER_LABEL = re.compile(r'^\(?\s*([A-Za-z])\s*\)?$')
+# Satır adının sonunda standart hata etiketi ("AUC±SE.", "Odds Ratio (SE.)"): değer "0.755 ± 0.072" / "11.84 (0.70)".
+SE_LABEL = re.compile(r'(?:±\s*|\(\s*)s\.?e\.?m?\.?\s*\)?\s*$', re.IGNORECASE)
+VALUE_PM = re.compile(r'^([<>]?\s*-?\d+(?:\.\d+)?)\s*±\s*(\d+(?:\.\d+)?)$')
+VALUE_PAREN = re.compile(r'^(-?\d+(?:\.\d+)?)\s*\(\s*(\d+(?:\.\d+)?)\s*\)$')
+ROC_FOOTNOTE = re.compile(r'\broc\b|\bauc\b|area\s+under|hanley|honley|mc\s*ne', re.IGNORECASE)
 
 SEPARATOR = re.compile(r'^\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 # Tablo başlığı: "TABLE 1:", "Table 2.", Roma rakamıyla "Table I:", "Table II." (sayıya çevrilir).
@@ -94,7 +159,9 @@ UNIT_TOKEN = re.compile(r'^[A-Za-zµ%]+(?:/[A-Za-zµ0-9^]+)+$')
 STAT_LABEL = re.compile(
     r'[\s,]*\(?\s*(?:n\s*\(\s*%\s*\)|n\s*,\s*%|mean\s*(?:±|\+/-|\+-)\s*s\.?d\.?|mean\s*\(\s*s\.?d\.?\s*\)'
     r'|median\s*[(\[]\s*(?:iqr|range|q1\s*[-–,]\s*q3)\s*[)\]]|median\s*,\s*iqr'
-    r'|±\s*s\.?(?:d|e|em)\.?)\s*\)?\s*$', re.IGNORECASE)
+    r'|±\s*s\.?(?:d|e|em)\.?)\s*\)?\s*$'
+    # Parantezli standart hata / sapma etiketi: "Odds Ratio (SE.)" -> "Odds Ratio" (SE birim değil).
+    r'|[\s,]*\(\s*s\.?(?:d|e|em)\.?\s*\)\s*$', re.IGNORECASE)
 # Değer hücresinin TAMAMI bir istatistik / biçim etiketi mi (ara başlık satırı için): "n (%)", "%",
 # "Median (Q1-Q3)", "Median (Q1.-Q3.)", "Median (IQR)", "Mean ± SD", "X±SD", "(X±SD) (minimum-maximum)".
 CELL_STAT = re.compile(
@@ -314,11 +381,28 @@ def _column_roles(headers):
             owner = next((i for i in range(index - 1, 0, -1) if roles[i]['rol'] == 'etki'), None)
             roles.append({'rol': 'p', 'baslik': title, 'etki_sutunu': owner})
         else:
-            match = GROUP_N.match(title)
-            roles.append({'rol': 'grup', 'baslik': title,
-                          'grup': match.group(1).strip() if match else title,
-                          'n': int(match.group(2)) if match else None})
+            name, n, fmt = group_title(title)
+            col = {'rol': 'grup', 'baslik': title, 'grup': name, 'n': n}
+            if fmt:
+                col['bicim'] = fmt
+            if name and TOTAL_GROUP.match(name):
+                col['toplam'] = True  # veri olarak kalır; comparator ve grup sayısına girmez
+            roles.append(col)
     return roles
+
+
+def group_title(title):
+    """(grup adı, n, başlıktaki değer biçimi). (n=…) başlığın her yerinden okunur; ' / ' sonrası biçim ifadesi
+    ("Median (Q1-Q3)", "n (%)") addan ayrılır: 'Total (n=114) / Median (Q1-Q3)' -> ('Total', 114, 'Median (Q1-Q3)').
+    'Ischemic event (n=372)' -> ('Ischemic event', 372, None) (eski kuralla aynı)."""
+    parts = [p.strip() for p in title.split(' / ')]
+    name_parts = [parts[0]] + [p for p in parts[1:] if not is_stat_label(p)]
+    fmt = ' / '.join(p for p in parts[1:] if is_stat_label(p)) or None
+    name = ' / '.join(name_parts)
+    match = GROUP_N_ANY.search(name)
+    if not match:
+        return name, None, fmt
+    return re.sub(r'\s+', ' ', (name[:match.start()] + name[match.end():])).strip(), int(match.group(1)), fmt
 
 
 def parse_tables(pages):
@@ -395,11 +479,20 @@ def _parse_table(page, lines, start, end, ordinal):
             complex_reasons.append('çok seviyeli başlık: ilk veri satırı kalın ikinci bir başlık satırı')
         name_cell, name_mark = split_marker(cells[0], TEST_MARK)
         parts = br_parts(name_cell)
-        marks, cell_parts = {}, {}
+        marks, cell_parts, p_effects = {}, {}, {}
         for col, cell in zip(columns[1:], cells[1:]):
             mark = None
             if col['rol'] == 'p':
                 cell, mark = split_marker(cell, TEST_MARK, require=P_LIKE)
+                if mark is None:
+                    # p sütununda etki ölçüsü: "7.8 (2.4-25.1)<br>or" -> p değil, satırın OR'u (ekip kararı 8).
+                    value_cell, effect_mark = split_marker(cell, TEST_MARK, require=VAL_RANGE)
+                    if effect_mark in EFFECT_MARKS:
+                        found = VAL_RANGE.match(clean(value_cell))
+                        p_effects[col['anahtar']] = {'sutun': col['anahtar'], 'etki_turu': EFFECT_MARKS[effect_mark],
+                                                     'isaret': effect_mark, 'deger': found.group(1),
+                                                     'ci95': f'{found.group(2)}-{found.group(3)}'}
+                        cell = value_cell
             elif col['rol'] == 'grup':
                 cell, mark = split_marker(cell, POSTHOC_MARK)
             if mark:
@@ -416,7 +509,7 @@ def _parse_table(page, lines, start, end, ordinal):
                              for key, vals in cell_parts.items()}
                 temiz = ' | '.join(c for c in [clean(parts[k + 1]), *cells_map.values()] if c)
                 rows.append(_row(len(rows) + 1, page, raw, temiz, parts[k + 1], local, cells_map, marks,
-                                 name_mark, formats))
+                                 name_mark, formats, p_effects))
             first_data = False
             continue
         name_raw = clean(parts[-1]) if parts else ''
@@ -434,17 +527,21 @@ def _parse_table(page, lines, start, end, ordinal):
         cells_map = {}
         for col, value in zip(columns[1:], cleaned[1:]):
             key = col['anahtar']
-            cells_map[key] = clean('<br>'.join(cell_parts[key])) if key in marks else value
+            cells_map[key] = clean('<br>'.join(cell_parts[key])) if key in marks or key in p_effects else value
         temiz = ' | '.join(c for c in cleaned if c)
-        rows.append(_row(len(rows) + 1, page, raw, temiz, name_cell, section, cells_map, marks, name_mark, formats))
+        rows.append(_row(len(rows) + 1, page, raw, temiz, name_cell, section, cells_map, marks, name_mark, formats,
+                         p_effects))
     _label_columns(columns, rows)
     rows, empty = _merge_labels(columns, rows)
     skipped += empty
+    diagnostic = _mark_diagnostic(columns, rows)
     complex_reasons += _complex_reasons(columns, rows)
     table = {'tablo_no': no if no is not None else ordinal, 'sayfa': page, 'tablo_basligi': caption,
              'tablo_basligi_ham': caption_raw, 'sutun_basliklari_ham': header_raw.strip(),
              'sutunlar': columns, 'alt_bolumler': sections, 'satirlar': rows, 'sorunlar': issues,
              'atlanan_satirlar': skipped}
+    if diagnostic:
+        table['tablo_turu'] = TABLO_TANISAL
     if footnotes:
         table['dipnot'] = footnotes
     if complex_reasons:
@@ -457,8 +554,9 @@ def _parse_table(page, lines, start, end, ordinal):
     return table
 
 
-def _row(number, page, raw, temiz, name_cell, section, cells_map, marks, name_mark, formats):
-    """Satır sözlüğü. Mevcut anahtarlar aynı; yeni anahtarlar (isaretler, ad_isareti, bicim_etiketi) yalnız doluysa."""
+def _row(number, page, raw, temiz, name_cell, section, cells_map, marks, name_mark, formats, p_effects=None):
+    """Satır sözlüğü. Mevcut anahtarlar aynı; yeni anahtarlar (isaretler, ad_isareti, bicim_etiketi, p_etki) yalnız
+    doluysa. p_etki: p sütununda p yerine duran etki ölçüsü ({p sütunu: {etki_turu, deger, ci95, isaret}})."""
     parts = br_parts(name_cell)
     name_raw = clean(parts[-1]) if parts else ''
     variable, unit = split_unit(name_raw)
@@ -471,6 +569,8 @@ def _row(number, page, raw, temiz, name_cell, section, cells_map, marks, name_ma
         row['ad_isareti'] = name_mark
     if formats:
         row['bicim_etiketi'] = dict(formats)
+    if p_effects:
+        row['p_etki'] = {key: dict(value) for key, value in p_effects.items()}
     return row
 
 
@@ -523,6 +623,39 @@ def _merge_labels(columns, rows):
     return kept, skipped
 
 
+def diag_kind(row):
+    """Tanısal performans satırının türü (DIAG_KINDS): 'sensitivity', 'auc', 'cutoff' …; P satırı 'p'; bütün değerleri
+    "P (A-B)=0.291" olan satır 'karsilastirma'; tanınmayan 'diger'."""
+    values = [v for v in row['sutun_degerleri'].values() if v]
+    if values and all(PAIR_P.match(v) for v in values):
+        return 'karsilastirma'
+    name = (row['degisken'] or row['ad'] or '').strip()
+    if P_ROW.match(name):
+        return 'p'
+    low = name.casefold()
+    return next((kind for kind, pattern in DIAG_KINDS if re.search(pattern, low)), 'diger')
+
+
+def _mark_diagnostic(columns, rows):
+    """Genel kural (makaleye özel değil): sütunları test / zaman aralığı, satırları tanısal ölçü (en az iki farklı
+    çekirdek ölçü: sensitivity, specificity, PPV, NPV, accuracy, AUC) olan, p / etki sütunu olmayan tablo tanısal
+    performans tablosudur. Grup sütunları 'test' olur (hasta grubu değil); satırlara tani_olcusu yazılır."""
+    if any(c['rol'] in ('p', 'etki') for c in columns[1:]) or not any(c['rol'] == 'grup' for c in columns[1:]):
+        return False
+    kinds = [diag_kind(r) for r in rows]
+    if len(set(kinds) & DIAG_CORE) < 2:
+        return False
+    for col in columns[1:]:
+        if col['rol'] == 'grup':
+            col['rol'] = 'test'
+            letter = LETTER_LABEL.match(clean(col.get('etiket') or ''))
+            if letter:
+                col['etiket_harf'] = letter.group(1).upper()
+    for row, kind in zip(rows, kinds):
+        row['tani_olcusu'] = kind
+    return True
+
+
 def _complex_reasons(columns, rows):
     """Genel karmaşık tablo kuralları (makaleye özel değil): değer sütununda çoğunluk metin (iç içe / yan yana
     tablo) ya da sayısal satır adı (birleşik hücreli model / grup numarası)."""
@@ -557,19 +690,28 @@ def row_analyses(table, row):
 
 def row_groups(table, row):
     """Grup tablosu satırı için grup başına {grup, n, deger, deger_bicimi, comparator, comparator_n, p}."""
+    """Total sütunu (col['toplam']) veri olarak döner ('toplam': True) ama karşılaştırma grubu sayılmaz: comparator'ı
+    yok, karşılaştırma p'si ona yazılmaz, diğer grupların comparator'ına girmez. p sütununda p yerine etki ölçüsü
+    varsa (row['p_etki']) grup kayıtlarında p boştur."""
     groups = [c for c in table['sutunlar'] if c['rol'] == 'grup']
+    comparison = [c for c in groups if not c.get('toplam')]
     p_cols = [c for c in table['sutunlar'] if c['rol'] == 'p' and c.get('etki_sutunu') is None]
-    p_value = row['sutun_degerleri'].get(p_cols[0]['anahtar']) if len(p_cols) == 1 else None
+    p_key = p_cols[0]['anahtar'] if len(p_cols) == 1 else None
+    p_value = row['sutun_degerleri'].get(p_key) if p_key and p_key not in (row.get('p_etki') or {}) else None
     out = []
     for col in groups:
-        others = [c for c in groups if c is not col]
+        total = bool(col.get('toplam'))
+        others = [] if total else [c for c in comparison if c is not col]
         value = row['sutun_degerleri'].get(col['anahtar'], '')
-        out.append({'sutun': col['anahtar'], 'grup': col['grup'], 'n': col['n'], 'deger': value,
-                    'deger_bicimi': value_format(value),
-                    'comparator': others[0]['grup'] if len(others) == 1 else None,
-                    'comparator_n': others[0]['n'] if len(others) == 1 else None,
-                    'comparator_sutun': others[0]['anahtar'] if len(others) == 1 else None,
-                    'p': p_value, 'p_sutun': p_cols[0]['anahtar'] if len(p_cols) == 1 else None})
+        item = {'sutun': col['anahtar'], 'grup': col['grup'], 'n': col['n'], 'deger': value,
+                'deger_bicimi': value_format(value),
+                'comparator': others[0]['grup'] if len(others) == 1 else None,
+                'comparator_n': others[0]['n'] if len(others) == 1 else None,
+                'comparator_sutun': others[0]['anahtar'] if len(others) == 1 else None,
+                'p': None if total else p_value, 'p_sutun': None if total else p_key}
+        if total:
+            item['toplam'] = True
+        out.append(item)
     return out
 
 
@@ -685,7 +827,13 @@ def table_info(table, row):
             'degisken_ham': row['degisken_ham'], 'ad': row['ad'], 'unit': row['unit'], 'sutun_degerleri': row['sutun_degerleri'],
             'temiz_satir': row['temiz']}
     analyses = row_analyses(table, row)
-    if analyses:
+    if table.get('tablo_turu') == TABLO_TANISAL:
+        info['tablo_turu'] = TABLO_TANISAL
+        info['tani_olcusu'] = row.get('tani_olcusu')
+        info['testler'] = [{'sutun': c['anahtar'], 'test': c['grup'], 'etiket': c.get('etiket_harf'),
+                            'deger': row['sutun_degerleri'].get(c['anahtar'], '')}
+                           for c in table['sutunlar'] if c['rol'] == 'test']
+    elif analyses:
         info['analizler'] = analyses
     else:
         info['gruplar'] = row_groups(table, row)
@@ -728,9 +876,13 @@ def _extra_note(row, column_key=None, value=None, column=None):
         extra['p_test_isareti'] = p_marks[0] if len(p_marks) == 1 else p_marks
     if row.get('ad_isareti'):
         extra['test_isareti'] = row['ad_isareti']
+    # Biçim: önce ara başlık satırındaki etiket, uymuyorsa sütun başlığındaki biçim ("Total (n=114) / Median (Q1-Q3)");
+    # ikisi de değerle tutarlı değilse yazılmaz.
     formats = row.get('bicim_etiketi') or {}
-    if column_key and formats.get(column_key) and format_matches(formats[column_key], value):
-        extra['bicim_etiketi'] = formats[column_key]
+    candidates = [formats.get(column_key) if column_key else None, (column or {}).get('bicim')]
+    label = next((c for c in candidates if c and format_matches(c, value)), None)
+    if label:
+        extra['bicim_etiketi'] = label
     if row.get('etiket'):
         extra['etiket'] = row['etiket']
     if column and column.get('etiket'):
@@ -755,6 +907,8 @@ def sql_preview(record, table, row, document_id=None, skipped=None):
                  'alt_bolum': row['alt_bolum'], 'degisken': row['degisken'], 'satir_no': row['satir_no']}
     out = []
     columns = {c['anahtar']: c for c in table['sutunlar']}
+    if table.get('tablo_turu') == TABLO_TANISAL:
+        return _diagnostic_preview(table, row, base, note_base, skipped)
     analyses = row_analyses(table, row)
     if analyses:
         for item in analyses:
@@ -784,6 +938,8 @@ def sql_preview(record, table, row, document_id=None, skipped=None):
                     comparator_n=group['comparator_n'], p_sutun=group['p_sutun'], deger_bicimi=group['deger_bicimi'],
                     hasta_sayisi_bos_nedeni='Ekip kararı: grup n\'leri taslak_notu\'da (grup_n, comparator_n) kalır',
                     **_extra_note(row, group['sutun'], group['deger'], columns.get(group['sutun'])))
+        if group.get('toplam'):
+            note['sutun_rolu'] = SUTUN_TOPLAM  # veri olarak kalır; comparator / grup sayısına girmez (ekip kararı 6)
         if medication:
             note['not'] = 'Kullanım oranı n (%); doz değil.'
             mudahale_turu, mudahale_en, outcome, measure = MUDAHALE_ILAC, row['degisken'], OUTCOME_KULLANIM, 'kullanım oranı'
@@ -795,7 +951,144 @@ def sql_preview(record, table, row, document_id=None, skipped=None):
                         etki_turu=ETKI_N_PCT if group['deger_bicimi'] == 'n (%)' else ETKI_OTHER,
                         deger=group['deger'], ci95=None, p=group['p'] or None, outcome_type=outcome,
                         taslak_notu=json.dumps(note, ensure_ascii=False)))
+    for effect in (row.get('p_etki') or {}).values():
+        # p sütunundaki etki ölçüsü (ekip kararı 8): satırın ayrı etki kaydı; grup kayıtlarının p'si boş kalır.
+        note = dict(note_base, sutun=effect['sutun'], etki_kaynagi='p_sutunu', etki_isareti=effect['isaret'],
+                    outcome_type_bos_nedeni='p sütunundaki etki ölçüsü; karşılaştırılan gruplar tabloda yazmıyor, '
+                                            'sonuç türü tahmin edilmedi',
+                    mudahale_turu_bos_nedeni=MUDAHALE_BOS_NEDENI)
+        out.append(dict(base, sonuc_olcutu_tr=row['degisken'], unit=row['unit'], hasta_grubu=None, hasta_sayisi=None,
+                        comparator=None, mudahale_en=None, mudahale_turu=None, etki_turu=effect['etki_turu'],
+                        deger=effect['deger'], ci95=effect['ci95'], p=None, outcome_type=None,
+                        taslak_notu=json.dumps(note, ensure_ascii=False)))
     return out
+
+
+def _diag_value(row, value):
+    """(deger, se, se_bicimi). Satır adı SE etiketli ("AUC±SE.", "Odds Ratio (SE.)") ise SE değerden ayrılır:
+    "0.755 ± 0.072" -> ('0.755', '0.072', '±'); "11.84 (0.70)" -> ('11.84', '0.70', 'parantez')."""
+    if SE_LABEL.search(row.get('degisken_ham') or ''):
+        for pattern, form in ((VALUE_PM, '±'), (VALUE_PAREN, 'parantez')):
+            match = pattern.match(value)
+            if match:
+                return match.group(1).replace(' ', ''), match.group(2), form
+    return value, None, None
+
+
+def p_link(table, row):
+    """Tanısal tablodaki P satırının bağlandığı ölçü satırı: (satır, neden) ya da (None, neden).
+    Genel kural: tabloda tek AUC satırı varsa ve P satırı onun hemen altındaysa ya da dipnot ROC / AUC analizinden
+    söz ediyorsa (Hanley & McNeil vb.) P o AUC'nin p'sidir. Değilse bağlanmaz (ayrı kayıt, raporlanır)."""
+    aucs = [r for r in table['satirlar'] if r.get('tani_olcusu') == 'auc']
+    if len(aucs) != 1:
+        return None, f'tabloda {len(aucs)} AUC satırı var; P satırı tek bir ölçüye bağlanamadı'
+    reasons = []
+    if aucs[0]['satir_no'] == row['satir_no'] - 1:
+        reasons.append('P satırı AUC satırının hemen altında')
+    if ROC_FOOTNOTE.search(' '.join(table.get('dipnot') or [])):
+        reasons.append('dipnot ROC / AUC analizinden söz ediyor')
+    if not reasons:
+        return None, 'P satırı AUC satırına bitişik değil ve dipnotta ROC / AUC yok; bağlanamadı'
+    return aucs[0], '; '.join(reasons)
+
+
+def _add_issue(table, issue):
+    if issue not in table['sorunlar']:
+        table['sorunlar'].append(issue)
+
+
+def _diagnostic_preview(table, row, base, note_base, skipped=None):
+    """Tanısal performans tablosu (ekip kararı 12): kayıt = test x ölçü. Test adı mudahale_en, mudahale_turu
+    'tanı testi', ölçü sonuc_olcutu_tr, outcome_type 'tanısal performans'. AUC -> 'AUC / C-istatistigi', odds ratio
+    -> OR, oranlar (sensitivity, specificity, accuracy …, değer %'li) -> 'oran / yuzde', diğerleri 'diger'.
+
+    - P satırı: p_link ile AUC'ye bağlanırsa kayıt sonuc_olcutu_tr = AUC satırının adı, p dolu, deger boş;
+      taslak_notu.p_baglandigi_satir AUC satırını gösterir (kanıt kuralı: p sayısı AUC satırının kanıtında yok, bu
+      yüzden AUC kaydının p alanına yazılmaz; sunum ikisini birleştirir). Bağlanamazsa ayrı P kaydı + sorun.
+    - "P (A-B)=0.291" satırı karşılaştırma kaydıdır: harfler sütun etiketlerinden ("( A )") teste çözülür;
+      mudahale_en = A testi, comparator = B testi, p = 0.291."""
+    kind = row.get('tani_olcusu') or diag_kind(row)
+    tests = [c for c in table['sutunlar'] if c['rol'] == 'test']
+    by_letter = {c['etiket_harf']: c for c in tests if c.get('etiket_harf')}
+    link, why = p_link(table, row) if kind == 'p' else (None, None)
+    if kind == 'p' and link is None:
+        _add_issue(table, {'tur': 'p_satiri_baglanamadi', 'satir_no': row['satir_no'], 'aciklama': why})
+    out = []
+    for col in tests:
+        value = row['sutun_degerleri'].get(col['anahtar'], '')
+        if not value:
+            if skipped is not None:
+                skipped.append({'tur': 'bos_deger', 'tablo_no': table['tablo_no'], 'satir_no': row['satir_no'],
+                                'degisken': row['degisken'], 'sutun': col['anahtar']})
+            continue
+        note = dict(note_base, sutun=col['anahtar'], tablo_turu=TABLO_TANISAL, tani_olcusu=kind,
+                    **_extra_note(row, col['anahtar'], value, col))
+        record = dict(base, sonuc_olcutu_tr=row['degisken'], unit=row['unit'], hasta_grubu=None, hasta_sayisi=None,
+                      comparator=None, mudahale_en=col['grup'], mudahale_turu=MUDAHALE_TANI, etki_turu=None,
+                      deger=None, ci95=None, p=None, outcome_type=OUTCOME_TANISAL)
+        if kind == 'karsilastirma':
+            match = PAIR_P.match(value)
+            first, second = by_letter.get(match.group(1).upper()), by_letter.get(match.group(2).upper())
+            note['karsilastirma'] = f'{match.group(1).upper()}-{match.group(2).upper()}'
+            if first and second:
+                record.update(mudahale_en=first['grup'], comparator=second['grup'])
+                note['karsilastirilan_sutunlar'] = [first['anahtar'], second['anahtar']]
+            else:
+                record['mudahale_en'] = None
+                note['karsilastirma_cozulemedi'] = 'Harfler sütun etiketleriyle eşleşmedi; testler yazılmadı'
+                _add_issue(table, {'tur': 'karsilastirma_cozulemedi', 'satir_no': row['satir_no'], 'parca': value,
+                                   'aciklama': 'İkili karşılaştırmadaki harfler sütun etiketleriyle eşleşmedi'})
+            record.update(p=(match.group(3) if match.group(3) not in ('', '=') else '') + match.group(4),
+                          etki_turu=ETKI_AUC if re.search(r'\bauc\b', (row['degisken'] or '').casefold()) else None)
+        elif kind == 'p':
+            record['p'] = value
+            if link is not None:
+                record.update(sonuc_olcutu_tr=link['degisken'], etki_turu=ETKI_AUC)
+                note.update(p_baglandigi_satir=link['satir_no'], p_baglandigi_olcu=link['degisken'],
+                            p_baglama_nedeni=why)
+            else:
+                note['p_baglanamadi'] = why
+        else:
+            deger, se, se_form = _diag_value(row, value)
+            record.update(deger=deger, etki_turu=DIAG_EFFECT.get(kind) or (
+                ETKI_N_PCT if kind in DIAG_PROPORTION and '%' in value else ETKI_OTHER))
+            if se is not None:
+                note.update(se=se, se_bicimi=se_form)
+        record['taslak_notu'] = json.dumps(note, ensure_ascii=False)
+        out.append(record)
+    return out
+
+
+def record_unit(record, analyses):
+    """Bir tablo kaydının satır içindeki birimi: analiz tablosunda taslak_notu.analiz, diğerlerinde taslak_notu.sutun
+    (grup / Total / p sütunu etkisi / tanısal test sütunu)."""
+    try:
+        note = json.loads(record.get('taslak_notu') or '{}')
+    except (TypeError, ValueError):
+        note = {}
+    note = note if isinstance(note, dict) else {}
+    return note.get('analiz') if analyses else note.get('sutun')
+
+
+def expected_units(table, row):
+    """(analiz_tablosu_mu, {birim: {alan: beklenen değer}}): PDF satırından bu modülün üreteceği kayıtlar
+    (sql_preview ile, boş değerli birim yok) ve data_quality.check_table_groups'un karşılaştıracağı alanlar.
+    Analiz: deger / p / ci95. Grup ve Total: deger / p / hasta_grubu / comparator. p sütunu etkisi: deger / p / ci95.
+    Tanısal test x ölçü: deger / p / mudahale_en / comparator / sonuc_olcutu_tr."""
+    analyses = table.get('tablo_turu') != TABLO_TANISAL and bool(row_analyses(table, row))
+    out = {}
+    for record in sql_preview({'kanit_cumle': row['ham']}, table, row):
+        note = json.loads(record['taslak_notu'])
+        if analyses:
+            fields = ('deger', 'p', 'ci95')
+        elif note.get('tani_olcusu'):
+            fields = ('deger', 'p', 'mudahale_en', 'comparator', 'sonuc_olcutu_tr')
+        elif note.get('etki_kaynagi'):
+            fields = ('deger', 'p', 'ci95')
+        else:
+            fields = ('deger', 'p', 'hasta_grubu', 'comparator')
+        out[record_unit(record, analyses)] = {name: record.get(name) for name in fields}
+    return analyses, out
 
 
 def transfer_record(record, preview_row, row=None):
@@ -968,6 +1261,13 @@ def report_markdown(summary, result):
               'analiz türü `taslak_notu.analiz`; `hasta_grubu` NULL. `outcome_type` boş: retrospektif prediktör analizi '
               'için "prognostik değer" uygunluğundan emin olunamadı.',
               '- `hasta_sayisi` NULL ve `comparator` n\'siz (ekip kararı): n değerleri `taslak_notu.grup_n` / `comparator_n`.',
+              '- Total sütunu ("Total", "Overall", "All patients" …): kayıt kalır, `taslak_notu.sutun_rolu`="toplam"; '
+              'comparator / p yok, comparator yalnız gerçek karşılaştırma grupları arasında.',
+              '- p sütunundaki etki ölçüsü ("7.8 (2.4-25.1) or"): satırın ayrı etki kaydı (`etki_turu`="OR", `deger`, '
+              '`ci95`; `taslak_notu.etki_kaynagi`="p_sutunu"); o satırın grup kayıtlarında `p` boş.',
+              '- Tanısal performans tablosu: kayıt = test x ölçü; `mudahale_en`=test, `mudahale_turu`="tanı testi", '
+              '`sonuc_olcutu_tr`=ölçü, `outcome_type`="tanısal performans"; P satırı AUC\'ye bağlanır '
+              '(`taslak_notu.p_baglandigi_satir`), "P (A-B)=…" satırı karşılaştırma kaydı.',
               '- Aktarım (`pilot_tablo_aktarim.json`): önizleme satırı başına bir kayıt; pilot kaydının `bilgi_turu`, `baglam`, '
               '`kanit_cumle`, `sayfa`, `kanit_turu` alanları aynen, `klinik_bilgi_en` temiz satır adı (ör. "CAD", '
               '"Age (years)"; ham tablo satırı değil) + dolu yapılandırılmış alanlar '
