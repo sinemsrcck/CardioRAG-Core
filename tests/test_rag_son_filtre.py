@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.rag_son_filtre import filtrele, main
+from src.rag_son_filtre import KURALLAR, filtrele, main
 
 
 def kayit(bilgi, tur='klinik_sonuc', baglam='study_finding', kanit=None):
@@ -21,8 +21,13 @@ HEPSI = [FR, ONERI, PARCA, SAYILI, TANI, UZUN]
 
 
 class SonFiltre(unittest.TestCase):
-    def test_tum_kurallar(self):
+    def test_varsayilan_yalniz_ingilizce_olmayan(self):
         kalan, atilan = filtrele(HEPSI)
+        self.assertEqual([(a['sira'], a['sebep']) for a in atilan], [(1, 'ingilizce_olmayan')])
+        self.assertEqual(kalan, HEPSI[1:])
+
+    def test_tum_kurallar(self):
+        kalan, atilan = filtrele(HEPSI, list(KURALLAR))
         self.assertEqual(kalan, [SAYILI, TANI, UZUN])
         self.assertEqual([(a['sira'], a['sebep']) for a in atilan],
                          [(1, 'ingilizce_olmayan'), (2, 'oneri'), (3, 'degersiz_parca')])
@@ -46,6 +51,10 @@ class SonFiltre(unittest.TestCase):
             self.assertEqual(len(json.loads(cikti.read_text(encoding='utf-8'))), 5)
             atilan = json.loads(cikti.with_suffix('.atilan.json').read_text(encoding='utf-8'))
             self.assertEqual([a['sebep'] for a in atilan], ['oneri'])
+            cikti2 = Path(d) / 'g.json'
+            main(['--girdi', str(girdi), '--cikti', str(cikti2)])
+            atilan2 = json.loads(cikti2.with_suffix('.atilan.json').read_text(encoding='utf-8'))
+            self.assertEqual([a['sebep'] for a in atilan2], ['ingilizce_olmayan'])
             with self.assertRaises(FileExistsError):
                 main(['--girdi', str(girdi), '--cikti', str(cikti)])
 

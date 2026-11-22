@@ -4,14 +4,15 @@ Girdi kayıt listesi (kayitlar.json) okunur; açık olan kurallara takılan kay�
 Çıktı: filtrelenmiş JSON + atılan kayıtlar (sebebiyle). Girdi dosyası değişmez, mevcut çıktıların
 üzerine yazılmaz. Veritabanı ve LLM kullanılmaz.
 
-Kurallar (her biri ayrı açılıp kapanabilir; varsayılan hepsi açık):
+Kurallar (her biri ayrı açılıp kapanabilir; varsayılan yalnızca ingilizce_olmayan açık). oneri ve
+degersiz_parca 6 makalede doğrulanmış kayıtları yanlış attığı için varsayılanda kapalıdır:
     ingilizce_olmayan : kanıt (yoksa klinik bilgi) İngilizce değil (src.pilot_auto_extract.is_non_english)
     oneri             : baglam = recommendation
     degersiz_parca    : bilgi_turu klinik_sonuc/olcum, klinik_bilgi_en <= 3 kelime ve rakam içermiyor
 
 Kullanım:
     python -m src.rag_son_filtre --girdi kayitlar.json --cikti filtreli.json \
-        [--atilan atilan.json] [--kurallar ingilizce_olmayan oneri degersiz_parca]
+        [--atilan atilan.json] [--kurallar ingilizce_olmayan [oneri] [degersiz_parca]]
 """
 import argparse
 import json
@@ -42,9 +43,10 @@ def degersiz_parca(kayit):
 
 
 KURALLAR = {'ingilizce_olmayan': ingilizce_olmayan, 'oneri': oneri, 'degersiz_parca': degersiz_parca}
+VARSAYILAN_KURALLAR = ('ingilizce_olmayan',)
 
 
-def filtrele(kayitlar, kurallar=tuple(KURALLAR)):
+def filtrele(kayitlar, kurallar=VARSAYILAN_KURALLAR):
     """(kalan, atilan) döndürür. atilan: {'sira', 'sebep', 'kayit'}; sıra girdideki 1 tabanlı konum.
 
     Bir kayıt birden çok kurala takılırsa ilk takıldığı kural (kurallar sırasıyla) sebep olarak yazılır."""
@@ -72,8 +74,8 @@ def main(argv=None):
     p.add_argument('--girdi', required=True)
     p.add_argument('--cikti', required=True)
     p.add_argument('--atilan', help='varsayılan: <cikti>.atilan.json')
-    p.add_argument('--kurallar', nargs='*', default=list(KURALLAR), choices=list(KURALLAR),
-                   help='açık kurallar (varsayılan hepsi)')
+    p.add_argument('--kurallar', nargs='*', default=list(VARSAYILAN_KURALLAR), choices=list(KURALLAR),
+                   help='açık kurallar (varsayılan: ingilizce_olmayan)')
     args = p.parse_args(argv)
     cikti = Path(args.cikti)
     atilan_yol = Path(args.atilan) if args.atilan else cikti.with_suffix('.atilan.json')
