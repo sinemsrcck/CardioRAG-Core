@@ -1,0 +1,94 @@
+"""RAG çıkarım kayıtları için LLM'siz son filtre.
+
+Girdi kayıt listesi (kayitlar.json) okunur; açık olan kurallara takılan kayıtlar atılır.
+Çıktı: filtrelenmiş JSON + atılan kayıtlar (sebebiyle). Girdi dosyası değişmez, mevcut çıktıların
+üzerine yazılmaz. Veritabanı ve LLM kullanılmaz.
+
+Kurallar (her biri ayrı açılıp kapanabilir; varsayılan hepsi açık):
+    ingilizce_olmayan : kanıt (yoksa klinik bilgi) İngilizce değil (src.pilot_auto_extract.is_non_english)
+    oneri             : baglam = recommendation
+    degersiz_parca    : bilgi_turu klinik_sonuc/olcum, klinik_bilgi_en <= 3 kelime ve rakam içermiyor
+
+Kullanım:
+    python -m src.rag_son_filtre --girdi kayitlar.json --cikti filtreli.json \
+        [--atilan atilan.json] [--kurallar ingilizce_olmayan oneri degersiz_parca]
+"""
+import argparse
+import json
+import re
+from pathlib import Path
+
+from src.pilot_auto_extract import is_non_english
+
+DEGERSIZ_TURLER = {'klinik_sonuc', 'olcum'}
+DEGERSIZ_AZAMI_KELIME = 3
+_RAKAM = re.compile(r'\d')
+
+
+def ingilizce_olmayan(kayit):
+    metin = kayit.get('kanit_cumle') or kayit.get('klinik_bilgi_en') or ''
+    return isinstance(metin, str) and is_non_english(metin)
+
+
+def oneri(kayit):
+    return kayit.get('baglam') == 'recommendation'
+
+
+def degersiz_parca(kayit):
+    bilgi = kayit.get('klinik_bilgi_en')
+    if kayit.get('bilgi_turu') not in DEGERSIZ_TURLER or not isinstance(bilgi, str):
+        return False
+    return len(bilgi.split()) <= DEGERSIZ_AZAMI_KELIME and not _RAKAM.search(bilgi)
+
+
+KURALLAR = {'ingilizce_olmayan': ingilizce_olmayan, 'oneri': oneri, 'degersiz_parca': degersiz_parca}
+
+
+def filtrele(kayitlar, kurallar=tuple(KURALLAR)):
+    """(kalan, atilan) döndürür. atilan: {'sira', 'sebep', 'kayit'}; sıra girdideki 1 tabanlı konum.
+
+    Bir kayıt birden çok kurala takılırsa ilk takıldığı kural (kurallar sırasıyla) sebep olarak yazılır."""
+    bilinmeyen = [k for k in kurallar if k not in KURALLAR]
+    if bilinmeyen:
+        raise ValueError(f'Bilinmeyen kural: {", ".join(bilinmeyen)}')
+    kalan, atilan = [], []
+    for sira, kayit in enumerate(kayitlar, 1):
+        sebep = next((k for k in kurallar if isinstance(kayit, dict) and KURALLAR[k](kayit)), None)
+        if sebep is None:
+            kalan.append(kayit)
+        else:
+            atilan.append({'sira': sira, 'sebep': sebep, 'kayit': kayit})
+    return kalan, atilan
+
+
+def _yeni_yaz(yol, veri):
+    yol.parent.mkdir(parents=True, exist_ok=True)
+    with open(yol, 'x', encoding='utf-8') as f:
+        f.write(json.dumps(veri, ensure_ascii=False, indent=2))
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument('--girdi', required=True)
+    p.add_argument('--cikti', required=True)
+    p.add_argument('--atilan', help='varsayılan: <cikti>.atilan.json')
+    p.add_argument('--kurallar', nargs='*', default=list(KURALLAR), choices=list(KURALLAR),
+                   help='açık kurallar (varsayılan hepsi)')
+    args = p.parse_args(argv)
+    cikti = Path(args.cikti)
+    atilan_yol = Path(args.atilan) if args.atilan else cikti.with_suffix('.atilan.json')
+    if cikti.exists() or atilan_yol.exists():
+        raise FileExistsError(f'Mevcut dosyanın üzerine yazılmadı: {cikti} / {atilan_yol}')
+    kayitlar = json.loads(Path(args.girdi).read_text(encoding='utf-8'))
+    if not isinstance(kayitlar, list):
+        raise ValueError('Girdi kayıt listesi olmalı')
+    kalan, atilan = filtrele(kayitlar, args.kurallar)
+    _yeni_yaz(cikti, kalan)
+    _yeni_yaz(atilan_yol, atilan)
+    sayac = {k: sum(a['sebep'] == k for a in atilan) for k in args.kurallar}
+    print(f'Girdi: {len(kayitlar)} | kalan: {len(kalan)} | atılan: {len(atilan)} {sayac}')
+    print(f'Çıktı: {cikti} | Atılanlar: {atilan_yol}')
+
+
+if __name__ == '__main__':
+    main()
