@@ -18,9 +18,12 @@
 -- outcome sütunu YOK: veride ayrı alan yok (etki tablosunun sonucu yalnız tablo başlığında); tahminle doldurulmaz.
 -- Niteliksel etki tablosu (etki_turu = 'sayisal deger yok', ör. AF Table 2 "Decreased / Increased"):
 --   finding "<satır adı>: <müdahale> → <sonuç ölçütü>" (ör. "Overweight or obesity: Weight loss, … → AF symptoms");
+--   satır adı ve bölüm öneki ikisi de boşsa baştaki ': ' konmaz ("<müdahale> → <sonuç ölçütü>").
 --   statistical_result yalnız değer ("Decreased"); 'sayisal deger yok' iç kodu gösterilmez (veri değişmez).
--- Tedavi / ilaç türündeki TABLO satırları (ör. Table 2 öneri satırları) burada gösterilmez: sonuç ölçütleri ve
---   etki değerleri yok (finding boş kalırdı); treatments view'ında görünürler. Metin kayıtları değişmedi.
+-- Etki bilgisi OLMAYAN tedavi / ilaç türündeki TABLO satırları (bilgi_turu ilac / doz / tedavi ve etki_turu, deger, p
+--   üçü de NULL ya da boş; ör. AF Table 2 öneri satırları) burada gösterilmez (finding boş kalırdı); treatments
+--   view'ında görünürler. Bu alanlardan biri dolu olan ilaç / tedavi satırı (ör. OR / HR) burada kalır.
+--   Metin kayıtları değişmedi.
 CREATE OR REPLACE VIEW `{{SUNUM_DB}}`.`clinical_outcomes` AS
 SELECT
     CASE
@@ -30,7 +33,9 @@ SELECT
             THEN CONCAT_WS(' – ', f.ilac, f.degisken)
         WHEN f.kanit_turu = 'tablo' AND f.etki_turu = 'sayisal deger yok'
             AND NULLIF(f.ilac, '') IS NOT NULL AND NULLIF(f.degisken, '') IS NOT NULL
-            THEN CONCAT(CONCAT_WS(' – ', f.bolum_oneki, f.satir_adi), ': ', f.ilac, ' → ', f.degisken)
+            THEN CONCAT_WS(': ',
+                NULLIF(CONCAT_WS(' – ', NULLIF(TRIM(f.bolum_oneki), ''), NULLIF(TRIM(f.satir_adi), '')), ''),
+                CONCAT(f.ilac, ' → ', f.degisken))
         WHEN f.kanit_turu = 'tablo' THEN CONCAT_WS(' – ', f.bolum_oneki, f.degisken)
         ELSE f.klinik_bilgi_en
     END AS finding,
@@ -71,7 +76,10 @@ LEFT JOIN `{{KAYNAK_DB}}`.`v_sunum_taban` AS lp
     AND lp.p_baglandigi_satir = f.satir_no AND lp.tablo_no = f.tablo_no AND lp.filename <=> f.filename
     AND lp.ilac <=> f.ilac AND lp.kanit_turu = 'tablo'
 WHERE (f.kanit_turu = 'tablo' AND f.satir_grup_karsilastirmasi = 0 AND f.p_baglandigi_satir IS NULL
-        AND f.bilgi_turu NOT IN ('ilac', 'doz', 'tedavi'))
+        AND NOT (f.bilgi_turu IN ('ilac', 'doz', 'tedavi')
+                 AND NULLIF(TRIM(f.etki_turu), '') IS NULL
+                 AND NULLIF(TRIM(f.deger), '') IS NULL
+                 AND NULLIF(TRIM(f.p), '') IS NULL))
     OR (f.kanit_turu = 'metin' AND f.bilgi_turu = 'klinik_sonuc')
 ORDER BY f.source,
     CASE
