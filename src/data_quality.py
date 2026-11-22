@@ -80,7 +80,9 @@ PILOT_SIGNIFICANCE = 0.05
 #     parçalı / sayfa sınırlı kanıta sayfa geçişi ve şekil/tablo uyarısı verilmez.
 # r5: boş ya da rakamsız değerli tablo kaydı (pilot_tablo_bos_deger; ör. ara başlık "n (%)" ya da başlığı
 #     boş etiket sütunundan üretilmiş kayıt).
-PILOT_RULES_REVISION = 5
+# r6: pilot_bilgi_kanitta_yok çok parçalı kanıtta src.pilot_clinical.fact_in_parts'ı kullanır (validate_records ile
+#     aynı kural): bilgi tek parçada ya da birlestirme = 'sayfa' olan ardışık iki parçanın sayfa sınırında birebir.
+PILOT_RULES_REVISION = 6
 DEFAULT_PDF_DIR = Path("data/pdfs")
 PILOT_WARNING = ("pilot satırlar var ama --pilot verilmedi; v_kalite_ozet son sürümü gösterdiği için "
                  "pilot işaretleri görünmeyecek")
@@ -956,6 +958,24 @@ def pilot_part_problems(row, parts, pages):
     return problems
 
 
+def _fact_found(fact, parts, texts, pages):
+    """klinik_bilgi_en kanıtta mı. Tek alıntı: kanit_cumle içinde birebir. Çok parçalı kanıt: kural
+    src.pilot_clinical.fact_in_parts'tan (validate_records ile aynı; burada kopyalanmaz): tek parçada birebir ya da
+    yalnız birlestirme = 'sayfa' olan, ardışık sayfalardaki iki parçanın sayfa sınırında birebir. PDF okunamadıysa
+    (pages yok) sınır doğrulanamaz; yalnız tek parça araması yapılır."""
+    from src.pilot_clinical import fact_in_parts
+
+    if not isinstance(fact, str) or not fact.strip():
+        return False
+    if parts is None:
+        return any(fact in t for t in texts)
+    if not isinstance(parts, list) or not all(isinstance(p, dict) and isinstance(p.get("metin"), str)
+                                              and _int_or_none(p.get("sayfa")) is not None for p in parts):
+        return any(fact in t for t in texts)  # bozuk yapı: pilot_parca_tutarsiz ayrıca raporlar
+    clean = [{"sayfa": int(p["sayfa"]), "metin": p["metin"]} for p in parts]
+    return fact_in_parts(fact, clean, pages or {})
+
+
 def check_pilot_row(row, source):
     """Tek pilot satırının kanıt / biçim / bağlam kontrolleri. source: {'pages': {...}} veya {'hata': ...}.
 
@@ -999,10 +1019,11 @@ def check_pilot_row(row, source):
             flags.append(_flag(row, "pilot_kanit_sayfada_yok", "hata",
                                f"kanit_cumle PDF'in {start}. sayfasında (pdf_pages) birebir yok"))
     fact = row.get("klinik_bilgi_en") or row.get("klinik_bilgi")
-    if not fact or not any(fact in t for t in texts):
+    if not _fact_found(fact, parts, texts, pages):
         flags.append(_flag(row, "pilot_bilgi_kanitta_yok", "hata",
                            "klinik_bilgi_en kanıt cümlesinin içinde değil" if parts is None
-                           else "klinik_bilgi_en hiçbir kanıt parçasının içinde değil"))
+                           else "klinik_bilgi_en hiçbir kanıt parçasının içinde değil ve birlestirme = 'sayfa' olan "
+                                "ardışık iki parçanın sayfa sınırında da birebir geçmiyor"))
 
     if row.get("kanit_turu") != "tablo" and quote.strip() and not resolved:
         start = re.sub(r"^[\s*_#>]+", "", quote)

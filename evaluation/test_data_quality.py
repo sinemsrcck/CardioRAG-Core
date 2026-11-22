@@ -7,6 +7,9 @@ Veri kalitesi işaretleri testleri.
 A) Veritabanı gerektirmeyenler: normalizasyon, her kontrol için pozitif/negatif
    örnek (sahte satırlar), determinizm, sürüm hash'i, satir_hash çakışması.
    Pilot satır kontrolleri (check_pilot_row) ve --pilot sürüm ayrımı da burada.
+   Sayfa sınırı (fact_in_parts, validate_records ile aynı kural): birlestirme = 'sayfa' olan ardışık iki parçanın
+   sınırındaki bilgi geçerli; PDF'te olmayan ifade, araya tablo giren (ara_blok), ardışık olmayan ve tireyle
+   bölünmüş parçalar pilot_bilgi_kanitta_yok [hata].
    Troponin tabloları (sentetik kayıtlar, bellekte): Total sütunu, p sütunu etkisi ve tanısal performans
    kayıtlarında iki grup varsayan kontroller yanlış alarm vermez; gerçek tutarsızlık yine yakalanır.
    Grup içi test satırları (karsilastirma_turu = 'grup_ici' ya da notsuz, PDF satırından tanınan) grup çifti
@@ -256,6 +259,69 @@ def test_determinism_and_version():
     check("sürüm: eşanlamlı listesi hash'e dahil", True, control_version(payload=payload) != base)
     check("sürüm: embedding seçeneği hash'e dahil", True, control_version(embedding=True) != base)
     check("sürüm: aynı ayar aynı sürüm", base, control_version())
+
+
+BOUNDARY_PAGES = {
+    1: "Intro text. Patients who applied to the ER within the last 24",
+    2: "hours were excluded. Other text follows here.",
+    4: "Methods. Patients who applied to the ER within the last 24",
+    5: "**TABLE 1:** Baseline values\n\n|Age|50|\n",
+    6: "hours were excluded. Later text.",
+    7: "Results. Patients who applied to the ER within the last 24",
+    9: "hours were excluded. More text.",
+    10: "Levels of C-pep-",
+    11: "tide were high in the group.",
+}
+
+
+def test_pilot_page_boundary():
+    """pilot_bilgi_kanitta_yok çok parçalı kanıtta src.pilot_clinical.fact_in_parts'ı kullanır (validate_records ile
+    aynı kural; kopyalanmaz): bilgi tek parçada ya da birlestirme = 'sayfa' olan, ardışık iki sayfadaki kesintisiz
+    parçaların sayfa sınırında birebir. Araya tablo sayfası giren ('ara_blok'), ardışık olmayan ve tireyle bölünmüş
+    parçalar birleştirilmez."""
+    source = {"pages": BOUNDARY_PAGES}
+
+    def boundary(parts, fact, birlestirme="sayfa"):
+        note = json.dumps({"kanit_parcalari": parts}, ensure_ascii=False)
+        return make_row(bilgi_turu="diger", baglam="exclusion_criterion", kanit_turu="metin", cikarma_yontemi="manuel",
+                        kanit_cumle=parts[0]["metin"], kanit_sayfa=parts[0]["sayfa"], kanit_sayfa_bitis=parts[-1]["sayfa"],
+                        birlestirme=birlestirme, klinik_bilgi_en=fact, taslak_notu=note, chunk_id=None, makale_id=None)
+
+    def codes_of(row, src=source):
+        return sorted(f"{f['kontrol_kodu']} [{f['seviye']}]" for f in check_pilot_row(row, src))
+
+    consecutive = [{"sayfa": 1, "metin": "Patients who applied to the ER within the last 24"},
+                   {"sayfa": 2, "metin": "hours were excluded."}]
+    fact = "applied to the ER within the last 24 hours"
+    check("sayfa sınırı olumlu: bilgi ardışık iki sayfanın sınırında (birlestirme = sayfa) -> bilgi işareti yok",
+          ["pilot_cok_parcali_cozuldu [bilgi]"], codes_of(boundary(consecutive, fact)))
+    check("sayfa sınırı olumlu: tek parçadaki bilgi de geçerli", ["pilot_cok_parcali_cozuldu [bilgi]"],
+          codes_of(boundary(consecutive, "hours were excluded")))
+    check("sayfa sınırı olumsuz: PDF'te olmayan ifade (48 hours) -> pilot_bilgi_kanitta_yok [hata]", True,
+          "pilot_bilgi_kanitta_yok [hata]" in codes_of(boundary(consecutive, "applied to the ER within the last 48 hours")))
+    check("sayfa sınırı olumsuz: sınırda iki boşluk / boşluksuz birleşim kabul edilmez", [True, True],
+          ["pilot_bilgi_kanitta_yok [hata]" in codes_of(boundary(consecutive, f))
+           for f in ("within the last 24  hours", "within the last 24hours")])
+    table_between = [{"sayfa": 4, "metin": "Patients who applied to the ER within the last 24"},
+                     {"sayfa": 6, "metin": "hours were excluded."}]
+    check("araya tablo sayfası giren (birlestirme = ara_blok): parçalar geçerli ama sınırda birleştirilmez -> "
+          "pilot_bilgi_kanitta_yok [hata]", (True, False),
+          ("pilot_bilgi_kanitta_yok [hata]" in codes_of(boundary(table_between, fact, "ara_blok")),
+           any(c.startswith("pilot_parca_tutarsiz") for c in codes_of(boundary(table_between, fact, "ara_blok")))))
+    check("araya tablo giren: tek parçadaki bilgi geçerli", ["pilot_cok_parcali_cozuldu [bilgi]"],
+          codes_of(boundary(table_between, "hours were excluded", "ara_blok")))
+    gap = [{"sayfa": 7, "metin": "Patients who applied to the ER within the last 24"},
+           {"sayfa": 9, "metin": "hours were excluded."}]
+    check("ardışık olmayan sayfalar (araya tablo değil boşluk): sınır araması yok -> bilgi + parça hatası", [True, True],
+          ["pilot_bilgi_kanitta_yok [hata]" in codes_of(boundary(gap, fact)),
+           "pilot_parca_tutarsiz [hata]" in codes_of(boundary(gap, fact))])
+    hyphen = [{"sayfa": 10, "metin": "Levels of C-pep-"}, {"sayfa": 11, "metin": "tide were high in the group."}]
+    check("tireyle bölünmüş kelime (C-pep- / tide) birleştirilmez -> pilot_bilgi_kanitta_yok [hata]", [True, True],
+          ["pilot_bilgi_kanitta_yok [hata]" in codes_of(boundary(hyphen, f)) for f in ("C-peptide", "C-pep- tide")])
+    check("PDF okunamadıysa sınır doğrulanamaz: yalnız tek parça araması", (True, False),
+          (any(c.startswith("pilot_bilgi_kanitta_yok") for c in codes_of(boundary(consecutive, fact), {"hata": "yok"})),
+           any(c.startswith("pilot_bilgi_kanitta_yok")
+               for c in codes_of(boundary(consecutive, "hours were excluded"), {"hata": "yok"}))))
 
 
 def test_pilot_unit():
@@ -1032,6 +1098,7 @@ def main():
     test_source()
     test_determinism_and_version()
     test_pilot_unit()
+    test_pilot_page_boundary()
     test_troponin_tables()
     test_on_deneme_tables()
     with tempfile.TemporaryDirectory() as tmp:
