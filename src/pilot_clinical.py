@@ -24,6 +24,11 @@ INPUT_FIELDS = {'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kani
 # doğrulanır. import_records çok sayfalı/çok parçalı kaydı yazmadan önce validate_records ile aynı kurallarla
 # denetler (PDF sayfaları gerekir) ve şöyle yazar: sayfa_bitis -> kanit_sayfa_bitis, birlestirme -> birlestirme,
 # parçalar -> taslak_notu["kanit_parcalari"]; kanit_cumle ilk parça olarak kalır (birleştirilmiş alıntı yok).
+# Klinik bilgi (fact_in_parts) tek bir parçada birebir geçmelidir; tek istisna, birlestirme = 'sayfa' olan
+# kayıtta ardışık iki fiziksel sayfa arasında (önceki parça sayfanın son metni, sonraki parça bir sonraki
+# sayfanın ilk metni) kelime sınırında bölünmüş ifadedir. Yalnızca o iki parça tek boşlukla yan yana konup aranır ve eşleşme
+# sınırı gerçekten geçmelidir. Tireyle bölünmüş kelime, tablo/şekil üzerinden ('ara_blok') bağ ve ardışık
+# olmayan parçalar birleştirilmez; kanıt alıntısının kendisi yine birleştirilmez.
 CAPTION_RE = re.compile(r'\*\*(?:TABLE|FIGURE)\s*\d+\s*:\*\*', re.IGNORECASE)
 NUMBER_RE = re.compile(r'\d+(?:\.\d+)?')
 MAX_PARTS = 3
@@ -96,6 +101,44 @@ def _part_link(pages, prev_page, prev_end, page, start):
 
 def check_evidence_parts(parts, pages):
     """kanit_parcalari doğrulaması. Döndürür: birlestirme ('sayfa' | 'ara_blok')."""
+    links = _evidence_links(parts, pages)
+    return 'ara_blok' if 'ara_blok' in links else 'sayfa'
+
+
+def fact_in_parts(fact, parts, pages):
+    """Klinik bilgi kanıt parçalarında birebir var mı (normalizasyon yok).
+
+    Önce her parça tek başına aranır. Bulunmazsa ve kaydın bütün bağları 'sayfa' ise (birlestirme = 'sayfa';
+    tek bir 'ara_blok' bağı bile varsa sınır araması yapılmaz) ardışık iki parça (önceki parça
+    sayfa N'nin son metni, sonraki parça sayfa N+1'in ilk metni) tek boşlukla yan yana konur ve bilgi bu
+    sınırı gerçekten geçerek (iki parçadan da en az bir karakter alarak) geçmelidir. Tireyle biten parça
+    (bölünmüş kelime) birleştirilmez. Parçalar doğrulanamıyorsa yalnızca tek parça
+    araması yapılır."""
+    if not isinstance(fact, str) or not fact.strip():
+        return False
+    if any(fact in part['metin'] for part in parts):
+        return True
+    try:
+        links = _evidence_links(parts, pages)
+    except ValueError:
+        return False
+    if 'ara_blok' in links:
+        return False  # yalnızca birlestirme = 'sayfa' olan kayıtta sınır araması yapılır
+    for prev, cur in zip(parts, parts[1:]):
+        if cur['sayfa'] != prev['sayfa'] + 1:
+            continue
+        left, right = prev['metin'].rstrip(), cur['metin'].lstrip()
+        if left.endswith('-'):
+            continue  # bölünmüş kelimenin doğru birleşimi belirsiz ('C-pep-' + 'tide')
+        joined = left + ' ' + right
+        for start in _occurrences(fact, joined):
+            if start < len(left) and start + len(fact) > len(left) + 1:
+                return True
+    return False
+
+
+def _evidence_links(parts, pages):
+    """kanit_parcalari doğrulaması. Döndürür: ardışık parça çiftlerinin bağları ('sayfa' | 'ara_blok')."""
     if not isinstance(parts, list) or not 2 <= len(parts) <= MAX_PARTS:
         raise ValueError(f'kanit_parcalari 2-{MAX_PARTS} parçalı liste olmalı')
     for part in parts:
@@ -115,7 +158,7 @@ def check_evidence_parts(parts, pages):
                 break
             links.append(link)
         else:
-            return 'ara_blok' if 'ara_blok' in links else 'sayfa'
+            return links
     raise ValueError('Kanıt parçaları okuma sırasında kesintisiz değil (sayfa sonu/başı, tablo sayfası '
                      'veya şekil/tablo başlığı dışında metin atlanıyor)')
 
@@ -162,8 +205,9 @@ def validate_records(records, pages):
                     raise ValueError('sayfa/sayfa_bitis ilk ve son kanıt parçasının sayfalarıyla aynı olmalı')
                 if item.get('birlestirme') != joined:
                     raise ValueError(f'birlestirme kanıt parçalarına göre {joined!r} olmalı')
-                if not isinstance(fact, str) or not fact.strip() or not any(fact in part['metin'] for part in parts):
-                    raise ValueError('Klinik bilgi tek bir kanıt parçasında birebir bulunamadı; parçalar birleştirilmez')
+                if not fact_in_parts(fact, parts, pages):
+                    raise ValueError('Klinik bilgi tek bir kanıt parçasında ya da ardışık iki sayfanın kelime '
+                                     'sınırında birebir bulunamadı; başka parçalar birleştirilmez')
                 part_numbers = {n for part in parts for n in NUMBER_RE.findall(part['metin'])}
                 for field in PART_NUMERIC_FIELDS:
                     value = item.get(field)
