@@ -28,6 +28,8 @@ Kontroller:
   gösterir, taban view'da veri kaybı yok.
 - Troponin (sentetik kayıtlar, transaction + ROLLBACK): Total ayrı sütunda, OR effect'te, tekrar eden ad bölüm
   önekli, tanısal performans clinical_outcomes'ta (AUC + P birleşik).
+- Regresyon (Eozinofil Table 3, sentetik kayıtlar, transaction + ROLLBACK): B ayrı sütun değil; statistical_result
+  "multivariate B 7.912, OR 2,735.621, p=0.002"; B'siz etki satırında (pilot Table 2) biçim aynı.
 """
 
 import json
@@ -408,6 +410,62 @@ def check_troponin(target):
         conn.close()
 
 
+EOZINOFIL_PDF = Path("data/pdfs/TK-cardiovascular37-2-1.pdf")
+
+
+def check_regression(target):
+    """Regresyon tablosu (Eozinofil Table 3; sentetik kayıt, transaction + ROLLBACK): ekip kararı — B ayrı sütun değil;
+    clinical_outcomes.statistical_result "multivariate B 7.912, OR 2,735.621, p=0.002". B'siz etki satırında
+    (pilot Table 2) biçim aynı: "univariate OR … (95% CI …), p=…"."""
+    from src.database import get_connection
+    import src.pilot_tablo as pt
+    from src.pilot_clinical import import_records, pdf_pages
+
+    if not EOZINOFIL_PDF.exists():
+        check("regresyon: Eozinofil PDF var", True, False)
+        return
+    doc, pages = pdf_pages(EOZINOFIL_PDF)
+    tables = pt.parse_tables(pages)
+    hams = list(dict.fromkeys((t["sayfa"], r["ham"]) for t in tables for r in t["satirlar"]))
+    records = [{"v2_sira": i, "kanit_turu": "tablo", "sayfa": s, "kanit_cumle": h, "bilgi_turu": "olcum",
+                "baglam": "study_finding", "klinik_bilgi_en": h} for i, (s, h) in enumerate(hams, 1)]
+    transfer = [dict(r, review_status="verified") for r in pt.enrich(records, pages, doc["document_id"])["aktarim"]]
+    conn = get_connection()
+    conn.autocommit = False
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT filename FROM pdf_belgeleri WHERE document_id = %s", (doc["document_id"],))
+        if not cur.fetchone():
+            conn.rollback()
+            check("regresyon: Eozinofil PDF pdf_belgeleri'de", True, False)
+            return
+        conn.rollback()
+        conn.start_transaction()
+        check("regresyon: Eozinofil 42 kayıt yazıldı (transaction içinde)", 42,
+              import_records(doc, transfer, connection=conn, pages=pages))
+        cur.execute("SELECT COALESCE(NULLIF(m.baslik, ''), p.filename) FROM pdf_belgeleri AS p LEFT JOIN makaleler AS m "
+                    "ON m.document_id = p.document_id WHERE p.document_id = %s", (doc["document_id"],))
+        source = dec(cur.fetchone()[0])
+        cur.execute(f"SELECT finding, statistical_result, evidence FROM `{target}`.clinical_outcomes WHERE source = %s",
+                    (source,))
+        rows = [tuple(map(dec, r)) for r in cur.fetchall()]
+        check("regresyon: Table 3 clinical_outcomes'ta; statistical_result \"multivariate B …, OR …, p=…\" (B ayrı sütun değil)",
+              [("ELR", "multivariate B 7.912, OR 2,735.621, p=0.002", "Table 3 – ELR"),
+               ("PLR", "multivariate B 0.005, OR 1.005, p=0.007", "Table 3 – PLR"),
+               ("Neu%", "multivariate B 0.021, OR 1.021, p=0.062", "Table 3 – Neu%")], rows)
+        check("regresyon: clinical_outcomes'ta B için ayrı sütun yok", False,
+              any(c.casefold() in ("b", "regresyon_katsayisi", "coefficient") for c in columns(cur, target, "clinical_outcomes")))
+        cur.execute(f"SELECT statistical_result FROM `{target}`.clinical_outcomes WHERE evidence = 'Table 2 – Age' "
+                    f"ORDER BY statistical_result")
+        check("regresyon: B'siz etki satırı (pilot Table 2 – Age) biçimi aynı",
+              ["multivariate OR 0.852 (95% CI 0.542-0.915), p=0.679", "univariate OR 1.254 (95% CI 0.892-1.372), p=0.002"],
+              [dec(r[0]) for r in cur.fetchall()])
+        cur.close()
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def main():
     from src.database import get_connection
 
@@ -452,6 +510,7 @@ def main():
     check_three_groups(source, target)
     restored = install(out=lambda *_: None)  # gerçek veriye göre (2 grup) geri kur
     check_troponin(target)
+    check_regression(target)
     conn = get_connection()
     cur = conn.cursor()
     check("geri kurulum: measurements yine 2 grup", expected_measurement_columns(restored["groups"]),

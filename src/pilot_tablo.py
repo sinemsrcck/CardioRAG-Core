@@ -476,6 +476,21 @@ def _column_roles(headers):
     return roles
 
 
+def _analysis_from_caption(columns, caption):
+    """Etki sütununun analiz etiketi başlığından gelmiyorsa ("Exp (B) (OR)") ve tablo başlığında tek bir analiz
+    etiketi geçiyorsa ("Multivariate logistic regression …") analiz o etikettir (genel kural). Başlıkta birden fazla
+    farklı etiket varsa (ör. "univariate and multivariate") ya da hiç yoksa sütun etiketi kalır."""
+    found = {m.group(0).casefold() for m in re.finditer(r'\b(?:' + '|'.join(ANALYSIS_LABELS) + r')\b', caption or '',
+                                                         re.IGNORECASE)}
+    if len(found) != 1:
+        return
+    label = found.pop()
+    for col in columns:
+        if col['rol'] == 'etki' and col['analiz'] not in ANALYSIS_LABELS:
+            col['analiz_sutun_basligi'] = col['analiz']
+            col['analiz'] = label
+
+
 def group_title(title):
     """(grup adı, n, başlıktaki değer biçimi). (n=…) başlığın her yerinden okunur; ' / ' sonrası biçim ifadesi
     ("Median (Q1-Q3)", "n (%)") addan ayrılır: 'Total (n=114) / Median (Q1-Q3)' -> ('Total', 114, 'Median (Q1-Q3)').
@@ -601,6 +616,7 @@ def _parse_table(page, lines, start, end, ordinal):
         issues.append({'tur': 'sutun_basliginda_artik_parca', 'parca': stray_header, 'ham': header_raw.strip(),
                        'aciklama': 'Başlık hücresinde kalın olmayan parça; başlığa katılmadı, düzeltme yapılmadı'})
     columns = _columns(headers)
+    _analysis_from_caption(columns, caption)
     rows, sections, section, first_data = [], [], None, True
     skipped, footnotes, formats, complex_reasons = [], [], {}, []
     for line_no in range(data_start, end):

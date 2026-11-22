@@ -7,6 +7,8 @@
 --   diğer tablo satırları: faktör adı (degisken; aynı tabloda tekrar eden adda bölüm öneki). Metin: cümle (klinik_bilgi_en).
 -- statistical_result:
 --   etki satırı: analiz + etki ölçüsü + değer + %95 GA + p (ör. "univariate OR 3.124 (95% CI 2.213-4.310), p<0.001").
+--     Regresyon katsayısı varsa (taslak_notu.regresyon_katsayisi, ör. "B" sütunu) etki ölçüsünden önce "B <değer>,"
+--     (ekip kararı: B ayrı sütun değil): "multivariate B 7.912, OR 2,735.621, p=0.002". Yoksa biçim aynı.
 --   tanısal performans: değer (ör. "75.0%"); AUC "AUC 0.755 ± 0.072, p<0.001"; OR "OR 11.84 (SE 0.70)";
 --     ikili karşılaştırma "p=0.291". P satırı AUC'ye bağlıysa (taslak_notu.p_baglandigi_satir) ayrı satır olarak
 --     gösterilmez, p'si AUC satırına eklenir ve evidence'a "; Table N – P" yazılır.
@@ -44,6 +46,7 @@ SELECT
             CONCAT_WS(', ',
                 NULLIF(CONCAT_WS(' ',
                     f.analiz,
+                    CASE WHEN f.regresyon_katsayisi IS NOT NULL THEN CONCAT('B ', f.regresyon_katsayisi, ',') END,
                     CASE WHEN f.deger IS NOT NULL THEN CONCAT_WS(' ', f.etki_turu, f.deger) ELSE f.etki_turu END,
                     CASE WHEN f.ci95 IS NOT NULL THEN CONCAT('(95% CI ', f.ci95, ')') END), ''),
                 CASE WHEN f.p IS NOT NULL THEN
