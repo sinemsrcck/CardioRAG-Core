@@ -266,6 +266,7 @@ ok, hata_turu, aciklama = validate_row(satir, ctx)
 | `evaluate_extraction.py` | Gold set'e karşı alan bazında P/R/F1 (ham ve doğrulanmış seviye, birebir/gevşek; `insan_dogrulanmis` ve `llm_etiketli` ayrı kümeler), rapor ve CLI (bkz. [Çıkarım değerlendirmesi](#çıkarım-değerlendirmesi)). |
 | `sunum.py` | Sunum VIEW'ları, `cikarim_reddedilenler` / `hata_onlem` tabloları, `kaynak_bul` procedure'ü ve red kayıt yazıcısı (`python -m src.sunum --kur`; bkz. [Hocaya gösterim](#hocaya-gösterim)). |
 | `sunum_hoca.py` | Hoca sunum veritabanı (`kardiyo_sunum`): `sql/sunum_hoca/*.sql` dosyalarını sırayla, veritabanı adlarını `.env`'den doldurarak kurar (`python -m src.sunum_hoca --kur`). |
+| `aktarim.py` | Doğrulanmış klinik kayıt JSON'larını `klinik_bulgular`'a aktaran komut (`python -m src.aktarim`); varsayılan prova (ROLLBACK), kalıcı yazma `--yaz --yedek` ile (bkz. [Aktarım](#aktarım)). |
 
 ## Testler (`evaluation/`)
 
@@ -286,6 +287,7 @@ Hepsi proje kökünden `python -m evaluation.<dosya_adı>` ile çalıştırılı
 | `test_sunum` | Değer alanları (p, GA, örneklem, etki ölçütü, ICD) pozitif/negatif ve gerçek adaylarla `validate_row`; tablo bulgusunda değer alanlarının yazılmaması; `--json-mode`; reddedilenler tablosuna deterministik ve tekrar etmeyen yazım; VIEW'lar ve `kaynak_bul` (harf duyarsız, joker ve SQL injection kapalı); `--mock` / `--no-save` kalıcı yazmaz. Sunum şeması yoksa transaction dışında kurar; yazımlar geri alınır. |
 | `test_sunum_hoca` | Hoca sunum veritabanı: kurulum iki kez çalışınca view'lar aynı kalır; her view'da beklenen sütunlar, teknik sütun yok, satır sayıları doğrudan `klinik_bulgular` sorgusuyla tutarlı, ad sütunlarında `\|` yok; tablo satırı `evidence`'ı "Table N – satır adı" (`\|`, `<br>`, `**`, `<sup>` yok), metin `evidence`'ı değişmemiş; `measurements` yalnız Table 1 tablo satırları, metin ölçümleri `general_clinical_findings`'te; grup sırası PDF başlık sırasıyla aynı; 3 gruplu örnek veriyle yan yana view 3 grubu gösterir ve taban view'da veri kaybı olmaz. Sunum veritabanında yalnız hoca view'ları (`_` ile başlayan view ve teknik sütun yok), taban view `v_sunum_taban` kaynakta, eski `_findings_base` kurulumda silinir; sabit satır sayıları (51 / 102 / 66 / 13 / 44); `clinical_outcomes` sırası study finding → Table 2 → literature, `general_clinical_findings`'te literature sonda. Örnek veri transaction içinde yazılıp geri alınır. |
 | `test_pilot_izolasyon` | Pilot testlerinin gerçek veri koruması (`evaluation/pilot_izolasyon.py`): gerçek pilot satırları yalnız testin açık transaction'ında silinir; autocommit açıksa / transaction yoksa hiçbir şey silinmez; silmeden sonra aynı bağlantıda `commit()`, `start_transaction()`, autocommit açma ve örtük commit yapan ifadeler (CREATE / DROP / ALTER / TRUNCATE / BEGIN / COMMIT / SET autocommit / LOCK …) engellenir; ROLLBACK sonrası ayrı bağlantıdan güvenlik kontrolü (sayı, id aralığı, parmak izi). Yasaklı işlemler gerçek satırı olmayan belge kimliği ve var olmayan tablo adlarıyla güvenli sınanır. |
+| `test_aktarim` | Aktarım komutu (`src/aktarim.py`): prova hiçbir şey bırakmıyor ve koruma commit'i engelliyor; `--yaz` yedeksiz / eski / boş yedekle reddediliyor; verified olmayan kayıt, başka PDF'in JSON'u, gerçek tekrar, dosyalar arası tür çakışması ve zaten aktarılmış makale reddediliyor; `--yeniden` yalnız o makaleye dokunuyor (pilot 243, hash'ler aynı; RAG ve diğer satırlar aynı); Troponin'deki `mudahale_en` farklı 3 "tekrar" kabul ediliyor; kalite (dry-run) hata 0; satır listesi dosyası. `pilot_izolasyon` korumasıyla, transaction + ROLLBACK. |
 | `test_pilot_gosterim` | `v_pilot_bulgular`: kurulu olduğunu, `import_records` ile yazılan pilot kayıtlarının (HbA1c iki grup, Table 2 HCR univariate/multivariate, bir ilaç satırı, iki metin kaydı) grup/değer/p, `taslak_notu`'dan çıkan `tablo_no` / `analiz` / `grup_n` sütunlarını, Türkçe etiketleri, iki bağlamın aynı listede göründüğünü, sıralamayı, `kaynak_bul`'un pilot satırlarını bulduğunu ve kalite sütunlarının `kalite_isaretleri` ile tuttuğunu doğrular. VIEW yoksa transaction dışında kurar; yazımlar geri alınır. |
 
 **MySQL gerektirmeyenler:**
@@ -390,6 +392,49 @@ python -m src.run_clinical_batch --from-cache           # LLM yok; önbellekteki
 2. Zip'i `data/review/clinical_batch/responses/` olacak şekilde açın.
 3. Kontrol: `python -m src.run_clinical_batch --from-cache --dry-run` (`onbellekte_yok` 0'a yakın olmalı; yüksekse PDF'ler veya kod sürümü farklıdır).
 4. Kayıt: `python -m src.run_clinical_batch --from-cache`
+
+## Aktarım
+
+Doğrulanmış (`review_status = "verified"`) klinik kayıt JSON'ları `python -m src.aktarim` ile `klinik_bulgular`'a aktarılır (pilot akışı; `bilgi_turu` dolu satırlar). Her makale için bir PDF ve bir ya da birden fazla JSON verilir. Birden fazla makale için `--makale` tekrarlanır. JSON kökü kayıt listesidir; `{"document_id": …, "kayitlar": […]}` biçimi de kabul edilir.
+
+**1. Yedek** (`--yaz` için zorunlu; son 24 saatte alınmış ve boş olmamalı). PowerShell'de `>` dosyayı UTF-16 yazdığı için `--result-file` kullanılır:
+
+```powershell
+& "C:\Program Files\MySQL\MySQL Server 8.4\bin\mysqldump.exe" -u root -p --single-transaction --routines --result-file=backups/aktarim_oncesi.sql kardiyo_tam_metin
+```
+
+**2. Prova** (varsayılan): her şey tek transaction'da yapılır, sonunda ROLLBACK edilir. Bağlantı korumaya alınır (commit edemez). Sonda ayrı bağlantıdan tablo sayılarının değişmediği yazılır.
+
+```powershell
+python -m src.aktarim --makale data/pdfs/who-J-Coll-Physicians-Surg-Pak-2020-30-9-906-911-eng.pdf data/review/troponin/zehra_troponin_tablo_dogrulanmis.json
+```
+
+**3. Kalıcı yazma:** `--yaz --yedek <dosya>`. İsteğe bağlı olarak `--kalite` COMMIT sonrası `data_quality --pilot`'u kalıcı çalıştırır, `--kur` ise `python -m src.sunum_hoca --kur`'u çalıştırır.
+
+```powershell
+python -m src.aktarim --makale <pdf> <json> [<json> ...] --yaz --yedek backups/aktarim_oncesi.sql --kalite --kur
+```
+
+**4. Yeniden aktarım:** makalenin zaten pilot satırları varsa komut durur. `--yeniden` ile o makalenin mevcut pilot satırları (aynı `document_id`, `bilgi_turu IS NOT NULL`) ve bağlı kalite işaretleri aynı transaction'da silinir ve kayıtlar yeniden aktarılır. Diğer makalelere ve RAG satırlarına dokunulmaz; bu, öncesi/sonrası parmak iziyle doğrulanır. Örnek (pilot):
+
+```powershell
+python -m src.aktarim --makale data/pdfs/TK-cardiovascular36-2-1.pdf data/review/pilot/zehra_dogrulanmis_v3_3.json data/review/pilot/pilot_findings_v3_3_sinem_sql_verified_v2.json --yeniden
+```
+
+**Kontroller.** Biri tutmazsa ROLLBACK yapılır ve komut durur; mesajda kontrol numarası yazar.
+
+1. PDF `pdf_belgeleri`'nde kayıtlı.
+2. JSON o PDF'le eşleşiyor (kanıtlar birebir).
+3. Bütün kayıtlar verified.
+4. `validate_records` her dosyada ve dosyaların birleşiminde hatasız. "Tekrar" sayılan iki kayıt `mudahale_en` (test adı) bakımından farklıysa kabul edilir ve listelenir.
+5. Dosyalar arasında aynı kanıt + aynı bilgi, farklı `bilgi_turu` yok.
+6. Makale zaten aktarılmamış (ya da `--yeniden` verilmiş).
+7. Yazılan = beklenen, atlanan 0, çift `satir_hash` yok, hepsi verified, diğer satırlar değişmedi.
+8. Aynı transaction'da `data_quality --pilot --dry-run` makale makale hata / uyarı / bilgi ve tablo eksiksizliği raporlar; hata varsa durur.
+
+**Çıktı:** `--yaz` ile COMMIT sonrası her makale için `data/review/aktarim/<belge>_satirlari_<zaman>.json` yazılır. Dosyada id, `satir_hash`, kaynak dosya, `bilgi_turu`, `baglam`, `kanit_turu`, `kanit_sayfa`, girdi dosyaları ve sayılar vardır; var olan dosya silinmez.
+
+**Not:** Prova da MySQL'in AUTO_INCREMENT sayacını ilerletir (ROLLBACK sayacı geri almaz). Satırlar geri alınır, yalnız sonraki id'lerde boşluk kalır.
 
 ## Veri kalitesi
 
