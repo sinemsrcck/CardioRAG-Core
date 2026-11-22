@@ -61,6 +61,12 @@ Ekip kararları (Troponin tablo denemesi; Zehra + Sinem). Hepsi genel kural; pil
   ayrı kayıt + 'p_satiri_baglanamadi' sorunu. "P (A-B)=0.291" satırı karşılaştırma kaydı (mudahale_en A testi,
   comparator B testi, p).
 - "Odds Ratio (SE.)": "(SE.)" istatistik etiketi, birim değil (STAT_LABEL).
+- Grup içi test satırı (within_group_reason; ör. "P value for intra groups", "Pairwise comparison A-B"): grup
+  sütunlarındaki (Total dahil) bütün dolu hücreler p değeri ve satırın p sütunu boş; ayrıca satır adı / bölüm grup
+  içi diyor (WITHIN_GROUP_NAME) ya da satırın test işaretinin dipnot anlamı grup içi / tekrarlı ölçüm testi
+  (WITHIN_GROUP_TEST: Friedman, Dunn, Wilcoxon signed-rank, paired t, repeated measures …). Her sütun o grubun
+  kendi içindeki karşılaştırmasıdır: comparator / p / p_sutun yazılmaz; taslak_notu.karsilastirma_turu =
+  'grup_ici' ve grup_ici_nedeni. src.data_quality grup çifti kontrollerini bu satırlara uygulamaz.
 - Not: Troponin Table II'de "Accuracyrate" kanıt metninde de boşluksuz: PDF metin katmanında "Accuracy rate"
   (gerçek boşluk karakteri) var, ama pymupdf4llm 2.1'in layout yolu (pymupdf_layout kuruluyken varsayılan) bu
   hücrenin boşluğunu düşürüyor; eski rag yolu ve page.find_tables().to_markdown() boşluğu koruyor. Ad kanıtta
@@ -140,6 +146,17 @@ SE_LABEL = re.compile(r'(?:±\s*|\(\s*)s\.?e\.?m?\.?\s*\)?\s*$', re.IGNORECASE)
 VALUE_PM = re.compile(r'^([<>]?\s*-?\d+(?:\.\d+)?)\s*±\s*(\d+(?:\.\d+)?)$')
 VALUE_PAREN = re.compile(r'^(-?\d+(?:\.\d+)?)\s*\(\s*(\d+(?:\.\d+)?)\s*\)$')
 ROC_FOOTNOTE = re.compile(r'\broc\b|\bauc\b|area\s+under|hanley|honley|mc\s*ne', re.IGNORECASE)
+# Grup içi test satırı (makaleye özel değil): her grup sütununda o grubun KENDİ içindeki karşılaştırmasının p'si
+# (zaman noktaları / tekrarlı ölçümler; ör. "P value for intra groups", "Pairwise comparison A-B"). Gruplar arası
+# karşılaştırma değildir: comparator yazılmaz, taslak_notu.karsilastirma_turu = 'grup_ici'.
+KARSILASTIRMA_GRUP_ICI = 'grup_ici'
+WITHIN_GROUP_NAME = re.compile(
+    r'\bintra[\s-]?groups?\b|\bwithin[\s-]+(?:the\s+)?(?:groups?|subjects?)\b|\bpairwise\b|\bpost[\s-]?hoc\b'
+    r'|\bgrup\s*içi\b|\bikili\s+karşılaştırma', re.IGNORECASE)
+# Dipnotta test işaretinin anlamı grup içi / tekrarlı ölçüm testi mi ("f Friedman Test; Post Hoc Test: Dunn's Test").
+WITHIN_GROUP_TEST = re.compile(
+    r'friedman|\bdunn|wilcoxon\s+signed|signed[\s-]?rank|paired[\s-]+(?:samples?\s+)?t\b|paired\s+samples?'
+    r'|repeated[\s-]+measures?|cochran\W*s?\s+q\b|mcnemar|tekrarl[ıi]\s+ölçüm', re.IGNORECASE)
 
 SEPARATOR = re.compile(r'^\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 # Tablo başlığı: "TABLE 1:", "Table 2.", Roma rakamıyla "Table I:", "Table II." (sayıya çevrilir).
@@ -688,29 +705,86 @@ def row_analyses(table, row):
     return out
 
 
+def _is_p_value(value):
+    """Hücre tek başına bir p değeri mi: "<0.001", "0.027", "=0.05" (0–1 arası)."""
+    text = clean(value or '')
+    if not P_LIKE.match(text):
+        return False
+    try:
+        return 0 <= float(re.sub(r'^[<>=≤≥]?\s*', '', text)) <= 1
+    except ValueError:
+        return False
+
+
+def footnote_mark_meaning(table, mark):
+    """Tablo dipnotunda test işaretinin anlamı ("f Friedman Test; Post Hoc Test : Dunn's Test" -> 'f' için
+    "Friedman Test; Post Hoc Test : Dunn's Test"); yoksa None. Dipnot italik parçalara bölünmüş olabilir."""
+    if not mark:
+        return None
+    text = re.sub(r'\s+', ' ', ' '.join(table.get('dipnot') or []).replace('_', ' ').replace('*', ' ')).strip()
+    found = re.search(rf'(?:^|[\s,;(]){re.escape(mark)}\s+([A-Za-z][^,]*)', text)
+    return found.group(1).strip() if found else None
+
+
+def within_group_reason(table, row):
+    """Grup içi test satırı mı (genel kural, makaleye özel değil); öyleyse gerekçe, değilse None.
+
+    Yapı şartı: satırın grup sütunlarındaki (Total dahil) bütün dolu hücreler p değeri ve satırın p sütunu boş:
+    her sütun kendi grubunun içindeki karşılaştırmayı verir, gruplar arası p yoktur. Ayrıca şunlardan biri:
+    - satır adı / birleşik ad / bölüm grup içi bir test söylüyor ("intra group", "within group", "pairwise",
+      "post hoc", "grup içi" …),
+    - satırın test işaretinin dipnottaki anlamı grup içi / tekrarlı ölçüm testi (Friedman, Dunn, Wilcoxon
+      signed-rank, paired t, repeated measures, Cochran Q, McNemar …).
+    Tanısal performans tablosunda uygulanmaz (sütunlar grup değil test)."""
+    if table.get('tablo_turu') == TABLO_TANISAL:
+        return None
+    columns = table['sutunlar']
+    values = [row['sutun_degerleri'].get(c['anahtar'], '') for c in columns if c['rol'] == 'grup']
+    filled = [v for v in values if v]
+    if not filled or not all(_is_p_value(v) for v in filled):
+        return None
+    if any(row['sutun_degerleri'].get(c['anahtar']) for c in columns if c['rol'] == 'p'):
+        return None
+    for text in (row.get('degisken'), row.get('degisken_ham'), row.get('alt_bolum')):
+        found = WITHIN_GROUP_NAME.search(text or '')
+        if found:
+            return f"satır adı '{text}' grup içi karşılaştırma ('{found.group(0)}'); grup hücreleri p değeri, p sütunu boş"
+    meaning = footnote_mark_meaning(table, row.get('ad_isareti'))
+    found = WITHIN_GROUP_TEST.search(meaning or '')
+    if found:
+        return (f"test işareti '{row['ad_isareti']}' dipnotta grup içi test ('{meaning}'); grup hücreleri p değeri, "
+                f"p sütunu boş")
+    return None
+
+
 def row_groups(table, row):
     """Grup tablosu satırı için grup başına {grup, n, deger, deger_bicimi, comparator, comparator_n, p}."""
     """Total sütunu (col['toplam']) veri olarak döner ('toplam': True) ama karşılaştırma grubu sayılmaz: comparator'ı
     yok, karşılaştırma p'si ona yazılmaz, diğer grupların comparator'ına girmez. p sütununda p yerine etki ölçüsü
-    varsa (row['p_etki']) grup kayıtlarında p boştur."""
+    varsa (row['p_etki']) grup kayıtlarında p boştur. Grup içi test satırında (within_group_reason) hiçbir kayda
+    comparator / p sütunu yazılmaz; kayıtlar karsilastirma_turu = 'grup_ici' taşır."""
     groups = [c for c in table['sutunlar'] if c['rol'] == 'grup']
     comparison = [c for c in groups if not c.get('toplam')]
     p_cols = [c for c in table['sutunlar'] if c['rol'] == 'p' and c.get('etki_sutunu') is None]
     p_key = p_cols[0]['anahtar'] if len(p_cols) == 1 else None
     p_value = row['sutun_degerleri'].get(p_key) if p_key and p_key not in (row.get('p_etki') or {}) else None
+    within = within_group_reason(table, row)
     out = []
     for col in groups:
         total = bool(col.get('toplam'))
-        others = [] if total else [c for c in comparison if c is not col]
+        others = [] if total or within else [c for c in comparison if c is not col]
         value = row['sutun_degerleri'].get(col['anahtar'], '')
         item = {'sutun': col['anahtar'], 'grup': col['grup'], 'n': col['n'], 'deger': value,
                 'deger_bicimi': value_format(value),
                 'comparator': others[0]['grup'] if len(others) == 1 else None,
                 'comparator_n': others[0]['n'] if len(others) == 1 else None,
                 'comparator_sutun': others[0]['anahtar'] if len(others) == 1 else None,
-                'p': None if total else p_value, 'p_sutun': None if total else p_key}
+                'p': None if total or within else p_value, 'p_sutun': None if total or within else p_key}
         if total:
             item['toplam'] = True
+        if within:
+            item['karsilastirma_turu'] = KARSILASTIRMA_GRUP_ICI
+            item['grup_ici_nedeni'] = within
         out.append(item)
     return out
 
@@ -940,6 +1014,10 @@ def sql_preview(record, table, row, document_id=None, skipped=None):
                     **_extra_note(row, group['sutun'], group['deger'], columns.get(group['sutun'])))
         if group.get('toplam'):
             note['sutun_rolu'] = SUTUN_TOPLAM  # veri olarak kalır; comparator / grup sayısına girmez (ekip kararı 6)
+        if group.get('karsilastirma_turu'):
+            # Grup içi test (zaman noktaları / tekrarlı ölçüm): gruplar arası karşılaştırma değil, comparator yok.
+            note['karsilastirma_turu'] = group['karsilastirma_turu']
+            note['grup_ici_nedeni'] = group['grup_ici_nedeni']
         if medication:
             note['not'] = 'Kullanım oranı n (%); doz değil.'
             mudahale_turu, mudahale_en, outcome, measure = MUDAHALE_ILAC, row['degisken'], OUTCOME_KULLANIM, 'kullanım oranı'

@@ -695,12 +695,13 @@ def check_ci_p(row):
 
 def _group_pairs(rows):
     """Aynı belge + tablo + satırdaki iki grup kaydı (karşılıklı comparator). Üç+ grup atlanır.
-    Total sütunu kaydı (taslak_notu.sutun_rolu = 'toplam') karşılaştırma grubu değildir, sayılmaz."""
+    Total sütunu kaydı (taslak_notu.sutun_rolu = 'toplam') karşılaştırma grubu değildir, sayılmaz; grup içi test
+    kaydı (taslak_notu.karsilastirma_turu = 'grup_ici') gruplar arası çift değildir, sayılmaz."""
     buckets = defaultdict(list)
     for row in rows:
         note = _note(row) or {}
         if note.get("tablo_no") is None or note.get("satir_no") is None or not row.get("hasta_grubu") \
-                or note.get("sutun_rolu") == "toplam":
+                or note.get("sutun_rolu") == "toplam" or note.get("karsilastirma_turu") == GRUP_ICI:
             continue
         doc = row.get("document_id") or row.get("makale_id") or ""
         buckets[(doc, str(note["tablo_no"]), str(note["satir_no"]))].append((row, note))
@@ -858,6 +859,8 @@ def check_model_terminology(rows):
 
 PILOT_LOW_CONTEXTS = {"literature_background", "recommendation"}
 PILOT_MED_TURU = "arka plan tedavisi"
+# taslak_notu.karsilastirma_turu: grup içi test kaydı (src.pilot_tablo.KARSILASTIRMA_GRUP_ICI ile aynı değer).
+GRUP_ICI = "grup_ici"
 _SUP = re.compile(r"<sup>.*?</sup>", re.IGNORECASE | re.DOTALL)
 _P_EXPR = re.compile(r"\bp\s*(?:-?\s*value\s*)?[<=>≤≥]\s*[\d.,]+", re.IGNORECASE)
 _P_BROKEN = re.compile(r"\bp\s*[<=>≤≥]\s*0\d+", re.IGNORECASE)
@@ -1095,8 +1098,11 @@ def check_table_groups(pilot_rows, sources):
     Beklenen kayıtlar src.pilot_tablo.expected_units'ten (pilot_tablo'nun aynı satırdan üreteceği kayıtlar):
     grup / Total / p sütunu etkisi / tanısal test x ölçü. İki grup varsayan çift kontrolleri (aynı p, karşılıklı
     comparator) yalnız karşılaştırma grubu kayıtlarına uygulanır: Total sütunu (taslak_notu.sutun_rolu = 'toplam'),
-    etki ve tanısal performans kayıtları (hasta_grubu yok) bu kontrollere girmez; 3+ grupta karşılıklılık aranmaz."""
-    from src.pilot_tablo import _needle, expected_units, record_unit
+    etki ve tanısal performans kayıtları (hasta_grubu yok) bu kontrollere girmez; 3+ grupta karşılıklılık aranmaz.
+    Grup içi test satırı (her grup sütununda o grubun kendi içindeki p'si; PDF satırı pilot_tablo.within_group_reason
+    ile ya da kayıt taslak_notu.karsilastirma_turu = 'grup_ici' ile) gruplar arası çift değildir: çift kontrolleri
+    uygulanmaz; beklenen comparator boştur (hücre kontrolü pilot_tablo.expected_units'ten)."""
+    from src.pilot_tablo import _needle, expected_units, record_unit, within_group_reason
 
     flags, partial = [], []
     groups = defaultdict(list)
@@ -1141,9 +1147,11 @@ def check_table_groups(pilot_rows, sources):
             for column, want in cell.items():
                 if not _same(m.get(column), want):
                     problems[m["satir_hash"]].append(f"{column} '{m.get(column)}' ≠ PDF '{want}'")
-        # Çift kontrolleri yalnız karşılaştırma grubu kayıtlarında (Total / etki / tanısal kayıtlar hariç).
-        groups = [m for m in members if m.get("hasta_grubu") and (_note(m) or {}).get("sutun_rolu") != "toplam"]
-        if not analyses and len(groups) > 1:
+        # Çift kontrolleri yalnız karşılaştırma grubu kayıtlarında (Total / etki / tanısal / grup içi kayıtlar hariç).
+        within = within_group_reason(table, pdf_row) is not None
+        groups = [m for m in members if m.get("hasta_grubu") and (_note(m) or {}).get("sutun_rolu") != "toplam"
+                  and (_note(m) or {}).get("karsilastirma_turu") != GRUP_ICI]
+        if not analyses and not within and len(groups) > 1:
             if len({str(m.get("p") or "").strip() for m in groups}) > 1:
                 for m in groups:
                     problems[m["satir_hash"]].append("çiftte p değerleri farklı")
