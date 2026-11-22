@@ -16,6 +16,14 @@
 -- Sıra (her makalede): 1) metin 'study finding' satırları, 2) tablo satırları, 3) diğer metin
 --   bağlamları, 4) 'literature' satırları en sonda; her grup içinde sayfaya göre.
 -- outcome sütunu YOK: veride ayrı alan yok (etki tablosunun sonucu yalnız tablo başlığında); tahminle doldurulmaz.
+-- Niteliksel etki tablosu (etki_turu = 'sayisal deger yok', ör. AF Table 2 "Decreased / Increased"):
+--   finding "<satır adı>: <müdahale> → <sonuç ölçütü>" (ör. "Overweight or obesity: Weight loss, … → AF symptoms");
+--   satır adı ve bölüm öneki ikisi de boşsa baştaki ': ' konmaz ("<müdahale> → <sonuç ölçütü>").
+--   statistical_result yalnız değer ("Decreased"); 'sayisal deger yok' iç kodu gösterilmez (veri değişmez).
+-- Etki bilgisi OLMAYAN tedavi / ilaç türündeki TABLO satırları (bilgi_turu ilac / doz / tedavi ve etki_turu, deger, p
+--   üçü de NULL ya da boş; ör. AF Table 2 öneri satırları) burada gösterilmez (finding boş kalırdı); treatments
+--   view'ında görünürler. Bu alanlardan biri dolu olan ilaç / tedavi satırı (ör. OR / HR) burada kalır.
+--   Metin kayıtları değişmedi.
 CREATE OR REPLACE VIEW `{{SUNUM_DB}}`.`clinical_outcomes` AS
 SELECT
     CASE
@@ -23,6 +31,11 @@ SELECT
             THEN CONCAT(f.degisken, ': ', f.ilac, ' vs ', f.comparator)
         WHEN f.kanit_turu = 'tablo' AND f.outcome_type = 'tanısal performans'
             THEN CONCAT_WS(' – ', f.ilac, f.degisken)
+        WHEN f.kanit_turu = 'tablo' AND f.etki_turu = 'sayisal deger yok'
+            AND NULLIF(f.ilac, '') IS NOT NULL AND NULLIF(f.degisken, '') IS NOT NULL
+            THEN CONCAT_WS(': ',
+                NULLIF(CONCAT_WS(' – ', NULLIF(TRIM(f.bolum_oneki), ''), NULLIF(TRIM(f.satir_adi), '')), ''),
+                CONCAT(f.ilac, ' → ', f.degisken))
         WHEN f.kanit_turu = 'tablo' THEN CONCAT_WS(' – ', f.bolum_oneki, f.degisken)
         ELSE f.klinik_bilgi_en
     END AS finding,
@@ -47,7 +60,8 @@ SELECT
                 NULLIF(CONCAT_WS(' ',
                     f.analiz,
                     CASE WHEN f.regresyon_katsayisi IS NOT NULL THEN CONCAT('B ', f.regresyon_katsayisi, ',') END,
-                    CASE WHEN f.deger IS NOT NULL THEN CONCAT_WS(' ', f.etki_turu, f.deger) ELSE f.etki_turu END,
+                    CASE WHEN f.deger IS NOT NULL THEN CONCAT_WS(' ', NULLIF(f.etki_turu, 'sayisal deger yok'), f.deger)
+                         ELSE NULLIF(f.etki_turu, 'sayisal deger yok') END,
                     CASE WHEN f.ci95 IS NOT NULL THEN CONCAT('(95% CI ', f.ci95, ')') END), ''),
                 CASE WHEN f.p IS NOT NULL THEN
                     CONCAT('p', CASE WHEN LEFT(f.p, 1) IN ('<', '>', '=', '≤', '≥') THEN '' ELSE '=' END, f.p) END)
@@ -61,7 +75,11 @@ LEFT JOIN `{{KAYNAK_DB}}`.`v_sunum_taban` AS lp
     ON f.kanit_turu = 'tablo' AND f.outcome_type = 'tanısal performans' AND f.p_baglandigi_satir IS NULL
     AND lp.p_baglandigi_satir = f.satir_no AND lp.tablo_no = f.tablo_no AND lp.filename <=> f.filename
     AND lp.ilac <=> f.ilac AND lp.kanit_turu = 'tablo'
-WHERE (f.kanit_turu = 'tablo' AND f.satir_grup_karsilastirmasi = 0 AND f.p_baglandigi_satir IS NULL)
+WHERE (f.kanit_turu = 'tablo' AND f.satir_grup_karsilastirmasi = 0 AND f.p_baglandigi_satir IS NULL
+        AND NOT (f.bilgi_turu IN ('ilac', 'doz', 'tedavi')
+                 AND NULLIF(TRIM(f.etki_turu), '') IS NULL
+                 AND NULLIF(TRIM(f.deger), '') IS NULL
+                 AND NULLIF(TRIM(f.p), '') IS NULL))
     OR (f.kanit_turu = 'metin' AND f.bilgi_turu = 'klinik_sonuc')
 ORDER BY f.source,
     CASE
