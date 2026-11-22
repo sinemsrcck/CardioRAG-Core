@@ -20,7 +20,7 @@ DOC = {'document_id': 'a' * 64, 'filename': 'pilot.pdf'}
 
 def row(**kw):
     base = dict(bilgi_turu='tani', baglam='study_finding', klinik_bilgi_en='atrial fibrillation',
-                kanit_cumle=CROSS, sayfa=1, sayfa_bitis=2)
+                kanit_cumle=CROSS, sayfa=1, sayfa_bitis=2, kanit_turu='metin')
     base.update(kw)
     return base
 
@@ -213,9 +213,9 @@ class ScriptedClient:
         page = payload['sayfa']
         if page == 1:
             return response([dict(bilgi_turu='diger', baglam='study_method', klinik_bilgi_en='Methods',
-                                  kanit_cumle='Methods were standard.', sayfa=1)])
+                                  kanit_cumle='Methods were standard.', sayfa=1, kanit_turu='metin')])
         return response([dict(bilgi_turu='klinik_sonuc', baglam='study_finding', klinik_bilgi_en='Follow-up',
-                              kanit_cumle='Follow-up lasted one year.', sayfa=2)])
+                              kanit_cumle='Follow-up lasted one year.', sayfa=2, kanit_turu='metin')])
 
 
 class AutoExtract(unittest.TestCase):

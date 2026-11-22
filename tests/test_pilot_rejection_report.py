@@ -12,9 +12,9 @@ from src import pilot_auto_extract as auto
 
 PAGES = {1: 'Atrial fibrillation was common. Dyspnea was reported.', 2: 'Stroke occurred in some patients.'}
 VALID = dict(bilgi_turu='tani', baglam='study_finding', klinik_bilgi_en='Atrial fibrillation',
-             kanit_cumle='Atrial fibrillation was common.', sayfa=1)
+             kanit_cumle='Atrial fibrillation was common.', sayfa=1, kanit_turu='metin')
 SYMPTOM = dict(bilgi_turu='semptom', baglam='study_finding', klinik_bilgi_en='Dyspnea',
-               kanit_cumle='Dyspnea was reported.', sayfa=1)
+               kanit_cumle='Dyspnea was reported.', sayfa=1, kanit_turu='metin')
 PAGE1 = [
     VALID,                                                        # 1 kabul
     'serbest metin',                                              # 2 nesne değil

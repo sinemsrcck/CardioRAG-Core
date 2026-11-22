@@ -9,7 +9,9 @@ import copy
 import json
 import hashlib
 import os
+import re
 import time
+import unicodedata
 from pathlib import Path
 
 from src.pilot_clinical import pdf_pages, validate_records, TYPES, CONTEXTS
@@ -22,6 +24,22 @@ Output JSON object {"findings": [records...]}. Each record MUST contain:
 - kanit_cumle: exact contiguous substring copied from this page excerpt, containing klinik_bilgi_en
 - sayfa: supplied physical page number
 - kanit_turu: metin or tablo (tablo only for a table row)
+
+SCOPE (decide before extracting each record):
+- DO NOT extract (return nothing for these):
+  * literature/evidence tables that summarise OTHER studies (rows = cited studies, authors, years, countries); a review's "characteristics of included studies" table is such a table;
+  * abstracts or summaries in any language other than English (e.g. French, Arabic, Spanish);
+  * the authors' own suggestions, calls to action, policy proposals or future-research suggestions ("should be established", "further research is needed", "we recommend that countries ...");
+  * limitations sections and statements about the study's own weaknesses or novelty;
+  * introduction/aim/objective sentences that only state what the study set out to do ("The aim of this review was ...", "This study examines ...");
+  * figure/table captions and titles, author/affiliation lines, funding, conflicts of interest, acknowledgements, bibliography/reference lists.
+- DO extract:
+  * clinical guideline recommendations (class/level of evidence, "is recommended" in a guideline sense) with baglam=recommendation;
+  * the study's own findings and results (baglam=study_finding), its methods, cohort and exclusion criteria, and clinically meaningful literature background facts.
+
+klinik_bilgi_en CONTENT:
+- Copy klinik_bilgi_en character-for-character from kanit_cumle (no paraphrase, no reordering, no added or dropped words, keep citation markers if they fall inside the span).
+- If the evidence reports a number, percentage, range, ratio, p-value or count for the fact, klinik_bilgi_en MUST include that value together with what it describes (e.g. '26% had return of spontaneous circulation', not 'return of spontaneous circulation'). A bare concept name without its reported value is incomplete, except for tani records (disease name only).
 
 Extract ALL meaningful study-specific clinical facts, including individual table variables, groups, values, units, comparative statistics, drugs, and outcomes. Preserve numeric results and their groups together; do not create isolated fragments like '(n=372)' or '30 minutes'. Do not inflate count by splitting a single clinical finding into trivial pieces. Do not merge distinct outcomes or numerical results.
 
@@ -48,12 +66,12 @@ Classify by clinical meaning, NOT keywords:
 - tani_kriteri: threshold or criterion used to define a diagnosis.
 - ilac: named medication or therapeutic drug class; NOT generic 'using medication' as a diagnostic criterion.
 - tedavi: actual therapeutic intervention, NOT background mechanism or a suggestion incorrectly presented as administered treatment.
-- olcum: meaningful biomarker, numeric measurement, risk score, or diagnostic performance result; retain its subject and comparator.
-- hasta_grubu: real study cohort or clinical subgroup; do not turn each exclusion criterion into a patient group.
-- klinik_sonuc: clinical outcome, association, or predictor finding, not study logistics or healthcare cost.
-- diger: meaningful clinical fact not covered above; avoid administrative dates and equipment brand names.
+- olcum: a quantified characteristic of patients or events that is NOT itself an outcome: biomarker or lab value, vital sign, risk score, diagnostic performance (sensitivity, AUC), or a descriptive proportion/distribution (e.g. 'Most cases occurred at home (ranging from 54% to 85%)', '31% had a non-medical cause'). Always keep the value and its subject.
+- hasta_grubu: a description of WHO the patients were: study cohort or subgroup and its demographic/clinical profile (age, sex, comorbidity profile, e.g. 'Children who experienced cardiac arrest were mostly male'). Do not turn each exclusion criterion into a patient group.
+- klinik_sonuc: clinical outcome (survival, mortality, return of spontaneous circulation, complications), care-process result (bystander CPR rate, EMS use), association, or predictor finding, with its value; not study logistics or healthcare cost.
+- diger: LAST RESORT, only when none of the above types fits. A record with a percentage about patients or events is almost never diger. Avoid administrative dates and equipment brand names.
 
-Choose baglam carefully: study_finding=own cohort's results; study_method=methods, diagnostic definitions and enrolled cohort; exclusion_criterion=excluded conditions; literature_background=background or cited other studies (even if medically plausible); recommendation=authors' suggestion. Do not represent literature background as this cohort's finding. Do not extract bibliography/reference lists.
+Choose baglam carefully: study_finding=own cohort's results; study_method=methods, diagnostic definitions and enrolled cohort; exclusion_criterion=excluded conditions; literature_background=background or cited other studies (even if medically plausible); recommendation=clinical guideline recommendation only (never the authors' own suggestions, which are not extracted). Do not represent literature background as this cohort's finding. Do not extract bibliography/reference lists.
 
 Each finding must be explicit and supported by its own exact quote. No paraphrasing, translation, invented numbers or inferred diagnosis. Keep complete evidence context when possible. All findings await human review.
 """
@@ -70,6 +88,88 @@ boundary. klinik_bilgi_en must be an exact substring of kanit_cumle.
 Do not repair broken hyphenation, insert spaces, or reconstruct missing text.
 If no cross-boundary evidence exists, return {"findings": []}.
 """
+
+
+KANIT_TURLERI = {'metin', 'tablo'}
+_TIRELER = set('‐‑‒–—―−﹘﹣－')
+_TIRNAKLAR = {'‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'", '`': "'",
+              '“': '"', '”': '"', '„': '"', '‟': '"', '″': '"'}
+_FR = {'les', 'des', 'du', 'une', 'dans', 'pour', 'avec', 'est', 'sont', 'qui', 'que', 'sur', 'par',
+       'aux', 'été', 'ont', 'cette', 'ces', 'chez', 'entre', 'leur', 'pays', 'élevé'}
+_EN = {'the', 'and', 'of', 'in', 'with', 'was', 'were', 'to', 'for', 'is', 'are', 'from', 'by', 'that',
+       'this', 'on', 'or', 'had', 'have', 'than'}
+
+
+def _normalize_with_map(text, drop_hyphens=False):
+    """Karşılaştırma için normalize metin + her normalize karakterin orijinal konumu.
+
+    Boşluk dizileri tek boşluk; unicode tire/tırnaklar ASCII; yumuşak tire silinir; harf + '-' + satır sonu
+    + harf (satır sonu hecelemesi) birleştirilir. drop_hyphens=True ise bütün tireler atılır."""
+    out, idx, i, n = [], [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '­':
+            i += 1
+            continue
+        if ch.isspace():
+            j = i
+            while j < n and text[j].isspace():
+                j += 1
+            if out and out[-1] != ' ':
+                out.append(' ')
+                idx.append(i)
+            i = j
+            continue
+        c = '-' if ch in _TIRELER else _TIRNAKLAR.get(ch, ch)
+        if c == '-':
+            if drop_hyphens:
+                i += 1
+                continue
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if out and out[-1].isalpha() and j < n and text[j].isalpha() and '\n' in text[i + 1:j]:
+                i = j
+                continue
+        out.append(c)
+        idx.append(i)
+        i += 1
+    return ''.join(out), idx
+
+
+def locate_exact(needle, haystack, boundary=None):
+    """needle'ın haystack içindeki BİREBİR karşılığını döndürür (normalize eşleşme ile bulunur), yoksa None.
+
+    Dönen metin her zaman haystack'in orijinal alt dizgisidir; böylece sonraki birebir doğrulama kuralı
+    (validate_records) değişmeden uygulanır. boundary verilirse eşleşme o konumu kesmelidir."""
+    if not isinstance(needle, str) or not needle.strip() or not isinstance(haystack, str):
+        return None
+    for drop in (False, True):
+        target = _normalize_with_map(needle, drop)[0].strip()
+        if not target:
+            continue
+        norm, idx = _normalize_with_map(haystack, drop)
+        start = norm.find(target)
+        while start >= 0:
+            s, e = idx[start], idx[start + len(target) - 1] + 1
+            if boundary is None or s < boundary < e:
+                return haystack[s:e]
+            start = norm.find(target, start + 1)
+    return None
+
+
+def is_non_english(text, *, max_non_latin=0.3):
+    """Latin dışı harf oranı yüksek (Arapça vb.) ya da belirgin biçimde Fransızca metin."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    non_latin = sum('LATIN' not in unicodedata.name(c, '') for c in letters)
+    if non_latin / len(letters) > max_non_latin:
+        return True
+    words = re.findall(r"[^\W\d_]+", text.lower())
+    fr = sum(w in _FR for w in words)
+    en = sum(w in _EN for w in words)
+    return fr >= 3 and fr > 2 * en
 
 
 def boundary_excerpt(left, right, *, window=2200):
@@ -224,24 +324,42 @@ def _screen(kind, left_page, right_page, excerpt, boundary, findings, records, r
                     or (item.get('baglam') is not None and item.get('baglam') not in CONTEXTS)):
                 reject('Sayfa veya tür geçersiz')
                 continue
-            # Prevent accepting quotes assembled from multiple excerpts.
-            if not isinstance(quote, str) or quote not in excerpt:
-                reject('Kanıt parçada bulunamadı')
-                continue
         else:
             if (item.get('sayfa') != left_page or item.get('sayfa_bitis') != right_page
                     or item.get('bilgi_turu') not in TYPES or item.get('baglam') not in CONTEXTS):
                 reject('Sınır kaydı sayfa veya tür geçersiz')
                 continue
+        if item.get('kanit_turu') not in KANIT_TURLERI:
+            reject('Geçersiz kanit_turu (yalnızca metin veya tablo)')
+            continue
+        if kind == 'page':
+            # Prevent accepting quotes assembled from multiple excerpts. Normalize eşleşme bulunursa kanıt,
+            # parçanın orijinal (birebir) metniyle değiştirilir.
+            exact = quote if isinstance(quote, str) and quote and quote in excerpt else locate_exact(quote, excerpt)
+            if exact is None:
+                reject('Kanıt parçada bulunamadı')
+                continue
+        else:
             if not isinstance(quote, str) or not quote:
                 reject('Sınır kanıtı metin değil')
                 continue
             offset = excerpt.find(quote)
             while offset >= 0 and not (offset < boundary < offset + len(quote)):
                 offset = excerpt.find(quote, offset + 1)
-            if offset < 0:
+            exact = quote if offset >= 0 else locate_exact(quote, excerpt, boundary)
+            if exact is None:
                 reject('Kanıt iki sayfa sınırını birebir geçmiyor')
                 continue
+        if is_non_english(exact):
+            reject('İngilizce olmayan metin')
+            continue
+        fact = item.get('klinik_bilgi_en')
+        if exact != quote or (isinstance(fact, str) and fact.strip() and fact not in exact):
+            item = dict(item, kanit_cumle=exact)
+            fixed_fact = locate_exact(fact, exact) if isinstance(fact, str) and fact not in exact else None
+            if fixed_fact is not None:
+                item['klinik_bilgi_en'] = fixed_fact
+            # Bulunamazsa klinik bilgi olduğu gibi kalır; validate_records birebir kuralıyla reddeder.
         records.append(item)
         if origins is not None:
             origins.append(origin)
