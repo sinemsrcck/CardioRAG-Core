@@ -5,3 +5,14 @@ __pycache__/
 data/pdfs/
 backups/
 data/review/
+
+# Otomatik uretilen ciktilar (RAG cikarim ciktilari, LLM onbellekleri)
+data/rag_cikarim/
+
+# Uretilmis degerlendirme raporlari ve benchmark calisma ciktilari
+# (onceden takip edilen raporlar takipte kalir)
+evaluation/reports/
+evaluation/results/
+
+# Gecici yedek dosyalari
+*.bak
