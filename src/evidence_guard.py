@@ -21,6 +21,8 @@ def check_evidence(
     question=None,
     min_keyword_overlap=0.25,
     enforce_keyword_overlap=True,
+    relevance_mode="legacy",
+    corpus_vocabulary=None,
 ):
     """
     Kaynakların temel kullanılabilirliğini ve
@@ -36,6 +38,11 @@ def check_evidence(
     unit. It is not semantic entailment, clinical verification or a calibrated
     model-score decision. Unknown scope and unverified premises abstain.
     Citation/claim checks remain mandatory after generation.
+
+    relevance_mode: "legacy" (every subject word in one sentence) or "tiered"
+    (critical concepts, numbers, patient groups and tasks in one sentence; general
+    words by coverage). corpus_vocabulary: evidence_relevance.corpus_vocabulary(...)
+    for the tiered mode; without it no word is exempt as out-of-corpus.
     """
 
     if not ranked_chunks:
@@ -128,8 +135,10 @@ def check_evidence(
     # Genel retrieval aday değerlendirmesi.
     # Demo soru kalıplarına bağlı değildir.
     # Buradan geçen kaynaklar henüz doğrulanmış kanıt sayılmaz.
-    from src.evidence_relevance import assess_relevance, SCOPE
-    checks = [(chunk, assess_relevance(question, chunk.get("text"))) for chunk in valid]
+    from src.evidence_relevance import assess_relevance, SCOPE as LEGACY_SCOPE, TIERED, TIERED_SCOPE
+    SCOPE = TIERED_SCOPE if relevance_mode == TIERED else LEGACY_SCOPE
+    checks = [(chunk, assess_relevance(question, chunk.get("text"), mode=relevance_mode,
+                                       vocabulary=corpus_vocabulary)) for chunk in valid]
     supported = [chunk for chunk, check in checks if check["relevant"]]
     audit = [{"chunk_id": chunk.get("chunk_id"), **check} for chunk, check in checks]
 
