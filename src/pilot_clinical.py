@@ -277,6 +277,50 @@ def _check_multi_evidence(records, doc, pages):
 CIKARMA_YONTEMLERI = ('manuel', 'rag', 'referans_taslak')   # klinik_bulgular.cikarma_yontemi ENUM
 
 
+def klinik_satiri(doc, item, *, review_status='verified', cikarma_yontemi='manuel'):
+    """Bir kaydın klinik_bulgular sütun değerleri ve satir_hash'i (import_records ile aynı eşleme ve formül; yazmaz).
+    review_status ve cikarma_yontemi satir_hash'e girmez. import_records yalnız 'verified' ile çağırır; RAG aday
+    tablosu (src.rag_sunum_tablolari) 'pending' ile çağırır."""
+    payload = {
+        'document_id': doc['document_id'],
+        'bilgi_turu': item['bilgi_turu'],
+        'baglam': item['baglam'],
+        'klinik_bilgi': item.get('klinik_bilgi'),
+        'klinik_bilgi_en': item.get('klinik_bilgi_en'),
+        'kanit_sayfa': item['sayfa'],
+        'kanit_cumle': item['kanit_cumle'],
+        'kanit_turu': item.get('kanit_turu', 'metin'),
+        'review_status': review_status,
+        'cikarma_yontemi': cikarma_yontemi,
+    }
+    for key in STRUCTURED_FIELDS:
+        value = item.get(key)
+        if value is not None:
+            payload[key] = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    multi = None
+    if is_multi_evidence(item):
+        # Parçalar taslak_notu'da; kanit_cumle ilk parça olarak kalır (_check_multi_evidence denetledi).
+        if item.get('kanit_parcalari') is not None:
+            payload['taslak_notu'] = _note_with_parts(item)
+        payload['kanit_sayfa_bitis'] = evidence_end_page(item)
+        if item.get('birlestirme') is not None:
+            payload['birlestirme'] = item['birlestirme']
+        multi = {'kanit_sayfa_bitis': payload['kanit_sayfa_bitis'], 'birlestirme': item.get('birlestirme'),
+                 'kanit_parcalari': item.get('kanit_parcalari')}
+    identity = [payload[k] for k in ('document_id', 'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_sayfa', 'kanit_cumle')]
+    # Yapılandırılmış alanlar kimliğe girer (aynı kanıtlı grup satırları ayrı kalır);
+    # yapılandırılmış alanı olmayan kayıtların hash'i öncekiyle aynıdır.
+    structured = {k: payload[k] for k in STRUCTURED_FIELDS if k in payload}
+    if structured:
+        identity.append(structured)
+    # Çok sayfalı/çok parçalı kayıtta bitiş sayfası ve parçalar kimliğe girer;
+    # tek sayfalı, parçasız kayıtların kimliği (ve hash'i) değişmez.
+    if multi is not None:
+        identity.append(multi)
+    payload['satir_hash'] = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return payload
+
+
 def import_records(doc, records, connection=None, pages=None, cikarma_yontemi='manuel'):
     """Only called with explicit --write. Never updates existing rows.
 
@@ -321,43 +365,7 @@ def import_records(doc, records, connection=None, pages=None, cikarma_yontemi='m
                 raise ValueError(f'SQL klinik_bulgular sütunları eksik: {", ".join(sorted(used - columns))}')
             written = 0
             for item in records:
-                payload = {
-                    'document_id': doc['document_id'],
-                    'bilgi_turu': item['bilgi_turu'],
-                    'baglam': item['baglam'],
-                    'klinik_bilgi': item.get('klinik_bilgi'),
-                    'klinik_bilgi_en': item.get('klinik_bilgi_en'),
-                    'kanit_sayfa': item['sayfa'],
-                    'kanit_cumle': item['kanit_cumle'],
-                    'kanit_turu': item.get('kanit_turu', 'metin'),
-                    'review_status': 'verified',
-                    'cikarma_yontemi': cikarma_yontemi,
-                }
-                for key in STRUCTURED_FIELDS:
-                    value = item.get(key)
-                    if value is not None:
-                        payload[key] = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-                multi = None
-                if is_multi_evidence(item):
-                    # Parçalar taslak_notu'da; kanit_cumle ilk parça olarak kalır (_check_multi_evidence denetledi).
-                    if item.get('kanit_parcalari') is not None:
-                        payload['taslak_notu'] = _note_with_parts(item)
-                    payload['kanit_sayfa_bitis'] = evidence_end_page(item)
-                    if item.get('birlestirme') is not None:
-                        payload['birlestirme'] = item['birlestirme']
-                    multi = {'kanit_sayfa_bitis': payload['kanit_sayfa_bitis'], 'birlestirme': item.get('birlestirme'),
-                             'kanit_parcalari': item.get('kanit_parcalari')}
-                identity = [payload[k] for k in ('document_id', 'bilgi_turu', 'baglam', 'klinik_bilgi', 'klinik_bilgi_en', 'kanit_sayfa', 'kanit_cumle')]
-                # Yapılandırılmış alanlar kimliğe girer (aynı kanıtlı grup satırları ayrı kalır);
-                # yapılandırılmış alanı olmayan kayıtların hash'i öncekiyle aynıdır.
-                structured = {k: payload[k] for k in STRUCTURED_FIELDS if k in payload}
-                if structured:
-                    identity.append(structured)
-                # Çok sayfalı/çok parçalı kayıtta bitiş sayfası ve parçalar kimliğe girer;
-                # tek sayfalı, parçasız kayıtların kimliği (ve hash'i) değişmez.
-                if multi is not None:
-                    identity.append(multi)
-                payload['satir_hash'] = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                payload = klinik_satiri(doc, item, cikarma_yontemi=cikarma_yontemi)
                 fields = list(payload)
                 cursor.execute(
                     f"INSERT IGNORE INTO klinik_bulgular ({', '.join('`'+k+'`' for k in fields)}) VALUES ({', '.join(['%s']*len(fields))})",
