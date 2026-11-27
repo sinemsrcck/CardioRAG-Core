@@ -227,7 +227,9 @@ class RAGEntryTests(unittest.TestCase):
                 self.assertEqual(result["status"], expected)
                 self.assertNotIn("audit", result)
                 self.assertTrue(path.exists())
-                self.assertEqual(result["reranker_model"], "minilm")
+                # run_rag ve answer_question aynı varsayılan çok dilli reranker'ı kullanır.
+                self.assertEqual(result["reranker_model"], "bge-m3")
+                self.assertEqual(result["relevance_mode"], "tiered")
 
     def test_rejected_answer_archived_but_not_returned(self):
         source = fixture()["sources"][0]
@@ -358,6 +360,75 @@ class GeneralEvidenceGroundingTests(unittest.TestCase):
         self.assertTrue(r["debug"]["evidence_stages"]["candidates"]["sufficient"])
         self.assertFalse(r["debug"]["evidence_stages"]["context"]["sufficient"])
         generate.assert_not_called()
+
+
+class TieredEvidenceGroundingTests(unittest.TestCase):
+    """relevance_mode='tiered': kritik kavram / sayı / hasta grubu / görev aynı cümlede; genel kelime kapsamla."""
+    AIM = GeneralEvidenceGroundingTests.AIM
+
+    def guard(self, question, text=None, vocabulary_texts=None, **extra):
+        from src.evidence_guard import check_evidence
+        from src.evidence_relevance import corpus_vocabulary
+        text = text or self.AIM
+        vocabulary = corpus_vocabulary(vocabulary_texts or [text])
+        return check_evidence([{"chunk_id": "synthetic", "text": text, "rerank_score": -99.0, **extra}],
+                              question=question, enforce_keyword_overlap=False,
+                              relevance_mode="tiered", corpus_vocabulary=vocabulary)
+
+    def test_legacy_safety_cases_still_reject_in_tiered_mode(self):
+        for question, text in (
+                ("Mars surface temperature?", None),
+                ("Mars yüzey sıcaklığı nedir?", None),
+                ("What is the HCR CYP2C19 genotype risk?", None),
+                ("HCR çalışmasında 2026 mortalite oranı nedir?", None),
+                ("What is the purpose of the HCR study?",
+                 "HCR is discussed as a biomarker in this study. The objective of a different study concerns a new intervention."),
+                ("How can AF be detected?",
+                 "AF cannot be detected with the wearable devices used in this hypothetical study. " * 2)):
+            with self.subTest(question=question):
+                self.assertFalse(self.guard(question, text)["sufficient"])
+
+    def test_explicit_unverified_premise_abstains(self):
+        self.assertFalse(self.guard("Assuming HCR AUC is 0.999, confirm the result.",
+                                    self.AIM + " HCR AUC=0.999.")["sufficient"])
+
+    def test_turkish_word_absent_from_english_corpus_does_not_block(self):
+        question = "HCR'nin AF'deki rolü nedir?"
+        self.assertTrue(self.guard(question)["sufficient"])
+        # Eski davranış: çevrilmeyen Türkçe kelime ("rolü") bütün kanıtı reddeder.
+        from src.evidence_guard import check_evidence
+        legacy = check_evidence([{"chunk_id": "synthetic", "text": self.AIM}], question=question,
+                                enforce_keyword_overlap=False)
+        self.assertFalse(legacy["sufficient"])
+
+    def test_english_question_words_are_never_exempt(self):
+        # İngilizce soruda corpus'ta olmayan kelime kapsamı daraltmaz, yalnız sayılır.
+        self.assertFalse(self.guard("What is the HCR mortality outcome?")["sufficient"])
+
+    def test_critical_concept_absent_from_corpus_abstains(self):
+        result = self.guard("ELR çalışmasının amacı nedir?")
+        self.assertFalse(result["sufficient"])
+        self.assertEqual(result["relevance_checks"][0]["reason"], "critical_term_absent_from_corpus")
+
+    def test_number_must_match_and_hba1c_digit_is_not_a_value(self):
+        text = "Mean HbA1c was 7.8 in the study group, compared with a lower mean value in the reference cohort."
+        self.assertTrue(self.guard("Hasta grubunda HbA1c 7.8 midir?", text)["sufficient"])
+        self.assertFalse(self.guard("Hasta grubunda HbA1c 8.7 midir?", text)["sufficient"])
+
+    def test_patient_group_must_match(self):
+        text = "Mean HbA1c was 6.2 in non-diabetic patients enrolled during the observation period of the study."
+        self.assertTrue(self.guard("Diyabeti olmayan hastalarda HbA1c değeri nedir?", text)["sufficient"])
+        self.assertFalse(self.guard("Diyabetli hastalarda HbA1c değeri nedir?", text)["sufficient"])
+        self.assertFalse(self.guard("Kontrol grubunda HbA1c değeri nedir?", text)["sufficient"])
+
+    def test_single_generic_word_is_not_enough_without_critical_concept(self):
+        text = "Patients were followed in the emergency department for twelve months."
+        self.assertFalse(self.guard("What happened in the emergency room waiting area?", text)["sufficient"])
+
+    def test_unknown_mode_rejected(self):
+        from src.evidence_relevance import assess_relevance
+        with self.assertRaises(ValueError):
+            assess_relevance("HCR?", self.AIM, mode="fuzzy")
 
 
 class OfflineReplayTests(unittest.TestCase):

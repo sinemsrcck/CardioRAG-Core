@@ -99,7 +99,20 @@ SELECT
     COALESCE(NULLIF(b.tani_tr, ''), b.tani_en) AS tani, b.hasta_grubu,
     COALESCE(NULLIF(b.sonuc_olcutu_tr, ''), b.sonuc_en) AS sonuc,
     b.gecen_kontroller, b.insan_onayi, b.pipeline_version, b.model,
-    b.review_status, b.cikarma_yontemi
+    b.review_status, b.cikarma_yontemi,
+    -- Çok parçalı kanıt (taslak_notu.kanit_parcalari, en fazla 3 parça: pilot_clinical.MAX_PARTS): bütün parçaların
+    -- metni okuma sırasıyla tek boşlukla (kaynak_bul bu sütunda da arar). Tek parçalı kayıtta NULL (davranış aynı).
+    -- Sütunlar sona eklendi, mevcut sütunların adı ve sırası değişmedi.
+    CASE WHEN JSON_VALID(b.taslak_notu) THEN CASE WHEN JSON_TYPE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari')) = 'ARRAY'
+        THEN NULLIF(CONCAT_WS(' ',
+            CASE WHEN JSON_TYPE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari[0].metin')) = 'STRING'
+                THEN JSON_UNQUOTE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari[0].metin')) END,
+            CASE WHEN JSON_TYPE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari[1].metin')) = 'STRING'
+                THEN JSON_UNQUOTE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari[1].metin')) END,
+            CASE WHEN JSON_TYPE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari[2].metin')) = 'STRING'
+                THEN JSON_UNQUOTE(JSON_EXTRACT(b.taslak_notu, '$.kanit_parcalari[2].metin')) END), '')
+    END END AS kanit_parcalari_metin,
+    b.kanit_sayfa_bitis AS sayfa_bitis
 FROM v_bulgu_notu AS b
 LEFT JOIN pdf_belgeleri AS p ON p.document_id = b.document_id
 LEFT JOIN makaleler AS m ON m.document_id = b.document_id

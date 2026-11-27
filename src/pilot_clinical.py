@@ -274,12 +274,18 @@ def _check_multi_evidence(records, doc, pages):
             _note_with_parts(item)  # taslak_notu birleştirilemiyorsa bağlantıdan önce dur
 
 
-def import_records(doc, records, connection=None, pages=None):
+CIKARMA_YONTEMLERI = ('manuel', 'rag', 'referans_taslak')   # klinik_bulgular.cikarma_yontemi ENUM
+
+
+def import_records(doc, records, connection=None, pages=None, cikarma_yontemi='manuel'):
     """Only called with explicit --write. Never updates existing rows.
 
     connection verilirse onu kullanır ve commit/rollback/close yapmaz (çağıran yönetir).
     pages: {fiziksel sayfa: metin}; verilmezse doc['pages'] (pdf_pages() çıktısı). Yalnız çok
-    sayfalı/çok parçalı kayıtlar için gerekir; tek sayfalı kayıtların yolu değişmedi."""
+    sayfalı/çok parçalı kayıtlar için gerekir; tek sayfalı kayıtların yolu değişmedi.
+    cikarma_yontemi: kaydın çıkarım yöntemi (varsayılan 'manuel'; mevcut çağrılar değişmez). satir_hash'e girmez."""
+    if cikarma_yontemi not in CIKARMA_YONTEMLERI:
+        raise ValueError(f'Geçersiz cikarma_yontemi: {cikarma_yontemi!r} ({", ".join(CIKARMA_YONTEMLERI)})')
     if not records or any(item.get('review_status') != 'verified' or item.get('baglam') not in CONTEXTS for item in records):
         raise ValueError('SQL aktarımı yalnızca bağlamı geçerli, manuel onaylı kayıtlarla yapılabilir')
     if any(item.get('bilgi_turu') not in TYPES for item in records):
@@ -325,7 +331,7 @@ def import_records(doc, records, connection=None, pages=None):
                     'kanit_cumle': item['kanit_cumle'],
                     'kanit_turu': item.get('kanit_turu', 'metin'),
                     'review_status': 'verified',
-                    'cikarma_yontemi': 'manuel',
+                    'cikarma_yontemi': cikarma_yontemi,
                 }
                 for key in STRUCTURED_FIELDS:
                     value = item.get(key)

@@ -5,3 +5,33 @@ __pycache__/
 data/pdfs/
 backups/
 data/review/
+
+# Otomatik uretilen ciktilar (RAG cikarim ciktilari, LLM onbellekleri)
+data/rag_cikarim/
+
+# Uretilmis degerlendirme raporlari ve benchmark calisma ciktilari
+# (onceden takip edilen raporlar takipte kalir)
+evaluation/reports/
+evaluation/results/
+
+# Gecici yedek dosyalari
+*.bak
+
+# Yerel RAG degerlendirme / semantik pilot / toplu isleme ciktilari: aday dosyalari, raporlar, LLM onbellekleri.
+# Uretimdeki kalite_isaretleri satirlari bu dosyalarin yolunu ve SHA-256 degerini tasir; yerelde / arsivde saklanir.
+evaluation/rag_onbellek_degerlendirme/
+evaluation/rag_semantik_pilot/
+data/rag_toplu/
+llm_onbellek.jsonl
+
+# Yerel karsilastirma ve ara ciktilar (kod bagimliligi yok)
+/pilot_findings_*.json
+/pilot_clinical_fark.txt
+/*_db_hash.json
+data/clinical/rag_bulgular*.json
+data/clinical/pilot_candidates.json
+data/clinical/review_template.json
+tests/export_old.sql
+tests/pilot_sql_check.sql
+tests/compare_pilot.py
+tests/README.txt

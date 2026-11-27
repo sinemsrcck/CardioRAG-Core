@@ -9,8 +9,8 @@ Kullanım:
   (commit ve örtük commit yapan ifadeler hata verir). Sonda ayrı bağlantıdan tablo sayıları başlangıçla karşılaştırılır.
 - --yaz: kalıcı yazma (COMMIT). --yedek <dosya> zorunlu: var, boş değil ve son 24 saatte oluşturulmuş olmalı.
 - --yeniden: makalenin veritabanındaki mevcut pilot satırları (aynı document_id, bilgi_turu IS NOT NULL) ve bağlı
-  kalite işaretleri aynı transaction'da silinip yeniden aktarılır. Diğer makalelere ve RAG satırlarına dokunulmaz
-  (öncesi / sonrası parmak iziyle doğrulanır).
+  kalite işaretleri aynı transaction'da silinip yeniden aktarılır. Diğer makalelere dokunulmaz (öncesi / sonrası
+  parmak iziyle doğrulanır). Belgede RAG satırı (cikarma_yontemi='rag') varsa hiçbir şey silinmeden durur.
 - --kalite (yalnız --yaz): COMMIT sonrası python -m src.data_quality --pilot kalıcı çalışır.
 - --kur (yalnız --yaz): COMMIT sonrası python -m src.sunum_hoca --kur.
 
@@ -354,6 +354,13 @@ def aktar(conn, makaleler, *, yeniden=False, out=print):
                 raise AktarimHatasi(6, f'{name}: veritabanında zaten {len(existing)} pilot satırı var; yeniden aktarmak '
                                        f'için --yeniden kullanın')
             if existing:
+                # Silme koşulu (document_id + bilgi_turu) RAG satırlarını da kapsar: o belgede RAG satırı varsa dur.
+                rag = _scalar(cursor, "SELECT COUNT(*) FROM klinik_bulgular WHERE document_id = %s "
+                                      "AND bilgi_turu IS NOT NULL AND cikarma_yontemi = 'rag'", (doc_id,))
+                if rag:
+                    raise AktarimHatasi(6, f'{name}: belgede {rag} RAG satırı (cikarma_yontemi=rag) var; --yeniden '
+                                           f'onları da silerdi. Hiçbir şey silinmedi (RAG satırları src.rag_aktarim '
+                                           f'ile yönetilir)')
                 # Bağlı kalite işaretleri açıkça silinir (ON DELETE CASCADE'e güvenilmez), sonra satırlar.
                 cursor.execute('DELETE q FROM kalite_isaretleri AS q JOIN klinik_bulgular AS b ON b.id = q.klinik_bulgu_id '
                                'WHERE b.document_id = %s AND b.bilgi_turu IS NOT NULL', (doc_id,))

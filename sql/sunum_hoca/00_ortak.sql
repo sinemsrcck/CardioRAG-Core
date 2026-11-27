@@ -83,7 +83,13 @@ FROM (
                 THEN TRIM(REPLACE(REPLACE(REPLACE(REPLACE(b.degisken, '<sup>', '^'), '</sup>', ''), '<br>', ' '), '**', ''))
             ELSE TRIM(REPLACE(REPLACE(REPLACE(REPLACE(b.klinik_bilgi_en, '<sup>', '^'), '</sup>', ''), '<br>', ' '), '**', ''))
         END AS satir_adi,
-        CASE WHEN t.ad IS NOT NULL THEN b.alt_bolum END AS bolum_oneki,
+        -- bolum_goster: yalnız RAG aktarım adaptörünün (src/rag_aktarim.py) yazdığı kayıtlarda bulunur; adı tekrar
+        -- etmeyen satırda da klinik açıdan önemli bölüm (ör. 'Paediatric cases') gösterilir. Bayrağı olmayan mevcut
+        -- pilot kayıtlarında davranış değişmez (yalnız aynı adın birden çok bölümde geçtiği satırlar).
+        CASE WHEN t.ad IS NOT NULL
+                  OR (JSON_TYPE(JSON_EXTRACT(n.notu, '$.bolum_goster')) = 'BOOLEAN'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(n.notu, '$.bolum_goster')) = 'true')
+             THEN b.alt_bolum END AS bolum_oneki,
         CASE
             WHEN b.bilgi_turu = 'hasta_grubu' THEN 'study population'
             WHEN b.baglam = 'exclusion_criterion' THEN 'exclusion criterion'
