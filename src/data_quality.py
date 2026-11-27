@@ -119,6 +119,12 @@ AUC_TYPE = "AUC / C-istatistigi"
 UNITLESS_TYPES = RATIO_TYPES | {AUC_TYPE, "oran / yuzde"}
 PROPORTION_WORDS = re.compile(r"sensitivit|specificit|accuracy|prevalence|duyarlılı|özgüllü|doğruluk|yaygınlı",
                               re.IGNORECASE)
+# Yüzde değişim / göreli artış / değişim eşiği bağlamı: değer 100'ü aşabilir (ör. 'troponin I >148.3%',
+# '%250 increase'). Yalnız sayıya YAKIN sözcükler değerlendirilir; uzak bağlam türü belirlemez.
+CHANGE_WORDS = re.compile(r"\b(?:change[sd]?|increase[sd]?|decrease[sd]?|rise|rose|fall|fell|drop|elevation|"
+                          r"reduction|difference|relative|growth|delta|from\s+baseline|fold)\b|değişim|artış|azalış|"
+                          r"fark", re.IGNORECASE)
+COMPARATOR_BEFORE = re.compile(r"[<>≤≥]=?\s*$")
 JACCARD_THRESHOLD = 0.8
 EMBEDDING_THRESHOLD = 0.92
 # Kontrol MANTIĞI (ayrıştırma, kural koşulları) değişince elle artırılır; listeler,
@@ -127,7 +133,10 @@ EMBEDDING_THRESHOLD = 0.92
 # r3: istatistiksel tutarlılık kontrolleri (GA–p, kategorik/sürekli p yeniden hesaplama, model terimi).
 # r4: kaynak tutarsızlıkları en fazla "uyari" (ci_p_celiskisi); --pilot'ta pilot satırların GA–p ve
 #     yüzde aritmetiği yalnız pilot kodlarıyla (kaynak_ci_p_celiski, pilot_yuzde_uyumsuz) işaretlenir.
-RULES_REVISION = 4
+# r5: yuzde_100_ustu her sayının KENDİ yakın bağlamına göre (percent_kind): eşik (önünde <, >, ≤, ≥) ve yüzde
+#     değişim / göreli artış 100'ü aşabilir, işaretlenmez; oran / olasılık bağlamı 'hata' kalır; türü belirsiz
+#     yüzde 'uyari' kalır (otomatik doğru kabul edilmez).
+RULES_REVISION = 5
 # GA–p çelişkisinde en yakın GA sınırının boş değere (oranlar için 1, log ölçeği; AUC için 0.5)
 # uzaklığı bu eşiğin altındaysa farklı GA/test yöntemleri sapma üretebilir: "uyari"; üstünde "hata".
 CI_P_SINIR_MARJI = 0.05
@@ -404,6 +413,40 @@ def _labelled(text, labels):
     return [float(v.replace(",", ".")) for v in re.findall(pattern, _decimal(str(text or "")))]
 
 
+def percent_kind(deger, number, context):
+    """Yüzde değerinin türü: 'esik' | 'degisim' | 'oran' | None (belirsiz). Önce sayının değer metnindeki YAKIN
+    çevresi (önünde karşılaştırma işareti; önünde / ardında değişim ya da oran sözcüğü), yoksa bağlamın tamamı yalnız
+    tek türü gösteriyorsa o tür. Değişim ve oran sözcükleri birlikteyse belirsiz."""
+    text = unicodedata.normalize("NFKC", str(deger or "")).translate(_DASHES)
+    for match in NUMBER.finditer(text):
+        if match.group("num") != number["raw"]:
+            continue
+        left, right = text[:match.start()], text[match.end():]
+        if match.group("neg"):
+            left = text[:match.start("num")]
+        if COMPARATOR_BEFORE.search(left):
+            return "esik"
+        # Ardıl bağlam yalnız sayıya bitişik iki sözcük ve ilk ayraca kadar ('180% increase'); ', change 5%' gibi
+        # başka bir değere ait sözcük karışmaz. Öncül bağlam son ayraçtan sonrası.
+        near_left = re.split(r"[,;]", left[-30:])[-1]
+        near_right = " ".join(re.split(r"[,;]", right[:25])[0].split()[:2])
+        change = CHANGE_WORDS.search(near_left) or CHANGE_WORDS.search(near_right)
+        proportion = PROPORTION_WORDS.search(near_left)
+        if change and not proportion:
+            return "degisim"
+        if proportion and not change:
+            return "oran"
+        if change or proportion:
+            return None
+        break
+    change, proportion = CHANGE_WORDS.search(context), PROPORTION_WORDS.search(context)
+    if change and not proportion:
+        return "degisim"
+    if proportion and not change:
+        return "oran"
+    return None
+
+
 def check_numeric(row):
     flags = []
     deger, unit, doz, p = row.get("deger"), row.get("unit"), row.get("doz"), row.get("p")
@@ -412,13 +455,14 @@ def check_numeric(row):
     values = [n["value"] for n in numbers if n["value"] is not None]
     context = " ".join(str(x or "") for x in (deger, unit, outcome_of(row)))
 
-    percent_values = [n["value"] for n in numbers if n["value"] is not None
-                      and (n["percent"] or norm_unit(unit) == "%")]
-    over = [v for v in percent_values if v > 100]
-    if over:
-        level = "hata" if PROPORTION_WORDS.search(context) else "uyari"
-        flags.append(_flag(row, "yuzde_100_ustu", level, f"yüzde değeri 100'den büyük: {over}",
-                           detail={"degerler": over}))
+    percent_numbers = [n for n in numbers if n["value"] is not None and (n["percent"] or norm_unit(unit) == "%")]
+    over = [(n["value"], percent_kind(deger, n, context)) for n in percent_numbers if n["value"] > 100]
+    checked = [(v, kind) for v, kind in over if kind not in ("esik", "degisim")]
+    if checked:
+        level = "hata" if any(kind == "oran" for _, kind in checked) else "uyari"
+        flags.append(_flag(row, "yuzde_100_ustu", level, f"yüzde değeri 100'den büyük: {[v for v, _ in checked]}",
+                           detail={"degerler": [v for v, _ in checked],
+                                   "yuzde_turu": {str(v): kind or "belirsiz" for v, kind in checked}}))
 
     p_numbers = parse_numbers(p)
     out_of_range = [n["value"] for n in p_numbers if n["value"] is not None and not 0 <= n["value"] <= 1]
@@ -1642,7 +1686,10 @@ def write_flags(conn, flags, rows, version, scope, *, own_transaction, delete_ol
             cursor.execute("DELETE FROM kalite_isaretleri WHERE kontrol_surumu = %s AND satir_hash IN ("
                            + ", ".join(["%s"] * len(part)) + ")", [version, *part])
         if delete_old_versions:
-            cursor.execute("DELETE FROM kalite_isaretleri WHERE kontrol_surumu <> %s", (version,))
+            # 'rag-' ad alanı (src.rag_dogrulama: otomatik deterministik / semantik doğrulama sonuçları) data_quality
+            # sürümü değildir; eski data_quality sürümleri temizlenirken silinmez.
+            cursor.execute("DELETE FROM kalite_isaretleri WHERE kontrol_surumu <> %s AND kontrol_surumu NOT LIKE %s",
+                           (version, 'rag-%'))
         if flags:
             cursor.executemany(
                 "INSERT INTO kalite_isaretleri (klinik_bulgu_id, satir_hash, kontrol_kodu, kategori, seviye, "

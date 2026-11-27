@@ -89,6 +89,8 @@ ASAMALAR = ("on_eleme", "yanit_dogrulama", "satir_olusturma", "validate_row", "s
 # Kurulum
 # ---------------------------------------------------------------------------
 
+# kaynak_bul: kanit_parcalari_metin (v_bulgu_kaynak) çok parçalı kanıtın bütün parçalarını taşır; tek parçalı kayıtta
+# NULL olduğundan (x OR NULL = x) mevcut arama sonuçları değişmez.
 PROCEDURE_SQL = r"""
 CREATE PROCEDURE kaynak_bul(IN arama VARCHAR(200))
 BEGIN
@@ -102,7 +104,8 @@ BEGIN
         OR k.tani COLLATE utf8mb4_0900_ai_ci LIKE desen
         OR k.hasta_grubu COLLATE utf8mb4_0900_ai_ci LIKE desen
         OR k.sonuc COLLATE utf8mb4_0900_ai_ci LIKE desen
-        OR k.kanit_cumle COLLATE utf8mb4_0900_ai_ci LIKE desen)
+        OR k.kanit_cumle COLLATE utf8mb4_0900_ai_ci LIKE desen
+        OR k.kanit_parcalari_metin COLLATE utf8mb4_0900_ai_ci LIKE desen)
     ORDER BY k.filename, k.sayfa, k.bulgu_id;
 END
 """

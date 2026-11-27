@@ -665,6 +665,35 @@ SELECT * FROM kardiyo_sunum.general_clinical_findings;  -- metin ölçüm cümle
 
 Sunum veritabanında yalnız bu hoca view'ları bulunur. Ortak taban view `v_sunum_taban` kaynak veritabanındadır (iç kullanım; hoca menüsünde görünmez); eski `_findings_base` kurulumda silinir. Kaynaktaki diğer tablo ve view'lara dokunulmaz. Sinem'in `diseases`, `diagnostics` ve `symptoms` view'ları `sql/sunum_hoca/20–22_*.sql` dosyaları eklenince aynı komutla kurulur; ayrıntı `sql/sunum_hoca/README.md`'de.
 
+## RAG adayları ve otomatik doğrulama
+
+RAG çıkarımının adayları **insan onaylı kayıt değildir**. Adayların tam içeriği JSON aday dosyalarında (taslak), otomatik doğrulama sonuçları `kalite_isaretleri` tablosunda `rag-` sürümleriyle durur. Adaylar `klinik_bulgular`'a yazılmaz; hoca view'ları (`kardiyo_sunum`) ve `v_sunum_taban` yalnız `review_status = 'verified'` satırları gösterdiği için otomatik sonuçlar bunlara karışmaz.
+
+Üç durum ayrı tutulur ve birbirinin yerine geçmez:
+
+| Durum | Nerede | Değerler | Anlamı |
+|---|---|---|---|
+| Deterministik doğrulama | `kalite_isaretleri`, `rag-dogrulama-v1` (`src/rag_dogrulama.py`) | `gecti` / `belirsiz` / `basarisiz` | Kanıtın PDF'te birebir geçmesi, tablo hücresi, sayısal ve tutarlılık kontrolleri. Klinik ya da semantik doğrulama **değildir**. |
+| Semantik (LLM) doğrulama | `kalite_isaretleri`, `rag-semantik-v1` (`src/rag_semantik_dogrulama.py`) | `destekleniyor` / `kismen_destekleniyor` / `kaynakla_celisiyor` / `yetersiz_kanit` / `belirsiz`; **NULL = semantik kontrol yapılmadı** | Bir LLM'in adayı kaynakla karşılaştırması. İnsan doğrulaması **değildir**. |
+| İnsan onayı | `klinik_bulgular.review_status` | NULL = aday (içe aktarılmadı); `verified` | Yalnız insan kararı (`scripts/rag_inceleme.py` → `src.rag_aktarim aktar`). Otomatik sonuçtan türetilmez. |
+
+**Sorgulama** (kaynak veritabanında; yalnız okuma):
+
+```sql
+-- Aday başına üç durum (yalnız güncel aday dosyasının adayları)
+SELECT satir_hash, belge_kimligi, otomatik_deterministik, semantik_karar, insan_durumu, insan_onayli, aday_dosyasi
+FROM v_rag_dogrulama_durumu;
+```
+
+`sql/kontrol/rag_durum_sorgusu.sql` durum dağılımını, aday dosyası / parti izini ve insan onayı olmayan adayların özetini (sayfa, iddia, değer) verir:
+`mysql --default-character-set=utf8mb4 kardiyo_tam_metin -e "source sql/kontrol/rag_durum_sorgusu.sql"`. `v_rag_ek_bilgi` aktarılmış RAG kayıtlarının `taslak_notu` bilgilerini sütun olarak gösterir.
+
+**Mevcut kapsam (altı PDF):** 2011 güncel aday deterministik olarak doğrulandı (2289 satır). Semantik doğrulama **60 kayıtlık bir pilot örneklemdir**: bunların 46'sı güncel adaylara bağlıdır (45 `destekleniyor`, 1 `kismen_destekleniyor`); kalan 14 sonuç güncel aday olmayan kayıtlara aittir (yeniden çıkarım grubu ve aktarım dışı tutulanlar) ve view'da görünmez. Diğer adaylarda `semantik_karar` NULL'dur: bunlar **semantik olarak doğrulanmış sayılmaz**. Raporlarda otomatik sonuçlar "otomatik doğrulanmış aday (insan onayı yok)" olarak ayrı verilmeli, verified sayılarına eklenmemelidir.
+
+**Yazım ve geri alma:** sonuçlar parti hâlinde yalnız eklenir (`grup_id`; önceki partiler silinmez), aynı girdi dosyası ikinci kez yazılamaz, her satır aday dosyasının yolunu ve SHA-256'sını taşır. Üretim yazımı `scripts/uretim_asama4_rag.ps1` ile yapıldı (taze Aşama 1 yedeği, izole prova, `-Uygula`, otomatik / elle geri alma). Elle yazım ve geri alma: `python -m src.rag_dogrulama kalite-yaz ... --uretim --yedek <yedek> --kayit <dosya> --yaz` ve `kalite-geri-al --kayit <dosya>`.
+
+**Henüz gerçek ortamda denenmedi** (birim testleri var): `scripts/uretim_asama4_rag.ps1 -SonrakiParti` (sonraki partiler / kısmi semantik devamı) ve `scripts/rag_toplu_isleme.py` (toplu işleme: plan, çıkarım, taslak, semantik, ingestion). Gerçek API çağrısı (`--api-onay`) ve üretim yazımı (`--uretim-onay`, `-Uygula`) açık onay ister.
+
 ## Bilinen sınırlar
 
 - **Evidence guard şu an yalnızca uzunluk filtresi uyguluyor.** `answer_question` `min_relevance_score=None` ve kelime örtüşmesi kapalı çalışır; 80 karakterden kısa chunk'lar elenir, alakasız ama uzun chunk'lar elenmez. Skor eşiği henüz kalibre edilmedi.

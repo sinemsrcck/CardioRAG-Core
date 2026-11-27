@@ -46,7 +46,7 @@ class Units(unittest.TestCase):
     def test_codes_registered_and_versioned(self):
         for code in NEW_CODES:
             self.assertIn(code, CHECKS)
-        self.assertEqual(config_payload()['kurallar'], 'kalite-v1-r4')
+        self.assertEqual(config_payload()['kurallar'], 'kalite-v1-r5')   # r5: yüzde türü (percent_kind)
 
     def test_parse_p_keeps_ambiguous_unparsed(self):
         self.assertEqual(parse_p('<0.001'), ('<', 0.001))

@@ -857,8 +857,23 @@ def pilot_test_records():
     return [dict(r, review_status="verified") for r in picked + texts]
 
 
+# Pilot DB testi (gerçek pilot satırlarını transaction içinde ayırır) yalnız bu izole test veritabanında çalışır.
+ISOLATED_TEST_DATABASE = "kardiyo_rag_test"
+
+
+def _active_database(conn):
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT DATABASE()")
+        name = cursor.fetchone()[0]
+    finally:
+        cursor.close()
+    return name.decode("utf-8") if isinstance(name, (bytes, bytearray)) else name
+
+
 def test_pilot_database(tmp):
-    from evaluation.pilot_izolasyon import gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu, korumayi_kaldir
+    from evaluation.pilot_izolasyon import (IzolasyonHatasi, gercek_pilot_durumu, gercek_pilotu_ayir, guvenlik_kontrolu,
+                                            korumada_mi, korumayi_kaldir)
     from src.database import get_connection
     from src.pilot_clinical import import_records, pdf_pages
 
@@ -871,6 +886,13 @@ def test_pilot_database(tmp):
     # Şema hazırlığı (DDL örtük commit yapar): AYRI bağlantıda ve silmeden ÖNCE.
     setup = get_connection()
     try:
+        # Herhangi bir yazma / silme (şema kurulumu dahil) öncesi: aktif veritabanı tam olarak izole test veritabanı.
+        active = _active_database(setup)
+        setup.rollback()
+        check("pilot DB: aktif veritabanı izole test veritabanı (yazma / silme öncesi)", ISOLATED_TEST_DATABASE, active)
+        if active != ISOLATED_TEST_DATABASE:
+            raise IzolasyonHatasi(f"test_pilot_database: aktif veritabanı {active!r}, {ISOLATED_TEST_DATABASE!r} değil; "
+                                  f"hiçbir yazma / silme yapılmadı")
         if not schema_ready(setup):
             ensure_schema(setup)
     finally:
@@ -883,8 +905,38 @@ def test_pilot_database(tmp):
     try:
         # Gerçek pilot verisi varsa --pilot koşusu onu da okur ve test kayıtları satir_hash ile atlanırdı:
         # belgenin gerçek pilot satırları (ve CASCADE ile işaretleri) bu transaction içinde ayrılır.
-        removed = gercek_pilotu_ayir(conn, doc["document_id"])
-        check("pilot DB: gerçek pilot satırları transaction içinde ayrıldı (bilgi)", "-", f"{removed} satır", True)
+        # --pilot koşusu bütün belgelerin pilot satırlarını okur. Veritabanında başka belgelerin gerçek pilot
+        # satırları da varsa (ör. üretim kopyası) hepsi aynı transaction'da ayrılır; test yalnız kendi kayıtlarını görür.
+        # Ayırma yalnız izole test veritabanında (kardiyo_rag_test) ve açık transaction'da yapılır.
+        text = lambda v: v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else v  # noqa: E731
+        cursor = conn.cursor()
+        cursor.execute("SELECT DATABASE(), @@SESSION.autocommit")
+        database_name, server_autocommit = cursor.fetchone()
+        database_name = text(database_name)
+        cursor.execute("SELECT DISTINCT document_id FROM klinik_bulgular WHERE bilgi_turu IS NOT NULL ORDER BY 1")
+        other_docs = [text(d) for (d,) in cursor.fetchall() if text(d) != doc["document_id"]]
+        cursor.close()
+        rollback_ready = not conn.autocommit and int(server_autocommit) == 0 and conn.in_transaction
+        check("pilot DB: ayırma öncesi autocommit kapalı, açık transaction (ROLLBACK güvencesi)", True, rollback_ready)
+        if not rollback_ready:
+            raise IzolasyonHatasi("test_pilot_database: autocommit kapalı açık bir transaction yok; ayırma yapılmadı")
+        check("pilot DB: ayırma bağlantısı izole test veritabanında", ISOLATED_TEST_DATABASE, database_name)
+        if database_name != ISOLATED_TEST_DATABASE:
+            raise IzolasyonHatasi(f"test_pilot_database: aktif veritabanı {database_name!r}, {ISOLATED_TEST_DATABASE!r} "
+                                  f"değil; pilot satırları ayrılmadı, hiçbir yazma yapılmadı")
+        removed = 0
+        for document_id in [doc["document_id"]] + other_docs:
+            removed += gercek_pilotu_ayir(conn, document_id)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM klinik_bulgular WHERE bilgi_turu IS NOT NULL")
+        remaining = cursor.fetchone()[0]
+        cursor.close()
+        check("pilot DB: gerçek pilot satırları transaction içinde ayrıldı (bilgi)", "-",
+              f"{removed} satır, {1 + len(other_docs)} belge", True)
+        check("pilot DB: ayırma sonrası pilot satırı yok, bağlantı korumada (commit / örtük commit engelli)",
+              (0, True), (remaining, korumada_mi(conn)))
+        if remaining or not korumada_mi(conn):
+            raise IzolasyonHatasi("test_pilot_database: gerçek pilot satırları ayrılamadı ya da bağlantı korumada değil")
         # Kapsam kontrolü için gerçek rag satırına güvenilmez: test kendi rag satırını ekler.
         rag = fake_rows(conn)["tekrar_1"]
         insert_rows(conn, {"tekrar_1": rag}, ["tekrar_1"])
@@ -985,7 +1037,14 @@ def test_pilot_database(tmp):
         check("pilot DB: pilot satırlarına chunk temelli kaynak kontrolü uygulanmadı", False,
               any(f["kontrol_kodu"] in ("chunk_id_bos", "dogrulama_artik_gecmiyor") for f in pilot_flags))
         pilot = summary["pilot"]
-        missing = {(m["tablo_no"], m["degisken"]) for item in pilot["eksiksizlik"] for m in item["eksik_satirlar"]}
+        complete = pilot["eksiksizlik"]
+        structure = ([i.get("document_id") for i in complete], [i["hata"] for i in complete if "hata" in i],
+                     all("eksik_satirlar" in i for i in complete))
+        check("pilot DB: eksiksizlik yalnız TK36 öğesi, PDF hatası yok, eksik_satirlar mevcut",
+              ([doc["document_id"]], [], True), structure)
+        if structure != ([doc["document_id"]], [], True):
+            raise AssertionError(f"pilot DB: eksiksizlik yapısı beklenen değil (belge, hata, eksik_satirlar): {structure}")
+        missing ={(m["tablo_no"], m["degisken"]) for item in pilot["eksiksizlik"] for m in item["eksik_satirlar"]}
         check("pilot DB: eksiksizlik — temsil edilen 5 tablo satırı, kalanı eksik listesinde",
               (5, pilot["pdf_tablo_satiri"] - 5, False, False),
               (pilot["temsil_edilen"], pilot["eksik_tablo_satiri"], (1, "Glucose") in missing, (2, "Age") in missing))

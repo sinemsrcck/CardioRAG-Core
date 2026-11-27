@@ -130,6 +130,80 @@ def _norm(text):
     return re.sub(r'\s+', ' ', text).strip().casefold()
 
 
+# Dipnot işareti üst simgesi: yalnız harf/sembol (ör. <sup>d</sup>, <sup>**_d_**</sup>, <sup>†</sup>). Sayısal üst
+# simge (10<sup>9</sup>/L, m<sup>2</sup>, atıf numaraları) dipnot sayılmaz ve hiçbir karşılaştırmada silinmez.
+FOOTNOTE_SUP = re.compile(r'<sup>\s*[*_]*\s*(?:[a-z](?:\s*,\s*[a-z])*|[†‡§¶#*]+)\s*[*_]*\s*</sup>', re.I)
+# Kademeli biçim onarımı (en dar -> en geniş): 1) yalnız '**'; 2) + <br> / boşluk farkı; 3) + dipnot harfi üst simgesi.
+_MARKUP_LEVELS = (re.compile(r'\*\*'), re.compile(r'\*\*|<br\s*/?>|\s+', re.I),
+                  re.compile(FOOTNOTE_SUP.pattern + r'|\*\*|<br\s*/?>|\s+', re.I))
+
+
+def _cmp(text):
+    """Tekrar karşılaştırma anahtarı: kalın işaret, <br>, dipnot harfi üst simgesi ve boşluk farkı yok sayılır;
+    sayısal üst simge '^n' olarak korunur (10<sup>9</sup> != 109). Kayıt metnini DEĞİŞTİRMEZ."""
+    text = FOOTNOTE_SUP.sub(' ', str(text or ''))
+    text = re.sub(r'<sup>\s*(.*?)\s*</sup>', r'^\1', text, flags=re.I)
+    text = re.sub(r'<br\s*/?>|\*\*', ' ', text, flags=re.I)
+    return re.sub(r'\s+', ' ', text).strip().casefold()
+
+
+def _markup_map(text, pattern=_MARKUP_LEVELS[-1]):
+    """(sade metin, her sade karakterin özgün indeksi): pattern'deki '**' ve dipnot harfi üst simgesi silinir, <br> ve
+    boşluk dizileri tek boşluk olur. Büyük/küçük harf, rakam, sayısal üst simge ve noktalama aynen kalır."""
+    chars, index, pos = [], [], 0
+    for match in pattern.finditer(text):
+        for i in range(pos, match.start()):
+            chars.append(text[i]); index.append(i)
+        token = match.group(0)
+        if (token.isspace() or token[:3].lower() == '<br') and chars and chars[-1] != ' ':
+            chars.append(' '); index.append(match.start())
+        pos = match.end()
+    for i in range(pos, len(text)):
+        chars.append(text[i]); index.append(i)
+    return ''.join(chars), index
+
+
+def source_span(value, source):
+    """value kaynakta birebir yoksa, yalnız biçim farkı (kalın, <br>, dipnot harfi, boşluk) yok sayılarak kaynakta
+    TEKİL eşleşirse kaynağın özgün alt dizgisini döndürür; yoksa / birden çoksa None. Sonuç her zaman kaynağın
+    birebir alt dizgisidir, böylece sonraki birebir kontroller (validate_records) değişmeden uygulanır."""
+    if not isinstance(value, str) or not isinstance(source, str):
+        return None
+    if value.strip() and value.strip() in source:
+        return value.strip()
+    # En dar kademede tekil eşleşen kullanılır: değerde yazılı <br> / dipnot simgesi kaynakla aynen korunur.
+    for pattern in _MARKUP_LEVELS:
+        target = _markup_map(value, pattern)[0].strip()
+        if not target:
+            return None
+        plain, index = _markup_map(source, pattern)
+        first = plain.find(target)
+        if first < 0:
+            continue
+        if plain.find(target, first + 1) >= 0:
+            return None                                  # belirsiz: kaynakta birden çok yer
+        return source[index[first]:index[first + len(target) - 1] + 1]
+    return None
+
+
+MARKUP_FIELDS = ('klinik_bilgi_en', 'deger', 'p')
+
+
+def repair_markup(item, quote):
+    """Kanıtta birebir olmayan klinik bilgi / değer / p için biçim onarımı (source_span). Onarılan alan adlarını
+    döndürür. Onarılamayan alan olduğu gibi kalır ve sonraki kontrollerde reddedilir."""
+    fixed = []
+    for field in MARKUP_FIELDS:
+        value = item.get(field)
+        if not isinstance(value, str) or not value.strip() or value in quote:
+            continue
+        span = source_span(value, quote)
+        if span is not None and span != value:
+            item[field] = span
+            fixed.append(f'{field}:bicim')
+    return fixed
+
+
 # ---------------------------------------------------------------------------
 # 2-4. Chunk + embedding + retrieval (bellekte)
 # ---------------------------------------------------------------------------
@@ -313,6 +387,17 @@ class Cache:
 # 6. Temel kaynak kontrolü
 # ---------------------------------------------------------------------------
 
+def _components(value, found):
+    """Alan bileşenleri. found(metin) -> kaynakta var mı. Değerin tamamı kaynakta varsa tek bileşendir (önceki
+    davranış); yoksa ';' ile ayrılmış bileşenler. Metin değilse ya da boş bileşen varsa None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if found(value.strip()) or ';' not in value:
+        return [value.strip()]
+    parts = [part.strip() for part in value.split(';')]
+    return parts if all(parts) else None
+
+
 def source_problem(item, page_text):
     """Yapılandırılmış alanların açık kaynak desteği; sorun yoksa None. (kanıt/bilgi kontrolü validate_records'ta)
     Parçalı (çok sayfalı) kayıtta deger/p iki parçanın birleşik metninde aranır; tek sayfalı kayıtta kanit_cumle."""
@@ -321,20 +406,33 @@ def source_problem(item, page_text):
         quote = ' '.join(p['metin'] for p in parts)
     else:
         quote = item.get('kanit_cumle') or ''
+    counts = {}
     for field in ('deger', 'p'):
         value = item.get(field)
-        if value not in (None, '') and (not isinstance(value, str) or value.strip() not in quote):
+        if value in (None, ''):
+            continue
+        parts = _components(value, lambda text: text in quote)
+        # Tek değer kanıtta birebir; ';' ile ayrılmış çok değerde HER bileşen kanıtta birebir olmalı.
+        if parts is None or any(part not in quote for part in parts):
             return f'{field} kanıt cümlesinde birebir yok: {value!r}'
-    unit = item.get('unit')
+        counts[field] = len(parts)
     # Birim / grup / sonuç ölçütü (tablo başlığı) sayfada aranır; başlıklardaki <br> ve satır kırılmaları _norm ile
-    # tek boşluğa indirgenir (kanıt ve değer kontrolleri birebir kalır).
-    if unit not in (None, '') and (not isinstance(unit, str) or (_norm(unit) not in _norm(quote)
-                                                                 and _norm(unit) not in _norm(page_text))):
-        return f'unit sayfada birebir yok: {unit!r}'
-    group = item.get('hasta_grubu')
-    if group not in (None, ''):
-        if not isinstance(group, str) or (_norm(group) not in _norm(quote) and _norm(group) not in _norm(page_text)):
-            return f'hasta_grubu sayfada yok: {group!r}'
+    # tek boşluğa indirgenir (kanıt ve değer kontrolleri birebir kalır). Çok değerde her bileşen ayrı aranır.
+    for field, label in (('unit', 'unit sayfada birebir yok'), ('hasta_grubu', 'hasta_grubu sayfada yok')):
+        value = item.get(field)
+        if value in (None, ''):
+            continue
+        on_page = lambda text: bool(_norm(text)) and (_norm(text) in _norm(quote)  # noqa: E731
+                                                      or _norm(text) in _norm(page_text))
+        parts = _components(value, on_page)
+        if parts is None or not all(on_page(part) for part in parts):
+            return f'{label}: {value!r}'
+        counts[field] = len(parts)
+    # Grup / değer / birim ilişkisi: birden çok çok-değerli alan varsa bileşen sayıları aynı olmalı (eşleme sırayla);
+    # aksi halde hangi değerin hangi gruba/birime ait olduğu belirsizdir -> kayıt reddedilir.
+    multi = {f: n for f, n in counts.items() if n > 1 and f != 'p'}
+    if len(set(multi.values())) > 1:
+        return 'çok değerli alanların bileşen sayısı uyuşmuyor: ' + ', '.join(f'{f}={n}' for f, n in sorted(multi.items()))
     outcome = item.get('sonuc_olcutu_tr')
     if outcome not in (None, ''):
         if not isinstance(outcome, str) or (_norm(outcome) not in _norm(quote) and _norm(outcome) not in _norm(page_text)):
@@ -499,8 +597,9 @@ def screen(task, findings, task_no):
             reject('Kanıt parçada bulunamadı'); continue
         if quote != item['kanit_cumle']:
             item['kanit_cumle'] = quote
+        markup_fixes = repair_markup(item, quote)
         fixes = [f for f in ('bilgi_turu', 'baglam', 'kanit_turu', 'kanit_cumle') if item.get(f) != original.get(f)]
-        fixes += field_notes
+        fixes += markup_fixes + field_notes
         if fixes:
             item['otomatik_duzeltme'] = fixes
         problem = source_problem(item, excerpt)
@@ -510,6 +609,36 @@ def screen(task, findings, task_no):
         item.setdefault('kanit_turu', 'metin')
         accepted.append((item, {'gorev_no': task_no, 'gorev_ici_sira': position}))
     return accepted, rejected
+
+
+# Sınır kanıtı için cümle sonu: '.', '!' ya da '?' (ardından isteğe bağlı atıf/dipnot üst simgesi) + boşluk/son,
+# ya da paragraf/başlık arası boş satır. Ondalık sayı (0.48), kısaltma (et al., vs., eg., Fig., No.) ve tek büyük
+# harf baş harfi (J. Smith) cümle sonu sayılmaz.
+_SENTENCE_STOP = re.compile(r'[.!?](?:<sup>[^<]{0,20}</sup>)?(?=\s|$)|\n[ \t]*\n')
+_NOT_SENTENCE_END = re.compile(r'(?:\bet al|\bvs|\be\.?g|\bi\.?e|\bFigs?|\bNo|\bapprox|(?<![\w.])[A-Z])$')
+
+
+def _sentence_stops(text):
+    """Metindeki cümle sonlarının bitiş konumları (artan)."""
+    for match in _SENTENCE_STOP.finditer(text):
+        if match.group(0)[0] == '.' and _NOT_SENTENCE_END.search(text[:match.start()]):
+            continue
+        yield match.end()
+
+
+def trim_boundary_parts(left, right):
+    """Sınır kanıtını sayfa sınırını geçen TEK cümleye indirir: sol parça son cümle sonundan sonra başlar, sağ parça
+    ilk cümle sonunda biter. Sonuçlar hâlâ sol pencerenin sonu / sağ pencerenin başıdır (birebir alt dizgi).
+    Sol parça bir cümle sonuyla bitiyorsa (sınırı geçen cümle yok) sol sonuç boş döner."""
+    stops = [end for end in _sentence_stops(left) if end <= len(left.rstrip())]
+    if stops and stops[-1] >= len(left.rstrip()):
+        return '', right
+    if stops:
+        left = left[stops[-1]:].lstrip()
+    first = next(_sentence_stops(right), None)
+    if first is not None:
+        right = right[:first].rstrip()
+    return left, right
 
 
 def screen_boundary(task, findings, task_no, pages):
@@ -551,16 +680,24 @@ def screen_boundary(task, findings, task_no, pages):
         if not (windows[left_page].rstrip().endswith(clean[0]['metin'])
                 and windows[right_page].lstrip().startswith(clean[1]['metin'])):
             reject('Kanıt parçaları sayfa sonu / sonraki sayfa başı değil'); continue
+        # Model pencerenin tamamını parça olarak döndürebiliyor: kanıt sınırı geçen tek cümleye kırpılır.
+        left_text, right_text = trim_boundary_parts(clean[0]['metin'], clean[1]['metin'])
+        if not left_text or not right_text:
+            reject('Sınır kanıtı sayfa sınırını geçen bir cümle değil'); continue
+        clean = [{'sayfa': left_page, 'metin': left_text}, {'sayfa': right_page, 'metin': right_text}]
         try:
             joined = check_evidence_parts(clean, pages)
         except ValueError as exc:
             reject(str(exc)); continue
+        # Klinik bilgi kırpılmış parçalarda aranır (validate_records.fact_in_parts); pencerenin başka cümlesinden
+        # gelen bilgi artık doğrulanamaz ve reddedilir.
+        markup_fixes = repair_markup(item, left_text + ' ' + right_text)
         item.update({'kanit_parcalari': clean, 'sayfa': left_page, 'sayfa_bitis': right_page,
                      'kanit_cumle': clean[0]['metin'], 'kanit_turu': 'metin', 'birlestirme': joined})
         fixes = [f for f in ('bilgi_turu', 'baglam') if item.get(f) != original.get(f)]
         if any(c['metin'] != p.get('metin') for c, p in zip(clean, parts)):
             fixes.append('kanit_parcalari')
-        fixes += field_notes
+        fixes += markup_fixes + field_notes
         if fixes:
             item['otomatik_duzeltme'] = fixes
         problem = source_problem(item, windows[left_page] + '\n' + windows[right_page])
@@ -605,6 +742,9 @@ def extract(pages, tasks, client, model, *, cache=None, max_calls=60, attempts=3
             ok, bad = screen(task, findings, number)
         candidates.extend((item, {**origin, 'tur': kind}) for item, origin in ok)
         rejected.extend(bad)
+    candidates = drop_non_english(candidates, rejected)
+    candidates = drop_abbreviation_lists(candidates, rejected)
+    candidates = normalize_table_cells(candidates, pages, rejected)
     records = [item for item, _ in candidates]
     valid, errors = validate_records(records, pages)
     bad_rows = {e['satir'] - 1: e['hata'] for e in errors}
@@ -613,7 +753,568 @@ def extract(pages, tasks, client, model, *, cache=None, max_calls=60, attempts=3
         origin = {k: v for k, v in origin.items() if k != 'tur'}
         rejected.append({'sayfa': item.get('sayfa'), **origin, 'neden': message, 'asama': 'dogrulama', 'kayit': item})
     kept = [candidates[i] for i in range(len(candidates)) if i not in bad_rows]
-    return replace_table_records(kept, rejected), rejected, calls
+    records = replace_table_records(kept, rejected)
+    from src.rag_tablo_hizalama import align_tables
+    records = align_tables(records, pages, rejected)
+    from src.rag_tablo_ozel import apply_special_tables
+    records = apply_special_tables(records, pages, rejected)
+    records = drop_table_duplicates(records, rejected)
+    records = drop_cell_duplicates(records, rejected)
+    records = drop_p_duplicates(records, rejected)
+    records = drop_aligned_duplicates(records, rejected)
+    records = drop_boundary_duplicates(records, rejected)
+    records = hold_for_review(records, pages, rejected)
+    from src.rag_anlam_denetimi import check_meaning
+    records = check_meaning(records, pages, rejected)
+    return join_evidence(records), rejected, calls
+
+
+def _evidence_text(item):
+    """Dil kontrolü için kaydın kanıtı: çok parçalı kayıtta bütün parçalar (hiçbir parça atılmaz), yoksa kanit_cumle;
+    ikisi de yoksa klinik bilgi (rag_son_filtre.ingilizce_olmayan ile aynı öncelik)."""
+    parts = item.get('kanit_parcalari')
+    if isinstance(parts, list) and parts:
+        return ' '.join(str(p.get('metin', '')) for p in parts if isinstance(p, dict))
+    return str(item.get('kanit_cumle') or item.get('klinik_bilgi_en') or '')
+
+
+_ABBREVIATION_MARK = re.compile(r'\b(?:Abbreviations?|Abbr\.)\s*:', re.I)
+# Kısaltma sözlüğü girdisi: '<KISALTMA>, <açılım>' ; girdiler ';' ile ayrılır, liste '.' ya da metin sonuyla biter.
+_GLOSSARY_ENTRY = re.compile(r'^\s*[^\s,;]{1,25}(?:\s[^\s,;]{1,25}){0,2},\s*[^,;]{2,}$')
+
+
+def glossary_span(text):
+    """Metindeki şekil / tablo altı kısaltma listesinin [başlangıç, bitiş) aralığı; liste yapısında değilse None.
+    Liste 'Abbreviations:' işaretinden sonra başlar, ilk cümle sonunda ('. ' + büyük harf ya da metin sonu) biter ve
+    her girdisi '<kısaltma>, <açılım>' biçiminde olmalıdır."""
+    match = _ABBREVIATION_MARK.search(text or '')
+    if not match:
+        return None
+    rest = text[match.end():]
+    stop = re.search(r'\.(?=\s+[A-Z*#]|\s*$)', rest)
+    body = rest[:stop.start()] if stop else rest
+    entries = [e for e in body.split(';') if e.strip()]
+    if not entries or not all(_GLOSSARY_ENTRY.match(e) for e in entries):
+        return None
+    return match.start(), match.end() + len(body)
+
+
+def drop_abbreviation_lists(candidates, rejected):
+    """Klinik bilgisi kanıtta YALNIZ kısaltma listesinin içinde geçen metin kaydı reddedilir ('kisaltma_listesi').
+    Aynı kanıtın liste dışındaki kısmından (ör. şekil başlığı, şekle atıf yapan cümle) çıkarılan bilgi kalır."""
+    out = []
+    for item, origin in candidates:
+        quote = item.get('kanit_cumle') or ''
+        fact = item.get('klinik_bilgi_en') or ''
+        span = glossary_span(quote) if item.get('kanit_turu', 'metin') == 'metin' and not item.get('kanit_parcalari') else None
+        starts = [m.start() for m in re.finditer(re.escape(fact), quote)] if fact else []
+        if span and starts and all(span[0] <= s and s + len(fact) <= span[1] for s in starts):
+            info = {k: v for k, v in origin.items() if k != 'tur'}
+            rejected.append({'sayfa': item.get('sayfa'), **info, 'asama': 'kisaltma_listesi', 'kayit': item,
+                             'neden': 'Klinik bilgi yalnız şekil/tablo altı kısaltma listesinde geçiyor'})
+            continue
+        out.append((item, origin))
+    return out
+
+
+def drop_non_english(candidates, rejected):
+    """Kanıtı İngilizce olmayan kayıt (src.rag_son_filtre.is_non_english: Latin dışı harf oranı yüksek ya da belirgin
+    Fransızca) reddedilir; ret raporuna 'dil' aşamasıyla yazılır."""
+    from src.rag_son_filtre import is_non_english
+    out = []
+    for item, origin in candidates:
+        if is_non_english(_evidence_text(item)):
+            info = {k: v for k, v in origin.items() if k != 'tur'}
+            rejected.append({'sayfa': item.get('sayfa'), **info, 'asama': 'dil', 'kayit': item,
+                             'neden': 'Kanıt İngilizce değil (rag_son_filtre.is_non_english)'})
+            continue
+        out.append((item, origin))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Tablo hücresi temsili (genel kurallar; makaleye özel sabit yok)
+# ---------------------------------------------------------------------------
+
+_BR = re.compile(r'<br\s*/?>', re.I)
+INTERVENTION_TYPES = ('tedavi', 'teshis_yontemi')       # işlem / yöntem hücresi: metin hücrenin kendisidir
+MEDICATION_TYPES = ('ilac', 'doz')                       # ilaç / doz: sayısal değer (doz, oran) taşıyabilir
+CELL_CONTEXT_FIELDS = ('sonuc_olcutu_tr', 'hasta_grubu', 'unit', 'p', 'ci95', 'etki_turu', 'comparator')
+
+
+def row_cells(row):
+    """Markdown tablo satırının ham hücreleri; tablo satırı değilse []."""
+    text = str(row or '').strip()
+    if len(text) < 2 or not (text.startswith('|') and text.endswith('|')):
+        return []
+    return [cell.strip() for cell in text[1:-1].split('|')]
+
+
+def _cell_lines(cell):
+    return [line.strip() for line in _BR.split(cell) if line.strip()]
+
+
+def is_whole_cell(value, row):
+    """value satırda tam bir hücre ya da bir hücrenin <br> ile ayrılmış tam bir satırı mı (biçim farkı _cmp ile yok
+    sayılır). Hücre metninin içinden ayrıştırılmış alt değer (ör. 'Ablation: LVEF 35 ± 9% ...' içindeki '35 ± 9%') değil."""
+    target = _cmp(value)
+    if not target:
+        return False
+    return any(_cmp(cell) == target or any(_cmp(line) == target for line in _cell_lines(cell))
+               for cell in row_cells(row))
+
+
+def row_parameter(item):
+    """Satır değişkeni (ölçüm parametresi): kanıt satırının ilk hücresi. İlk hücre <br> ile birden çok değişken taşıyorsa
+    (ör. 'Male<br>Female') kaydın klinik bilgisine birebir (_cmp) karşılık gelen satır; karşılık yoksa belirsizdir ve
+    kaydın doğrulanmış klinik bilgisi kullanılır. Dönen metin her zaman kanıt satırının (ya da bilginin) birebir parçasıdır."""
+    cells = row_cells(item.get('kanit_cumle'))
+    fact = item.get('klinik_bilgi_en')
+    if cells and cells[0] and _cmp(cells[0]) == _cmp(fact):
+        return cells[0]                                   # tek değişken (<br> yalnız satır kırılması olabilir)
+    lines = _cell_lines(cells[0]) if cells else []
+    for line in lines:
+        if _cmp(line) == _cmp(fact):
+            return line
+    if len(lines) == 1:
+        return lines[0]
+    return fact
+
+
+def _separators(row):
+    """Tablo satırındaki gerçek hücre ayırıcılarının konumları ('\\|' kaçışlı karakter ayırıcı değildir)."""
+    return [i for i, ch in enumerate(row) if ch == '|' and (i == 0 or row[i - 1] != '\\')]
+
+
+def crosses_cell_boundary(value, row):
+    """value kanıt satırında yalnız birden çok hücreye yayılan konumlarda mı geçiyor? Satırdaki her geçişi denenir:
+    ayırıcı içermeyen (tek hücre içinde kalan) bir geçiş varsa ihlal yoktur. Tablo satırı değilse ya da value satırda
+    yoksa False (o durum başka kontrollerin işidir)."""
+    if not isinstance(value, str) or not value or not row_cells(row) or value not in row:
+        return False
+    seps = _separators(row)
+    start = row.find(value)
+    while start >= 0:
+        end = start + len(value)
+        if not any(start <= s < end for s in seps):
+            return False
+        start = row.find(value, start + 1)
+    return True
+
+
+def _clean_label(text):
+    return _cmp(re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', str(text or ''))).strip('* ')
+
+
+# İstatistik ölçü / karşılaştırma etiketleri (hasta grubu değil). Tek harf ('B') ve değişken adı olabilen kısaltmalar
+# (ör. PLR, NLR) bilerek yok: belirsiz etiket taşınmaz.
+STAT_LABEL = re.compile(
+    r'^(?:sen|spe|sens(?:itivity)?|spec(?:ificity)?|ppv|npv|auc|auroc|roc auc|c[- ]?statistic|accuracy|'
+    r'a?or|a?hr|rr|odds ratio|hazard ratio|relative risk|risk ratio|95% ?ci|ci|p|p[- ]?value|exp ?\(b\)(?: ?\(or\))?|'
+    r'beta|se|sd)$', re.I)
+COMPARISON_LABEL = re.compile(r'^p ?\( ?[\w.+]+ ?(?:-|–|vs\.?) ?[\w.+]+ ?\)$', re.I)
+
+
+def is_statistic_label(label):
+    text = _clean_label(label)
+    return bool(text) and bool(STAT_LABEL.match(text) or COMPARISON_LABEL.match(text))
+
+
+def separate_statistic_label(item):
+    """(kayıt, ret nedeni). hasta_grubu bir istatistik ölçü/karşılaştırma etiketiyse (SEN, AUC, OR, P (A-B) ...) grup
+    değildir: sonuc_olcutu_tr boşsa oraya taşınır (ya da aynı etiketse hasta_grubu silinir). Değer–etiket ilişkisi
+    kaynaktan yeniden doğrulanır: değer satırda tam hücre olmalı ya da etiketle aynı hücrede geçmeli. sonuc_olcutu_tr
+    başka bir etiket taşıyorsa ya da ilişki doğrulanamıyorsa tahmin yapılmaz, kayıt reddedilir."""
+    group = item.get('hasta_grubu')
+    if not is_statistic_label(group):
+        return item, None
+    row, value = item.get('kanit_cumle'), item.get('deger')
+    same_cell = any(_norm(group) in _norm(cell) and _cmp(value) and _cmp(value) in _cmp(cell) for cell in row_cells(row))
+    if not (is_whole_cell(value, row) or same_cell):
+        return item, f'İstatistik etiketi hasta_grubu ({group!r}); değerle ilişkisi kaynakta doğrulanamadı'
+    outcome = item.get('sonuc_olcutu_tr')
+    if outcome not in (None, '') and _clean_label(outcome) != _clean_label(group):
+        return item, f'İstatistik etiketi hasta_grubu ({group!r}) ve farklı sonuc_olcutu_tr ({outcome!r}); belirsiz'
+    item = {k: v for k, v in item.items() if k != 'hasta_grubu'}
+    item['sonuc_olcutu_tr'] = outcome if outcome not in (None, '') else group
+    item['otomatik_duzeltme'] = list(item.get('otomatik_duzeltme', [])) + ['hasta_grubu->sonuc_olcutu_tr:istatistik_etiketi']
+    return item, None
+
+
+# ---------------------------------------------------------------------------
+# Tablo başlığı (sütun bağlamı) — yalnız kaynak sayfanın tablo yapısından, deterministik
+# ---------------------------------------------------------------------------
+
+_SEPARATOR_ROW = re.compile(r'^\|\s*:?-{3,}')
+_BOLD_CELL = re.compile(r'^(?:\*\*[^*]+\*\*|<br\s*/?>|<sup>.*?</sup>|\s)+$', re.I)
+# Sayısal hücre satırı: '0.002', '<0.001', '2,735.621', '45%', '7.2±1.1', '1.2-6.1' (aralık / GA), '64 (53-74)'.
+_NUMERIC_LINE = re.compile(r'^[<>≤≥=]?\s*[-–]?\d[\d.,]*(?:\s*[-–]\s*[-–]?\d[\d.,]*)?(?:\s*[%±]\s*[\d.,]*)?'
+                           r'(?:\s*\([^()]*\d[^()]*\))?\s*%?$')
+GROUP_HEADER = re.compile(r'\(\s*n\s*=\s*\d|^n\s*=\s*\d', re.I)
+P_LABEL = re.compile(r'^p(?:[- ]?value)?$', re.I)
+CI_LABEL = re.compile(r'^(?:95\s*%\s*)?ci$', re.I)
+
+
+def clean_label(text):
+    """Grup / sonuç etiketi için biçim temizliği: '**', italik '_..._', <br> (boşluk) ve dipnot HARFİ üst simgesi
+    (<sup>d</sup>) atılır, boşluk sadeleşir. Sayısal üst simge (<sup>2</sup>), birim, parantez, n=, güven aralığı ve
+    noktalama aynen kalır. Kanıt (kanit_cumle) değişmez."""
+    text = FOOTNOTE_SUP.sub(' ', str(text or ''))
+    text = re.sub(r'<br\s*/?>', ' ', text, flags=re.I).replace('**', '')
+    text = re.sub(r'(?<![\w*])_([^_\n]+)_(?![\w*])', r'\1', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _bold_row(cells):
+    filled = [c for c in cells if c.strip()]
+    return len(filled) >= 2 and all(_BOLD_CELL.match(c) for c in filled)
+
+
+def column_header(item, page_text):
+    """(başlık hücreleri, belirsizlik nedeni). Kaydın kanıt satırına ait başlık satırı, sayfadaki markdown tablosundan:
+    - satır sayfada TEKİL olmalı; yukarı doğru aynı tablonun ayırıcı satırı (|---|) bulunur;
+    - ayırıcı ile veri satırı arasında veri satırına en yakın başlık satırı seçilir: tamamı kalın satır (çok katmanlı
+      başlığın alt katmanı) ya da ilk hücresi boş olup ana başlıkla aynı ilk satırı paylaşan ara başlık (tablo içinde
+      başlığın yeniden tanımlanması). Böyle bir satır yoksa ayırıcının hemen üstündeki satır;
+    - başlık satırı veri satırıyla aynı sayıda hücre taşımalı. Üst katmanlar (bölünmüş birleşik başlıklar) kullanılmaz."""
+    header, _, problem = locate_header(item, page_text)
+    return header, problem
+
+
+def locate_header(item, page_text):
+    """(seçilen başlık hücreleri, ayırıcının üstündeki ana başlık hücreleri, belirsizlik nedeni); column_header'ın
+    ayrıntılı biçimi. Seçilen başlık ana başlık değilse tabloda bir üst katman vardır."""
+    row = str(item.get('kanit_cumle') or '').strip()
+    lines = str(page_text or '').splitlines()
+    at = [i for i, line in enumerate(lines) if line.strip() == row]
+    if len(at) != 1:
+        return None, None, 'kanıt satırı sayfada tekil değil'
+    sep = at[0] - 1
+    while sep >= 0 and lines[sep].strip().startswith('|') and not _SEPARATOR_ROW.match(lines[sep].strip()):
+        sep -= 1
+    if sep < 1 or not _SEPARATOR_ROW.match(lines[sep].strip()) or not lines[sep - 1].strip().startswith('|'):
+        return None, None, 'tablo başlık satırı bulunamadı'
+    main = row_cells(lines[sep - 1])
+    header = main
+    main_first = [_cmp((_cell_lines(c) or [''])[0]) for c in main]
+    for j in range(at[0] - 1, sep, -1):
+        cells = row_cells(lines[j])
+        if _bold_row(cells):
+            header = cells
+            break
+        filled = [i for i, c in enumerate(cells) if c.strip()]
+        if (cells and not cells[0].strip() and len(filled) >= 2 and len(cells) == len(main)
+                and any(main_first[i] and _cmp((_cell_lines(cells[i]) or [''])[0]) == main_first[i] for i in filled)):
+            header = cells
+            break
+    if len(header) != len(row_cells(row)):
+        return None, main, 'başlık ve veri satırı hücre sayısı uyuşmuyor'
+    return header, main, None
+
+
+def is_fragmented_header(cells):
+    """Birleşik başlığın PDF dönüşümünde hücrelere bölünmüş olması: komşu iki hücre kelime ortasından ayrılmış
+    ('Characteristi' | 'cs', 'Variable Importa' | 'nce') ya da kısaltma bölünmüş ('Predicted A' | 'MI')."""
+    labels = [clean_label(c) for c in cells]
+    for left, right in zip(labels, labels[1:]):
+        if not left or not right:
+            continue
+        if re.search(r'[^\W\d_]$', left) and re.match(r'[a-z]', right):
+            return True
+        if re.search(r'(?:^|\s)[A-Z]$', left) and re.match(r'[A-Z]{1,3}(?:\b|$)', right):
+            return True
+    return False
+
+
+_QUALIFIER = re.compile(r'^\([^()]{1,30}\)$')
+
+
+def continuation_qualifier(item, page_text):
+    """(devam satırı, niteleyici) ya da None. Kanıt satırının hemen altındaki satır ilk hücresi boş bir devam satırıysa
+    ve değerin (tekil) hücre konumunda yalnız parantezli bir niteleyici taşıyorsa (ör. '(EMS)'), değerin bir kısmının
+    alt grubu o satırdadır; tek satırlık kanıt bu ilişkiyi doğrulayamaz."""
+    row = str(item.get('kanit_cumle') or '').strip()
+    lines = str(page_text or '').splitlines()
+    at = [i for i, line in enumerate(lines) if line.strip() == row]
+    positions = cell_positions(item.get('deger'), row)
+    if len(at) != 1 or len(positions) != 1 or at[0] + 1 >= len(lines):
+        return None
+    below = row_cells(lines[at[0] + 1])
+    index = positions[0][0]
+    if below and not below[0].strip() and index < len(below) and _QUALIFIER.match(clean_label(below[index])):
+        return lines[at[0] + 1].strip(), clean_label(below[index])
+    return None
+
+
+def review_reason(item, page_text):
+    """(inceleme nedeni, devam satırı). Parametre–grup–sütun–değer ilişkisi tek satırlık kanıt ve tablo yapısıyla
+    güvenilir kurulamayan tablo değeri otomatik aktarım dışında tutulur. Özellikler tek başına hata sayılmaz; her kural
+    ilişkinin kurulamadığı durumu tarif eder:
+    - bilgi yalnız sayıdan oluşan satır etiketi (sıra / model no): değerin konusu belirsiz;
+    - grup ve sonuç ölçütü yok: değerin sütun bağlamı yok;
+    - grup değeri satırda tam hücre değil: hücre içinden ayrıştırılmış alt sonuç;
+    - '(n=..)' taşımayan grup etiketi, parçalı (bölünmüş) çok katmanlı başlığın alt katmanından: üst başlık bağlamı
+      (ör. 'Predicted AMI') kurulamıyor;
+    - değerin alt grup niteleyicisi bir sonraki (devam) satırda."""
+    if item.get('kanit_turu') != 'tablo' or item.get('deger') in (None, ''):
+        return None, None
+    cells = row_cells(item.get('kanit_cumle'))
+    label = next((c for c in cells if c.strip()), '')
+    if re.fullmatch(r'\d+', clean_label(label)) and _cmp(item.get('klinik_bilgi_en')) == _cmp(label):
+        return 'satır etiketi yalnız sayı (sıra / model no); değerin konusu belirsiz', None
+    group = item.get('hasta_grubu')
+    if not group and not item.get('sonuc_olcutu_tr'):
+        return 'sütun bağlamı (hasta grubu / sonuç ölçütü) yok', None
+    if group and not is_whole_cell(item.get('deger'), item.get('kanit_cumle')):
+        return 'grup değeri hücre içinden ayrıştırılmış alt sonuç; grup–değer ilişkisi tablo yapısıyla doğrulanamıyor', None
+    if group and not GROUP_HEADER.search(group):
+        header, main, _ = locate_header(item, page_text)
+        if header is not None and header is not main and is_fragmented_header(main):
+            return 'grup etiketi parçalı çok katmanlı başlığın alt katmanında; üst başlık bağlamı kurulamıyor', None
+    found = continuation_qualifier(item, page_text)
+    if found:
+        return f'değerin alt grup niteleyicisi sonraki satırda ({found[1]})', found[0]
+    return None, None
+
+
+def hold_for_review(records, pages, rejected):
+    """review_reason'a takılan kayıtlar silinmez: 'inceleme' aşamasıyla, gerekçesi, ham kaydı ve varsa ilgili devam
+    satırıyla ret raporuna yazılır; otomatik aktarım kayıtlarından ayrılır."""
+    out = []
+    for item in records:
+        reason, continuation = review_reason(item, pages.get(item.get('sayfa'), ''))
+        if reason:
+            entry = {'sayfa': item.get('sayfa'), 'asama': 'inceleme', 'neden': reason, 'kayit': item}
+            if continuation:
+                entry['devam_satiri'] = continuation
+            rejected.append(entry)
+            continue
+        out.append(item)
+    return out
+
+
+def _header_role(label):
+    """Doldurulacak alan: '(n=..)' taşıyan başlık hasta grubu, diğerleri (ölçü / sonuç / istatistik) sonuc_olcutu_tr."""
+    return 'hasta_grubu' if GROUP_HEADER.search(label) and not is_statistic_label(label) else 'sonuc_olcutu_tr'
+
+
+def split_stacked_cell(item, page_text):
+    """Alt alta yazılmış sayısal hücre (ör. '7.912<br>2,735.621<br>0.002') ve başlığı aynı sayıda satır taşıyorsa
+    ('B<br>Exp (B) (OR)<br>p value') satır satır yapılandırılmış kayıtlara ayrılır: p ve CI satırları diğer kayıtların
+    p / ci95 alanına bağlanır, kalan her satır ayrı kayıt (deger = satır, sonuc_olcutu_tr = başlık satırı). Hizalama
+    doğrulanamazsa ya da mevcut alanlarla çelişirse None (kayıt değişmez)."""
+    value = item.get('deger')
+    lines = [line.strip() for line in _BR.split(value or '') if line.strip()]
+    if len(lines) < 2 or not all(_NUMERIC_LINE.match(line) for line in lines):
+        return None
+    positions = cell_positions(value, item.get('kanit_cumle'))
+    if len(positions) != 1 or positions[0][1] is not None:
+        return None                                       # tekil ve tam hücre değil
+    header, problem = column_header(item, page_text)
+    if problem:
+        return None
+    labels = [clean_label(line) for line in _BR.split(header[positions[0][0]]) if clean_label(line)]
+    if len(labels) != len(lines) or item.get('hasta_grubu'):
+        return None
+    if item.get('sonuc_olcutu_tr') and _cmp(clean_label(item['sonuc_olcutu_tr'])) != _cmp(' '.join(labels)):
+        return None
+    stats = {'p': [v for l, v in zip(labels, lines) if P_LABEL.match(l)],
+             'ci95': [v for l, v in zip(labels, lines) if CI_LABEL.match(l)]}
+    if any(len(v) > 1 for v in stats.values()):
+        return None
+    attached = {f: v[0] for f, v in stats.items() if v}
+    for field, val in attached.items():
+        if item.get(field) not in (None, '') and _cmp(item[field]) != _cmp(val):
+            return None                                   # mevcut p / CI ile çelişki: tahmin yok
+    base = {k: v for k, v in item.items() if k not in ('deger', 'sonuc_olcutu_tr', 'p', 'ci95')}
+    out = []
+    for label, val in zip(labels, lines):
+        if P_LABEL.match(label) or CI_LABEL.match(label):
+            continue
+        rec = {**base, 'deger': val, 'sonuc_olcutu_tr': label, **attached}
+        rec['otomatik_duzeltme'] = list(item.get('otomatik_duzeltme', [])) + ['tablo_hucresi:alt_alta_hucre_bolundu']
+        out.append(rec)
+    return out or None
+
+
+def is_contextless_value(item):
+    """Bağlamsız tablo değeri: değer var, hasta grubu / sonuç ölçütü yok, bilgi = satır etiketi (ilk hücre)."""
+    cells = row_cells(item.get('kanit_cumle'))
+    return (item.get('kanit_turu') == 'tablo' and item.get('deger') not in (None, '') and bool(cells)
+            and not item.get('hasta_grubu') and not item.get('sonuc_olcutu_tr')
+            and _cmp(item.get('klinik_bilgi_en')) == _cmp(cells[0]))
+
+
+def fill_column_context(item, page_text):
+    """(kayıt, belirsizlik nedeni). Bağlamsız değerin sütun başlığı yalnız tekil ve güvenilir eşleşmede doldurulur:
+    değer satırda TEK konumda ve TAM hücre (alt satır değil), ilk (satır etiketi) sütunda değil, başlık satırı
+    column_header ile bulunmuş ve o sütunun başlık hücresi dolu. Aksi halde belirsizdir (kayıt aktarım dışı tutulur).
+    Birim ayrı alandaysa hücre 'değer birim' biçiminde de aranır (ör. deger='100', unit='mg', hücre '100 mg')."""
+    value, unit, row = item.get('deger'), item.get('unit'), item.get('kanit_cumle')
+    positions = cell_positions(value, row)
+    if not positions and isinstance(unit, str) and unit.strip():
+        positions = cell_positions(f'{value} {unit}', row) or cell_positions(f'{value}{unit}', row)
+    if len(positions) != 1:
+        return item, 'değer satırda tekil bir hücre konumunda değil'
+    index, line = positions[0]
+    if line is not None:
+        return item, 'değer çok satırlı hücrenin bir satırı; başlık hizası doğrulanamadı'
+    if index == 0:
+        return item, 'değer satır etiketi sütununda'
+    header, problem = column_header(item, page_text)
+    if problem:
+        return item, problem
+    label = clean_label(header[index])
+    if not re.search(r'[^\W\d_]', label):
+        return item, 'sütunun başlık hücresi boş'
+    role = _header_role(label)
+    item = {**item, role: label}
+    item['otomatik_duzeltme'] = list(item.get('otomatik_duzeltme', [])) + [f'tablo_hucresi:{role}<-sutun_basligi']
+    return item, None
+
+
+def clean_labels(item):
+    """hasta_grubu / sonuc_olcutu_tr biçim temizliği (clean_label); değişen alan notu düşülür."""
+    changed = {}
+    for field in ('hasta_grubu', 'sonuc_olcutu_tr'):
+        value = item.get(field)
+        if isinstance(value, str) and value.strip() and clean_label(value) != value:
+            changed[field] = clean_label(value)
+    if not changed:
+        return item
+    item = {**item, **changed}
+    item['otomatik_duzeltme'] = list(item.get('otomatik_duzeltme', [])) + [f'etiket_bicim:{f}' for f in changed]
+    return item
+
+
+def normalize_table_cell(item):
+    """(kayıt, ret nedeni). Tablo hücresi kayıtlarının temsili; kaynak kontrolleri sonra yeniden uygulanır.
+    - Klinik bilgi ya da değer satırda yalnız birden çok hücreye yayılarak geçiyorsa (hücre sınırı ihlali) -> ret.
+    - hasta_grubu istatistik etiketiyse (separate_statistic_label) grup alanından ayrılır ya da belirsizse ret.
+    - Satır etiketinin kendisini değer diye taşıyan, başka bağlam alanı olmayan hücre: yeni bilgi yok -> ret.
+    - Sonuç / grup sütunu ve sayısal bağlamı olmayan işlem/yöntem hücresi (bilgi = satır etiketi, değer = tam hücre
+      metni): hücre metni klinik_bilgi_en'e taşınır, deger boşaltılır. İlaç/doz hücresinde yalnız değer rakam
+      içermiyorsa yapılır; doz, oran ve birim taşıyan ilaç kaydı olduğu gibi kalır."""
+    if item.get('kanit_turu') != 'tablo':
+        return item, None
+    for field in ('klinik_bilgi_en', 'deger'):
+        if crosses_cell_boundary(item.get(field), item.get('kanit_cumle')):
+            return item, f'{field} tablo hücre sınırını aşıyor (birden çok hücreye yayılıyor)'
+    item, reason = separate_statistic_label(item)
+    if reason:
+        return item, reason
+    cells = row_cells(item.get('kanit_cumle'))
+    label = cells[0] if cells else ''
+    value, fact = item.get('deger'), item.get('klinik_bilgi_en')
+    if not label or not isinstance(value, str) or not value.strip() or _cmp(fact) != _cmp(label):
+        return item, None
+    if any(item.get(f) not in (None, '') for f in CELL_CONTEXT_FIELDS):
+        return item, None
+    if _cmp(value) == _cmp(label):
+        return item, 'Tablo hücresi satır etiketinin kendisi; yeni klinik bilgi yok'
+    kind = item.get('bilgi_turu')
+    if (kind in INTERVENTION_TYPES or (kind in MEDICATION_TYPES and not re.search(r'\d', value))) \
+            and value.strip() in cells:
+        item = {k: v for k, v in item.items() if k != 'deger'}
+        item['klinik_bilgi_en'] = value.strip()
+        item['otomatik_duzeltme'] = list(item.get('otomatik_duzeltme', [])) + ['tablo_hucresi:deger->klinik_bilgi_en']
+    return item, None
+
+
+# Değer biçimi açıklaması (grup değil): 'Median (Q1-Q3)', 'Mean ± SD', 'n (%)', '(X±SD) (minimum-maximum)', 'IQR' ...
+_FORMAT_TOKEN = (r'(?:median|mean|average|sd|s\.d\.|se|sem|iqr|range|x\s*±\s*sd|mean\s*±\s*sd|±\s*sd|n\s*\(\s*%\s*\)|n|%|'
+                 r'q1\.?\s*[-–]\s*q3\.?|minimum\s*[-–]\s*maximum|min\s*[-–]\s*max|95\s*%\s*ci)')
+FORMAT_LABEL = re.compile(r'^(?:\(?\s*' + _FORMAT_TOKEN + r'(?:\s*[(\[]\s*' + _FORMAT_TOKEN + r'\s*[)\]])?\s*\)?[\s,;/]*)+$',
+                          re.I)
+
+
+def is_format_label(text):
+    """Etiketin tamamı değer biçimi açıklaması mı (ör. 'Median (Q1.-Q3.)', 'n (%)', '(X±SD) (minimum-maximum)')."""
+    cleaned = clean_label(text)
+    return bool(cleaned) and bool(FORMAT_LABEL.match(cleaned))
+
+
+def split_format_descriptor(label):
+    """(grup adı, biçim açıklaması). Çok satırlı başlıkta (<br>) biçim açıklaması olan satırlar ayrılır; yoksa etiketin
+    sonundaki biçim parantezleri ('Total (X±SD) (minimum-maximum)'). Grup adı bulunamazsa ('', açıklama)."""
+    lines = [line for line in _BR.split(str(label or '')) if clean_label(line)]
+    keep = [line for line in lines if not is_format_label(line)]
+    fmt = [clean_label(line) for line in lines if is_format_label(line)]
+    name = clean_label('<br>'.join(keep))
+    # Tek satırlı etiket: sondan en uzun biçim açıklaması (kelime sınırında, '(n=..)' içermeyen) ayrılır.
+    words = name.split(' ')
+    for cut in range(1, len(words)):
+        suffix = ' '.join(words[cut:])
+        if '(' not in suffix and len(words[cut:]) == 1:
+            continue                                      # çıplak tek kelime ('SD', 'n') grup adının parçası olabilir
+        if is_format_label(suffix) and not GROUP_HEADER.search(suffix):
+            fmt.insert(0, suffix)
+            name = ' '.join(words[:cut])
+            break
+    return name, ' '.join(fmt)
+
+
+def separate_format_descriptor(item, page_text):
+    """(kayıt, inceleme nedeni). hasta_grubu değer biçimi açıklaması taşıyorsa:
+    - yalnız açıklamaysa ('Median (Q1.-Q3.)') grup değildir: gerçek grup, değerin satırdaki TEKİL tam hücre konumunun
+      başlık hücresinden (column_header) alınır; başlıktan da açıklama ayrılır. Kurulamıyorsa inceleme.
+    - grup adına eklenmiş açıklama ('Study group (n=96)<br>(X±SD) (minimum-maximum)') ayrılır.
+    Ayrılan açıklama kaybolmaz: 'hasta_grubu:deger_bicimi=<açıklama>' notu olarak kayıtta kalır (adaptör için)."""
+    group = item.get('hasta_grubu')
+    if item.get('kanit_turu') != 'tablo' or not isinstance(group, str) or not group.strip():
+        return item, None
+    name, fmt = split_format_descriptor(group)
+    if not fmt:
+        return item, None
+    if not name:
+        positions = cell_positions(item.get('deger'), item.get('kanit_cumle'))
+        if len(positions) != 1:
+            return item, f'grup etiketi değer biçimi ({clean_label(group)!r}); değer satırda tekil konumda değil'
+        header, problem = column_header(item, page_text)
+        if problem:
+            return item, f'grup etiketi değer biçimi ({clean_label(group)!r}); {problem}'
+        name, header_fmt = split_format_descriptor(header[positions[0][0]])
+        fmt = ' '.join(f for f in (fmt, header_fmt) if f)
+        if not name or is_statistic_label(name) or not re.search(r'[^\W\d_]', name):
+            return item, f'grup etiketi değer biçimi ({clean_label(group)!r}); sütun başlığında grup adı yok'
+    item = {**item, 'hasta_grubu': name}
+    item['otomatik_duzeltme'] = list(item.get('otomatik_duzeltme', [])) + [f'hasta_grubu:deger_bicimi={fmt}']
+    return item, None
+
+
+def normalize_table_cells(candidates, pages, rejected):
+    """normalize_table_cell'i uygular ve dönüşen kayıtta kaynak kontrolünü (source_problem) yeniden çalıştırır;
+    validate_records ve tekrar ayıklaması bundan sonra aynen uygulanır."""
+    out = []
+    for item, origin in candidates:
+        info = {k: v for k, v in origin.items() if k != 'tur'}
+        page_text = pages.get(item.get('sayfa'), '')
+        new, reason = normalize_table_cell(item)
+        if reason:
+            rejected.append({'sayfa': item.get('sayfa'), **info, 'neden': reason, 'asama': 'tablo_hucresi', 'kayit': item})
+            continue
+        pieces = (split_stacked_cell(new, page_text) if new.get('kanit_turu') == 'tablo' else None) or [new]
+        for piece in pieces:
+            piece, unclear = separate_format_descriptor(piece, page_text)
+            if unclear:
+                rejected.append({'sayfa': piece.get('sayfa'), **info, 'asama': 'inceleme',
+                                 'neden': f'Hasta grubu belirlenemedi: {unclear}', 'kayit': piece})
+                continue
+            if is_contextless_value(piece):
+                piece, unclear = fill_column_context(piece, page_text)
+                if unclear:
+                    # Belirsiz: otomatik aktarım kayıtlarından ayrılır, ham kanıtıyla ret raporunda korunur.
+                    rejected.append({'sayfa': piece.get('sayfa'), **info, 'asama': 'tablo_baglami_belirsiz',
+                                     'neden': f'Sütun bağlamı belirlenemedi: {unclear}', 'kayit': piece})
+                    continue
+            piece = clean_labels(piece)
+            problem = source_problem(piece, page_text) if piece is not item else None
+            if problem:
+                rejected.append({'sayfa': piece.get('sayfa'), **info, 'neden': problem, 'asama': 'tablo_hucresi',
+                                 'kayit': piece})
+                continue
+            out.append((piece, origin))
+    return out
 
 
 def screen_table(task, findings, task_no):
@@ -634,14 +1335,276 @@ def _superseded(old, newer):
     """Eski (sayfa görevi) tablo kaydı, aynı satırın tablo görevi kayıtlarıyla karşılanıyor mu?
     - aynı hücre: bilgi ve değer aynı (yeni kayıt sütun bilgisini de taşır), ya da
     - eski kayıt hücre değerini bilgi diye yazmış (değeri yok) ve bu değer yeni kayıtlarda o satırın değeri.
-    Karşılanmayan eski kayıt (ör. tablo görevinin atladığı RR hücresi, tedavi sütunu) korunur."""
-    fact, value = _norm(old.get('klinik_bilgi_en')), _norm(old.get('deger'))
+    Karşılanmayan eski kayıt (ör. tablo görevinin atladığı RR hücresi, tedavi sütunu) korunur.
+    Karşılaştırma _cmp ile (kalın / <br> / dipnot harfi farkı yok sayılır). Eski kayıt sütun bilgisi (sonuç ölçütü /
+    hasta grubu) taşıyorsa yeni kayıtta aynı sütun olmalı: farklı sütundaki aynı değer onu karşılamaz."""
+    fact, value = _cmp(old.get('klinik_bilgi_en')), _cmp(old.get('deger'))
     for new in newer:
-        if fact and _norm(new.get('klinik_bilgi_en')) == fact and _norm(new.get('deger')) == value:
+        if any(old.get(f) and _cmp(old.get(f)) != _cmp(new.get(f)) for f in COLUMN_FIELDS):
+            continue
+        # Eski kaydın taşıdığı istatistik / birim bilgisi yeni kayıtta yoksa değiştirme bilgi kaybettirir.
+        if any(old.get(f) not in (None, '') and _cmp(old.get(f)) != _cmp(new.get(f)) for f in CARRIED_FIELDS):
+            continue
+        if fact and _cmp(new.get('klinik_bilgi_en')) == fact and _cmp(new.get('deger')) == value:
             return True
-        if not value and fact and fact == _norm(new.get('deger')):
+        # Hücre değerini bilgi diye yazmış eski kayıt ('Decreased') yalnız sütunu belli yeni hücreyle karşılanır;
+        # sütunsuz hücre (ör. öneri/tedavi metni sütunu) eski kaydın bilgi-tür ilişkisini taşımaz, eski kayıt kalır.
+        if (not value and fact and fact == _cmp(new.get('deger'))
+                and any(new.get(f) for f in COLUMN_FIELDS)):
             return True
     return False
+
+
+COLUMN_FIELDS = ('sonuc_olcutu_tr', 'hasta_grubu')
+CARRIED_FIELDS = ('p', 'unit', 'ci95', 'etki_turu', 'comparator')
+# Normalize tekrar anahtarı: satır + sütun + değer + klinik bağlam. Biri farklıysa (ör. başka sonuç sütunu) ayrı kayıt.
+TABLE_KEY_FIELDS = ('klinik_bilgi_en', 'deger', 'unit', 'p', 'ci95', 'etki_turu', 'comparator') + COLUMN_FIELDS
+
+
+def drop_table_duplicates(records, rejected):
+    """Yalnız biçimce farklı (kalın, <br>, dipnot harfi) aynı tablo hücresi kayıtlarından ilki kalır; diğerleri ret
+    raporuna 'tablo_tekrari' olarak yazılır. Anahtar: sayfa, satır, tür, bağlam ve TABLE_KEY_FIELDS."""
+    seen, out = set(), []
+    for item in records:
+        if item.get('kanit_turu') != 'tablo':
+            out.append(item)
+            continue
+        key = ((item.get('sayfa'), _cmp(item.get('kanit_cumle')), item.get('bilgi_turu'), item.get('baglam'))
+               + tuple(_cmp(item.get(f)) for f in TABLE_KEY_FIELDS))
+        if key in seen:
+            rejected.append({'sayfa': item.get('sayfa'), 'neden': 'Aynı tablo hücresi (yalnız biçim farkı) daha önce geldi',
+                             'asama': 'tablo_tekrari', 'kayit': item})
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def cell_positions(value, row):
+    """value'nun satırda tam hücre olarak geçtiği konumlar: (hücre, None); hücrenin <br> satırı olarak geçtiği
+    konumlar: (hücre, satır). Alt alta yazılmış farklı satırlar (ör. '152<br>37') ayrı konumdur."""
+    target = _cmp(value)
+    if not target:
+        return []
+    found = []
+    for i, cell in enumerate(row_cells(row)):
+        if _cmp(cell) == target:
+            found.append((i, None))
+            continue
+        found.extend((i, n) for n, line in enumerate(_cell_lines(cell)) if _cmp(line) == target)
+    return found
+
+
+def _column_label(item):
+    return _clean_label(item.get('hasta_grubu') or item.get('sonuc_olcutu_tr'))
+
+
+def _same_column(a, b):
+    """Normalize sütun etiketi uyumu: eşit, biri diğerinin başlık + alt başlık satırı biçimi ('total (n=114)' ~
+    'total (n=114) median (q1-q3)') ya da biri sütun taşımıyor."""
+    a, b = _column_label(a), _column_label(b)
+    return not a or not b or a == b or a.startswith(b + ' ') or b.startswith(a + ' ')
+
+
+def _same_row_variable(a, b):
+    """İki kaydın klinik bilgisi aynı satır değişkenini mi anlatıyor (biri diğerini kapsıyor, ör. 'Hypertension' ~
+    'Hypertension n (%)'); farklı değişkenler (Male / Female) aynı hücre sayılmaz."""
+    x, y = _cmp(a.get('klinik_bilgi_en')), _cmp(b.get('klinik_bilgi_en'))
+    if not (x and y):
+        return False
+    if x == y:
+        return True
+    short, long_ = (x, y) if len(x) <= len(y) else (y, x)
+    # Kelime sınırında kapsama: 'male' 'female' içinde sayılmaz.
+    return re.search(r'(?<!\w)' + re.escape(short) + r'(?!\w)', long_) is not None
+
+
+GENERIC_TYPES = ('olcum', 'diger')
+
+
+def _keep_rank(item, index):
+    """Aynı hücrenin kayıtlarından hangisi kalır: özgül klinik türü olan (tani / ilac / tedavi ...; SQL diseases ve
+    treatments görünümleri tablo satırlarını bu türlerle bekler) genel türe (olcum / diger) tercih edilir; sonra sütun
+    etiketi olan, temiz (biçimsiz, kısa) etiketli, daha çok yapılandırılmış alanı (p, birim ...) olan; eşitse çıkarım
+    sırasında önce gelen."""
+    label = item.get('hasta_grubu') or item.get('sonuc_olcutu_tr') or ''
+    structured = sum(item.get(f) not in (None, '') for f in ('p', 'unit', 'ci95', 'etki_turu', 'comparator'))
+    return (item.get('bilgi_turu') in GENERIC_TYPES, not label, bool(re.search(r'\*\*|<br', label, re.I)),
+            len(_column_label(item)), -structured, index)
+
+
+def drop_cell_duplicates(records, rejected):
+    """Aynı tablo hücresinden üretilmiş tekrarlar (ör. sayfa ve tablo görevinin aynı hücreyi farklı etiketle vermesi).
+    Hücre kimliği: aynı sayfa + satır, değer satırda TEK bir hücre konumunda tam hücre olarak geçiyor (eşit değer
+    birden çok hücredeyse kimlik belirsiz -> ayıklanmaz), aynı satır değişkeni ve uyumlu normalize sütun etiketi.
+    Ayıklanan kayıt 'hucre_tekrari' olarak ret raporuna yazılır."""
+    rows = defaultdict(list)
+    for index, item in enumerate(records):
+        if item.get('kanit_turu') == 'tablo' and item.get('deger') not in (None, ''):
+            positions = cell_positions(item.get('deger'), item.get('kanit_cumle'))
+            if len(positions) == 1:
+                rows[(item.get('sayfa'), _cmp(item.get('kanit_cumle')), positions[0])].append(index)
+    drop = set()
+    for indexes in rows.values():
+        kept = []
+        for index in sorted(indexes, key=lambda i: _keep_rank(records[i], i)):
+            item = records[index]
+            if any(_same_row_variable(item, records[k]) and _same_column(item, records[k]) for k in kept):
+                drop.add(index)
+                continue
+            kept.append(index)
+    for index in sorted(drop):
+        rejected.append({'sayfa': records[index].get('sayfa'), 'asama': 'hucre_tekrari', 'kayit': records[index],
+                         'neden': 'Aynı tablo hücresi (aynı satır, tek hücre konumu, aynı değişken ve sütun) daha önce geldi'})
+    return [item for index, item in enumerate(records) if index not in drop]
+
+
+P_COLUMN = re.compile(r'^p(?:[- ]?value)?$', re.I)
+INDEPENDENT_STAT_FIELDS = ('hasta_grubu', 'unit', 'ci95', 'etki_turu', 'comparator')
+
+
+def drop_p_duplicates(records, rejected):
+    """p sütunu hücresinin ayrı kaydı, aynı satırın grup kayıtlarında p olarak zaten varsa tekrar sayılır. Koşullar:
+    kayıtta grup ve bağımsız istatistik alanı yok, sütunu yok ya da p sütunu, değeri satırda tam hücre ve aynı satırda
+    aynı değişkenin en az bir grup kaydının p değeri bu değere eşit. Grup kaydı p taşımıyorsa (bağımsız istatistik)
+    ya da değer başka bir hücrede ise kayıt kalır."""
+    group_p = defaultdict(set)
+    for item in records:
+        if item.get('kanit_turu') == 'tablo' and item.get('hasta_grubu') and item.get('p'):
+            group_p[(item.get('sayfa'), _cmp(item.get('kanit_cumle')))].add((_cmp(item.get('p')), item.get('klinik_bilgi_en')))
+    out = []
+    for item in records:
+        key = (item.get('sayfa'), _cmp(item.get('kanit_cumle')))
+        value = _cmp(item.get('deger'))
+        column = _clean_label(item.get('sonuc_olcutu_tr'))
+        duplicate = (item.get('kanit_turu') == 'tablo' and value and key in group_p
+                     and not any(item.get(f) not in (None, '') for f in INDEPENDENT_STAT_FIELDS)
+                     and (not column or P_COLUMN.match(column))
+                     and is_whole_cell(item.get('deger'), item.get('kanit_cumle'))
+                     and any(p == value and _same_row_variable(item, {'klinik_bilgi_en': fact}) for p, fact in group_p[key]))
+        if duplicate:
+            rejected.append({'sayfa': item.get('sayfa'), 'asama': 'p_tekrari', 'kayit': item,
+                             'neden': 'p değeri aynı satırın grup kayıtlarında zaten var (p sütunu hücresi)'})
+            continue
+        out.append(item)
+    return out
+
+
+def _model_of(item):
+    return item.get('tablo_modeli') or {}
+
+
+def _same_model_table_row(a, b):
+    return (a.get('sayfa') == b.get('sayfa') and _cmp(a.get('kanit_cumle')) == _cmp(b.get('kanit_cumle'))
+            and _model_of(a).get('tablo_no') == _model_of(b).get('tablo_no'))
+
+
+def drop_aligned_duplicates(records, rejected):
+    """Tablo modeline hizalanmış kayıtlarda (src.rag_tablo_hizalama) eşdeğerliği DOĞRULANMIŞ tekrarlar:
+    - etki_p_tekrari: p sütunu hücresinin ayrı kaydı; aynı model satırında aynı p sütununa sahip (etki / grup) kaydın
+      p'si bu değerle aynı. Sahip kayıt yoksa ya da p farklıysa bağımsız p bulgusu kalır.
+    - bolunmemis_tekrar: alt satırları tek kayıtta taşıyan hücre ('Male<br>Female' / '152<br>37'); HER alt satır için
+      aynı sütunda, aynı değerde ve (kayıtta varsa) aynı grup ve p ile bölünmüş kayıt var. Eşdeğerlik kurulamazsa kayıt
+      silinmez, incelemeye ayrılır.
+    - satir_etiketi: değersiz, yalnız satır adı olan kayıt; aynı model satırının en az bir değer kaydı var (satır adı
+      orada sonuç ölçütü). Müdahale / ilaç / doz türleri kalır.
+    Farklı değer, grup ya da istatistik türü taşıyan kayıtlar tekrar sayılmaz."""
+    from src.rag_tablo_hizalama import HOLD_STAGE, _c
+    matched = [r for r in records if _model_of(r).get('durum') == 'eslesti']
+    out = []
+    for item in records:
+        model = _model_of(item)
+        state = model.get('durum')
+        if state == 'p_hucresi':
+            owners = [o for o in matched if _same_model_table_row(o, item)
+                      and _model_of(o).get('satir_no') == model.get('satir_no')
+                      and _model_of(o).get('p_sutun') == model.get('p_sutun') and _c(o.get('p')) == _c(item.get('deger'))]
+            if owners and not any(item.get(f) not in (None, '') for f in ('ci95', 'comparator', 'hasta_grubu')):
+                rejected.append({'sayfa': item.get('sayfa'), 'asama': 'etki_p_tekrari', 'kayit': item,
+                                 'neden': f"p değeri ({item.get('deger')}) aynı satırın {model.get('p_sutun')!r} sütununa "
+                                          f"sahip kaydında p olarak var"})
+                continue
+        elif state == 'bolunmemis':
+            missing = None
+            if not (model.get('sutun') and model.get('hucreler')):
+                missing = 'alt satırların sütunu tablo modelinde tekil belirlenemedi'
+            else:
+                for number, cell in zip(model['satirlar'], model['hucreler']):
+                    peers = [o for o in matched if _same_model_table_row(o, item)
+                             and _model_of(o).get('satir_no') == number and _model_of(o).get('sutun') == model['sutun']
+                             and _c(o.get('deger')) == _c(cell)
+                             and (not item.get('hasta_grubu') or _c(o.get('hasta_grubu')) == _c(item.get('hasta_grubu')))
+                             and (not item.get('p') or not o.get('p') or _c(o.get('p')) == _c(item.get('p')))]
+                    if not peers:
+                        missing = f'alt satır {number} ({cell!r}) için eşdeğer bölünmüş kayıt yok'
+                        break
+            if missing:
+                rejected.append({'sayfa': item.get('sayfa'), 'asama': HOLD_STAGE, 'kayit': item,
+                                 'neden': f'bölünmemiş alt satır hücresi; {missing}'})
+            else:
+                rejected.append({'sayfa': item.get('sayfa'), 'asama': 'bolunmemis_tekrar', 'kayit': item,
+                                 'neden': 'alt satırları tek kayıtta taşıyan hücre; her alt satır aynı sütun / değer / '
+                                          'grup / p ile bölünmüş kayıtlarda var'})
+            continue
+        elif state == 'satir_etiketi' and item.get('bilgi_turu') not in INTERVENTION_TYPES + MEDICATION_TYPES:
+            if any(_same_model_table_row(o, item) and _model_of(o).get('satir_no') == model.get('satir_no')
+                   for o in matched):
+                rejected.append({'sayfa': item.get('sayfa'), 'asama': 'satir_etiketi', 'kayit': item,
+                                 'neden': 'değersiz satır adı kaydı; aynı satırın değer kayıtlarında sonuç ölçütü olarak var'})
+                continue
+        out.append(item)
+    return out
+
+
+SAME_FACT_FIELDS = ('bilgi_turu', 'baglam')
+STRUCTURED_COMPARE = ('deger', 'unit', 'p', 'ci95', 'etki_turu', 'comparator', 'hasta_grubu', 'sonuc_olcutu_tr')
+
+
+def _same_sentence(single, boundary):
+    """Tek sayfa kaydının kanıtı, sınır kaydının aynı sayfadaki parçasıyla aynı cümle parçası mı (biri diğerini içerir)."""
+    quote = _cmp(single.get('kanit_cumle'))
+    for part in boundary.get('kanit_parcalari') or []:
+        text = _cmp(part.get('metin'))
+        if part.get('sayfa') == single.get('sayfa') and quote and text and (quote in text or text in quote):
+            return True
+    return False
+
+
+def drop_boundary_duplicates(records, rejected):
+    """Sınır kaydının (tam cümle, iki sayfa) karşıladığı tek sayfa kaydı çıkarılır ('sinir_tekrari'). Gerçek tekrar:
+    sayfa sınır çiftinde, aynı klinik bilgi (_cmp), aynı tür ve bağlam, aynı yapılandırılmış alanlar (grup, değer,
+    birim, sonuç ölçütü ...) ve kanıtı sınır kaydının o sayfadaki parçasıyla aynı cümle. Biri farklıysa iki kayıt kalır."""
+    boundary = [r for r in records if r.get('kanit_parcalari')]
+    if not boundary:
+        return records
+    out = []
+    for item in records:
+        duplicate = not item.get('kanit_parcalari') and any(
+            item.get('sayfa') in (b.get('sayfa'), b.get('sayfa_bitis'))
+            and _cmp(item.get('klinik_bilgi_en')) == _cmp(b.get('klinik_bilgi_en'))
+            and all(item.get(f) == b.get(f) for f in SAME_FACT_FIELDS)
+            and all(_cmp(item.get(f)) == _cmp(b.get(f)) for f in STRUCTURED_COMPARE)
+            and _same_sentence(item, b)
+            for b in boundary)
+        if duplicate:
+            rejected.append({'sayfa': item.get('sayfa'), 'neden': 'Aynı bilgi sınır kaydında tam cümleyle var',
+                             'asama': 'sinir_tekrari', 'kayit': item})
+            continue
+        out.append(item)
+    return out
+
+
+def join_evidence(records):
+    """Doğrulanmış çok parçalı kayıtta kanit_cumle = parçaların okuma sırasıyla tek boşlukla birleşimi (validate_records
+    / fact_in_parts'ın sınır araması ile aynı birleşim). Parçalar (kanit_parcalari) ham kaynak olarak aynen kalır.
+    Not: pilot_clinical.import_records kanit_cumle = ilk parça bekler; SQL aktarımında kanit_parcalari[0] kullanılmalı."""
+    out = []
+    for item in records:
+        parts = item.get('kanit_parcalari')
+        if parts:
+            item = {**item, 'kanit_cumle': ' '.join(p['metin'].strip() for p in parts)}
+        out.append(item)
+    return out
 
 
 def replace_table_records(kept, rejected):
@@ -676,10 +1639,29 @@ def is_total(item):
     return bool(TOTAL_GROUP.match(_norm(item.get('hasta_grubu'))))
 
 
+def measurement_key(item):
+    """Grup karşılaştırmasının birimi: (tablo satırı, satır değişkeni). Aynı satırda <br> ile alt alta yazılmış farklı
+    değişkenler (ör. 'Male<br>Female') ayrı karşılaştırmadır; farklı parametreler aynı karşılaştırmaya girmez."""
+    return row_key(item) + (_cmp(row_parameter(item)),)
+
+
+def is_group_cell(item):
+    """Gerçek grup hücresi: tablo kaydı, hasta grubu var ve değeri satırda tam bir hücre / hücre satırı (hücre içinden
+    ayrıştırılmış alt sonuç değil)."""
+    return (item.get('kanit_turu') == 'tablo' and bool(item.get('hasta_grubu'))
+            and is_whole_cell(item.get('deger'), item.get('kanit_cumle')))
+
+
 def grouped_rows(records):
-    """Karşılaştırma grubu (Total hariç) taşıyan tablo satırları = v_sunum_taban.satir_grup_karsilastirmasi."""
-    return {row_key(r) for r in records
-            if r.get('kanit_turu') == 'tablo' and r.get('hasta_grubu') and not is_total(r)}
+    """Grup karşılaştırması olan (satır, değişken) anahtarları (measurement_key): aynı değişken için en az iki farklı
+    grup hücresi (is_group_cell) ve en az biri Total dışı. v_sunum_taban.satir_grup_karsilastirmasi'nin daraltılmış
+    karşılığı: SQL satırı, satırda herhangi bir hasta_grubu (Total ya da hücre içi alt sonuç dahil) varsa işaretler
+    ve değişkene bölmez; SQL dosyaları bu çalışmada değiştirilmedi."""
+    groups = defaultdict(set)
+    for r in records:
+        if is_group_cell(r):
+            groups[measurement_key(r)].add((_cmp(r['hasta_grubu']), is_total(r)))
+    return {key for key, found in groups.items() if len(found) >= 2 and any(not total for _, total in found)}
 
 
 def categories_of(item, grouped):
@@ -701,7 +1683,8 @@ def categories_of(item, grouped):
     else:
         if item.get('hasta_grubu'):
             cats.append('measurements_by_group')
-        if row_key(item) in grouped:
+        # Hücre içinden ayrıştırılmış grup alt sonucu geniş karşılaştırmaya girmez (yalnız measurements_by_group).
+        if measurement_key(item) in grouped and (not item.get('hasta_grubu') or is_group_cell(item)):
             cats.append('measurements')
         elif not (kind in ('ilac', 'doz', 'tedavi', 'teshis_yontemi')
                   and not any(item.get(f) for f in ('etki_turu', 'deger', 'p'))):
@@ -735,9 +1718,10 @@ def route(records, pdf_name):
             if category != 'measurements':
                 out[category].append(flat(item, pdf_name, category))
                 continue
-            row = wide.setdefault(row_key(item), {
+            # Parametre: kaydın değil satırın doğrulanmış değişkeni (row_parameter); satır+değişken başına tek satır.
+            row = wide.setdefault(measurement_key(item), {
                 'pdf': pdf_name, 'sayfa': item.get('sayfa'), 'kategori': 'measurements',
-                'klinik_bilgi': item.get('klinik_bilgi_en'), 'gruplar': [], 'total_group': None,
+                'klinik_bilgi': row_parameter(item), 'gruplar': [], 'total_group': None,
                 'total_value': None, 'birim': None, 'p': None, 'kanit_turu': 'tablo', 'kanit': item.get('kanit_cumle')})
             if item.get('hasta_grubu') and is_total(item):
                 row['total_group'], row['total_value'] = item['hasta_grubu'], item.get('deger')
@@ -781,11 +1765,14 @@ def run(pdf, *, client=None, model=None, max_calls=60, top_k=6, out_root=OUTPUT_
             'tablo': table, 'tablo_gorev_sayisi': len(table_tasks),
             'tablo_sayfalari': sorted({t['sayfa'] for t in table_tasks}),
             'gorev_sayisi': len(tasks), 'top_k': top_k}
-    if plan_only:
-        return meta, None
     model = model or default_model()
     base = Path(out_root) / Path(doc['filename']).stem
     cache = Cache(base / 'llm_onbellek.jsonl')
+    # Önbellekte olmayan görev sayısı (API yok): toplu işlemede bütçe planı ve kaldığı yerden devam için.
+    meta['bekleyen_cagri'] = sum(cache.get(Cache.key(model, system, payload)) is None
+                                 for system, payload in (task_request(t) for t in tasks))
+    if plan_only:
+        return meta, None
     client = client or llm_client()
     valid, rejected, calls = extract(pages, tasks, client, model, cache=cache, max_calls=max_calls)
     routed = route(valid, doc['filename'])
